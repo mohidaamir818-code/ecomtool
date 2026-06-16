@@ -21,7 +21,10 @@ export function ProductsHandlingCard({
           </div>
           <p className="text-sm font-semibold text-[#374151]">No handling products yet</p>
           <p className="mt-1 text-xs text-[#9CA3AF]">
-            Products you handle will show up here once you start managing listings.
+            <a href="/dashboard/products" className="font-semibold text-brand hover:underline">
+              Add an AliExpress product
+            </a>{" "}
+            to start tracking price and stock.
           </p>
         </div>
       ) : (

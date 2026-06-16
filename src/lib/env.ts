@@ -10,6 +10,12 @@ export const serverEnv = {
   supabaseUrl: () =>
     requireServerEnv("NEXT_PUBLIC_SUPABASE_URL").replace(/\/rest\/v1\/?$/, ""),
   supabaseServiceRoleKey: () => requireServerEnv("SUPABASE_SERVICE_ROLE_KEY"),
+  aliexpressAppKey: () =>
+    process.env.ALIEXPRESS_APP_KEY ?? process.env.ALIEXPRESS_API_KEY ?? "",
+  aliexpressAppSecret: () =>
+    process.env.ALIEXPRESS_APP_SECRET ??
+    process.env.ALIEXPRESS_APP__SECRET ??
+    "",
   aliexpressApiKey: () => process.env.ALIEXPRESS_API_KEY ?? "",
   ebayAppId: () => process.env.EBAY_APP_ID ?? "",
   ebayCertId: () => process.env.EBAY_CERT_ID ?? "",

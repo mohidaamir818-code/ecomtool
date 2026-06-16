@@ -7,6 +7,7 @@ import type {
 } from "@/features/dashboard/types";
 import type { DashboardData, DashboardPlanOverview, DashboardRequestUsage } from "@/types/dashboard";
 import { countCompetitorChecksThisWeek } from "@/lib/competitors/service";
+import { countHandlingProducts } from "@/lib/handling/service";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 
 const DAILY_REQUEST_LIMIT = 500;
@@ -317,13 +318,12 @@ export async function getDashboardData(userId: string): Promise<DashboardData> {
   const monthStart = getMonthStart().toISOString();
   const weekStartIso = weekStart.toISOString();
 
-  const [dailyUsed, monthlyUsed, competitorChecks] = await Promise.all([
+  const [dailyUsed, monthlyUsed, competitorChecks, handlingProducts] = await Promise.all([
     countUserRequests(supabase, userId, todayStart),
     countUserRequests(supabase, userId, monthStart),
     countCompetitorChecksThisWeek(userId),
+    countHandlingProducts(userId),
   ]);
-
-  const handlingProducts = 0;
 
   const { data: competitorCheckRows } = await supabase
     .from("competitor_checks")
