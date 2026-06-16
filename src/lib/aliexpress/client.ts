@@ -130,6 +130,22 @@ async function bootstrapMtopCookies(): Promise<Record<string, string>> {
   return parseCookies(response.headers.getSetCookie?.() ?? []);
 }
 
+interface MtopSkuPriceEntry {
+  originalPrice?: { value?: number; currency?: string; formatedAmount?: string };
+  salePriceString?: string;
+  salePriceLocal?: string;
+  taxIncludedPrice?: { value?: number } | number | string;
+  taxIncludedAmount?: { value?: number };
+  skuAmount?: { value?: number } | number | string;
+  skuActivityAmount?: { value?: number } | number | string;
+  isActivity?: boolean;
+}
+
+interface MtopQuantityView {
+  maxBuyCount?: number;
+  maxBuyCountStr?: string;
+}
+
 interface MtopModuleMap {
   GLOBAL_DATA?: {
     globalData?: {
@@ -144,18 +160,13 @@ interface MtopModuleMap {
     mainImages?: Array<{ imageUrl?: string }>;
   };
   PRICE?: {
-    targetSkuPriceInfo?: {
-      originalPrice?: { value?: number; currency?: string };
-      salePriceString?: string;
-    };
-    skuPriceInfoMap?: Record<
-      string,
-      {
-        originalPrice?: { value?: number; currency?: string };
-        salePriceString?: string;
-      }
-    >;
+    selectedSkuId?: number | string;
+    targetSkuPriceInfo?: MtopSkuPriceEntry;
+    skuPriceInfoMap?: Record<string, MtopSkuPriceEntry>;
+    skuSecondPriceInfoMap?: Record<string, MtopSkuPriceEntry>;
   };
+  PRICE_EXTEND?: Record<string, unknown>;
+  PRICE_BANNER?: Record<string, unknown>;
   PC_RATING?: {
     rating?: string;
     otherText?: string;
@@ -163,7 +174,175 @@ interface MtopModuleMap {
   };
   QUANTITY_PC?: {
     totalAvailableInventory?: number;
+    currentSkuQuantityView?: MtopQuantityView;
+    allSkuQuantityView?: Record<string, MtopQuantityView>;
   };
+}
+
+function parseNestedPrice(value: unknown): number | null {
+  if (value == null) return null;
+  if (typeof value === "object" && value !== null && "value" in value) {
+    return parseNumber((value as { value?: unknown }).value);
+  }
+  return parseNumber(value);
+}
+
+function parseSalePriceLocal(value?: string): number | null {
+  if (!value) return null;
+
+  const leading = value.split("|")[0];
+  const fromLeading = parseNumber(leading);
+  if (fromLeading != null) return fromLeading;
+
+  const parts = value.split("|");
+  if (parts.length >= 3) {
+    const whole = parseNumber(parts[1]);
+    const fraction = parts[2];
+    if (whole != null && fraction) {
+      return parseNumber(`${whole}.${fraction.padStart(2, "0")}`);
+    }
+  }
+
+  return null;
+}
+
+function parseSkuPriceEntry(entry: MtopSkuPriceEntry): { price: number; currency: string } | null {
+  const currency = entry.originalPrice?.currency ?? "GBP";
+
+  const regularPrice =
+    parseNestedPrice(entry.skuAmount) ??
+    parseNestedPrice(entry.taxIncludedPrice) ??
+    parseNestedPrice(entry.taxIncludedAmount);
+
+  const activityPrice =
+    parseNestedPrice(entry.skuActivityAmount) ??
+    parseSalePriceLocal(entry.salePriceLocal) ??
+    parseNumber(entry.salePriceString);
+
+  if (regularPrice != null && activityPrice != null) {
+    // AliExpress often shows the standard shelf price while API also returns a lower coupon price.
+    return { price: Math.max(regularPrice, activityPrice), currency };
+  }
+
+  if (regularPrice != null) return { price: regularPrice, currency };
+  if (activityPrice != null) return { price: activityPrice, currency };
+
+  const originalPrice = parseNestedPrice(entry.originalPrice);
+  if (originalPrice != null) return { price: originalPrice, currency };
+
+  return null;
+}
+
+function findPriceInObject(value: unknown, depth = 0): number | null {
+  if (depth > 6 || value == null) return null;
+
+  if (typeof value === "string") {
+    const parsed = parseNumber(value);
+    if (parsed != null && parsed > 0 && parsed < 100000 && /£|\$|€|GBP|USD|EUR/.test(value)) {
+      return parsed;
+    }
+    return null;
+  }
+
+  if (typeof value === "number" && value > 0 && value < 100000) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findPriceInObject(item, depth + 1);
+      if (found != null) return found;
+    }
+    return null;
+  }
+
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const preferredKeys = [
+      "salePriceString",
+      "formatedPrice",
+      "formattedPrice",
+      "displayPrice",
+      "activityPrice",
+      "price",
+      "value",
+    ];
+
+    for (const key of preferredKeys) {
+      if (key in record) {
+        const found = findPriceInObject(record[key], depth + 1);
+        if (found != null) return found;
+      }
+    }
+  }
+
+  return null;
+}
+
+function resolveSelectedSkuPrices(modules: MtopModuleMap): {
+  primary: MtopSkuPriceEntry | null;
+  second: MtopSkuPriceEntry | null;
+} {
+  const selectedSkuId = modules.PRICE?.selectedSkuId;
+  const skuIdKey = selectedSkuId != null ? String(selectedSkuId) : null;
+
+  const primary =
+    (skuIdKey ? modules.PRICE?.skuPriceInfoMap?.[skuIdKey] : null) ??
+    modules.PRICE?.targetSkuPriceInfo ??
+    null;
+
+  const second = skuIdKey ? (modules.PRICE?.skuSecondPriceInfoMap?.[skuIdKey] ?? null) : null;
+
+  return { primary, second };
+}
+
+function extractDisplayPrice(modules: MtopModuleMap): { price: number; currency: string } | null {
+  const { primary, second } = resolveSelectedSkuPrices(modules);
+  const secondParsed = second ? parseSkuPriceEntry(second) : null;
+  const primaryParsed = primary ? parseSkuPriceEntry(primary) : null;
+
+  // skuSecondPriceInfoMap is the standard shelf price without extra coupons/new-user discounts.
+  if (secondParsed) return secondParsed;
+
+  if (primaryParsed) return primaryParsed;
+
+  const bannerPrice = findPriceInObject(modules.PRICE_BANNER);
+  if (bannerPrice != null) {
+    return { price: bannerPrice, currency: "GBP" };
+  }
+
+  const extendPrice = findPriceInObject(modules.PRICE_EXTEND);
+  if (extendPrice != null) {
+    return { price: extendPrice, currency: "GBP" };
+  }
+
+  return null;
+}
+
+function extractPurchaseLimit(
+  modules: MtopModuleMap,
+  selectedSkuId?: number | string,
+): { stock: number | null; stockNote: string | null } {
+  const quantity = modules.QUANTITY_PC;
+  const skuIdKey = selectedSkuId != null ? String(selectedSkuId) : null;
+
+  const currentView = quantity?.currentSkuQuantityView;
+  if (currentView?.maxBuyCount != null) {
+    return {
+      stock: currentView.maxBuyCount,
+      stockNote: currentView.maxBuyCountStr ?? null,
+    };
+  }
+
+  if (skuIdKey && quantity?.allSkuQuantityView?.[skuIdKey]?.maxBuyCount != null) {
+    const skuView = quantity.allSkuQuantityView[skuIdKey];
+    return {
+      stock: skuView.maxBuyCount ?? null,
+      stockNote: skuView.maxBuyCountStr ?? null,
+    };
+  }
+
+  return { stock: null, stockNote: null };
 }
 
 async function callMtopProductDetail(
@@ -240,23 +419,16 @@ function parseMtopProduct(
   const title = modules.PRODUCT_TITLE?.text?.trim();
   if (!title) return null;
 
-  const priceInfo =
-    modules.PRICE?.targetSkuPriceInfo ??
-    Object.values(modules.PRICE?.skuPriceInfoMap ?? {})[0];
+  const priceResult = extractDisplayPrice(modules);
+  if (!priceResult) return null;
 
-  const price =
-    parseNumber(priceInfo?.salePriceString) ??
-    parseNumber(priceInfo?.originalPrice?.value);
-
-  if (price == null) return null;
-
-  const currency = priceInfo?.originalPrice?.currency ?? "GBP";
+  const { price, currency } = priceResult;
   const imageUrl =
     modules.HEADER_IMAGE_PC?.mainImages?.[0]?.imageUrl ??
     modules.HEADER_IMAGE_PC?.imagePathList?.[0] ??
     null;
 
-  const stock = modules.QUANTITY_PC?.totalAvailableInventory ?? null;
+  const { stock } = extractPurchaseLimit(modules, modules.PRICE?.selectedSkuId);
   const orders =
     modules.PC_RATING?.otherText ??
     (modules.PC_RATING?.totalValidNum != null
@@ -348,7 +520,7 @@ async function callAffiliateApi(productId: string): Promise<HandlingProductData 
       imageUrl: result.product_main_image_url ?? result.product_small_image_urls?.string?.[0] ?? null,
       price,
       currency: String(result.target_sale_price_currency ?? "GBP"),
-      stock: parseNumber(result.lastest_volume) ?? null,
+      stock: null,
       orders: result.lastest_volume != null ? String(result.lastest_volume) : null,
       rating: parseNumber(result.evaluate_rate),
     };
@@ -432,11 +604,11 @@ export async function fetchAliExpressProduct(url: string): Promise<HandlingProdu
       ? resolvedUrl.split("?")[0]
       : `https://www.aliexpress.com/item/${productId}.html`;
 
-  const apiProduct = await callAffiliateApi(productId);
-  if (apiProduct) return apiProduct;
-
   const mtopProduct = await fetchViaMtop(productId, canonicalUrl);
   if (mtopProduct) return mtopProduct;
+
+  const apiProduct = await callAffiliateApi(productId);
+  if (apiProduct) return apiProduct;
 
   const htmlProduct = await scrapeAliExpressHtml(canonicalUrl, productId);
   if (htmlProduct) return htmlProduct;

@@ -56,7 +56,7 @@ export function HandlingProductCard({
           <p className="text-sm font-bold text-[#111827]">{product.price}</p>
         </div>
         <div>
-          <p className="text-[10px] font-medium uppercase text-[#9CA3AF]">Stock</p>
+          <p className="text-[10px] font-medium uppercase text-[#9CA3AF]">Max qty</p>
           <p className="text-sm font-bold text-[#111827]">{product.stock ?? "—"}</p>
         </div>
         <div>

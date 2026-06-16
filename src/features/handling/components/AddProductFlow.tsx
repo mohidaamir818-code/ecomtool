@@ -176,7 +176,7 @@ export function AddProductFlow({ userId, onAdded }: AddProductFlowProps) {
                     <p className="text-sm font-bold">{formatPreviewPrice(preview.price, preview.currency)}</p>
                   </div>
                   <div>
-                    <p className="text-[10px] font-medium uppercase text-[#9CA3AF]">Stock</p>
+                    <p className="text-[10px] font-medium uppercase text-[#9CA3AF]">Max qty</p>
                     <p className="text-sm font-bold">{preview.stock ?? "—"}</p>
                   </div>
                   <div>

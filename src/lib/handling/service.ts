@@ -197,7 +197,7 @@ function buildChangeSummary(
   }
 
   if (previousStock != null && current.stock != null && previousStock !== current.stock) {
-    changes.push(`Stock changed from ${previousStock} to ${current.stock}.`);
+    changes.push(`Max qty changed from ${previousStock} to ${current.stock}.`);
   }
 
   if (previousOrders !== current.orders && current.orders != null) {
