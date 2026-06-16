@@ -177,6 +177,7 @@ interface MtopModuleMap {
     currentSkuQuantityView?: MtopQuantityView;
     allSkuQuantityView?: Record<string, MtopQuantityView>;
   };
+  BOTTOM_BAR_PC?: Record<string, unknown>;
 }
 
 function parseNestedPrice(value: unknown): number | null {
@@ -209,26 +210,56 @@ function parseSalePriceLocal(value?: string): number | null {
 function parseSkuPriceEntry(entry: MtopSkuPriceEntry): { price: number; currency: string } | null {
   const currency = entry.originalPrice?.currency ?? "GBP";
 
-  const regularPrice =
-    parseNestedPrice(entry.skuAmount) ??
-    parseNestedPrice(entry.taxIncludedPrice) ??
-    parseNestedPrice(entry.taxIncludedAmount);
+  // salePriceLocal is the localized display price; salePriceString is the main shelf price.
+  const shelfPrice =
+    parseSalePriceLocal(entry.salePriceLocal) ?? parseNumber(entry.salePriceString);
 
-  const activityPrice =
-    parseNestedPrice(entry.skuActivityAmount) ??
-    parseSalePriceLocal(entry.salePriceLocal) ??
-    parseNumber(entry.salePriceString);
-
-  if (regularPrice != null && activityPrice != null) {
-    // AliExpress often shows the standard shelf price while API also returns a lower coupon price.
-    return { price: Math.max(regularPrice, activityPrice), currency };
+  if (shelfPrice != null) {
+    return { price: shelfPrice, currency };
   }
 
-  if (regularPrice != null) return { price: regularPrice, currency };
-  if (activityPrice != null) return { price: activityPrice, currency };
+  const fallback =
+    parseNestedPrice(entry.taxIncludedPrice) ??
+    parseNestedPrice(entry.taxIncludedAmount) ??
+    parseNestedPrice(entry.skuAmount) ??
+    parseNestedPrice(entry.originalPrice);
 
-  const originalPrice = parseNestedPrice(entry.originalPrice);
-  if (originalPrice != null) return { price: originalPrice, currency };
+  if (fallback == null) return null;
+  return { price: fallback, currency };
+}
+
+function extractBottomBarPrice(
+  bottomBar?: Record<string, unknown>,
+): { price: number; currency: string } | null {
+  if (!bottomBar) return null;
+
+  const preferredKeys = [
+    "salePriceString",
+    "priceString",
+    "formattedPrice",
+    "displayPrice",
+    "price",
+    "salePrice",
+  ];
+
+  for (const key of preferredKeys) {
+    const value = bottomBar[key];
+    const parsed =
+      typeof value === "string" ? parseNumber(value) : parseNestedPrice(value);
+    if (parsed != null) return { price: parsed, currency: "GBP" };
+  }
+
+  return null;
+}
+
+function parseLimitFromNote(note?: string): number | null {
+  if (!note) return null;
+
+  const maxPerShopper = note.match(/Max\.?\s*(\d+)\s*pcs/i);
+  if (maxPerShopper) return Number(maxPerShopper[1]);
+
+  const onlyLeft = note.match(/Only\s+(\d+)\s+left/i);
+  if (onlyLeft) return Number(onlyLeft[1]);
 
   return null;
 }
@@ -297,14 +328,36 @@ function resolveSelectedSkuPrices(modules: MtopModuleMap): {
 }
 
 function extractDisplayPrice(modules: MtopModuleMap): { price: number; currency: string } | null {
-  const { primary, second } = resolveSelectedSkuPrices(modules);
-  const secondParsed = second ? parseSkuPriceEntry(second) : null;
-  const primaryParsed = primary ? parseSkuPriceEntry(primary) : null;
+  const bottomBarPrice = extractBottomBarPrice(modules.BOTTOM_BAR_PC);
+  if (bottomBarPrice) return bottomBarPrice;
 
-  // skuSecondPriceInfoMap is the standard shelf price without extra coupons/new-user discounts.
-  if (secondParsed) return secondParsed;
+  const { primary, second } = resolveSelectedSkuPrices(modules);
+
+  const primaryParsed = primary ? parseSkuPriceEntry(primary) : null;
+  const secondParsed = second ? parseSkuPriceEntry(second) : null;
+
+  if (primaryParsed && secondParsed) {
+    // Lower map often includes stacked coupons; page shows the higher SuperDeals price.
+    return primaryParsed.price >= secondParsed.price ? primaryParsed : secondParsed;
+  }
 
   if (primaryParsed) return primaryParsed;
+  if (secondParsed) return secondParsed;
+
+  const targetParsed = modules.PRICE?.targetSkuPriceInfo
+    ? parseSkuPriceEntry(modules.PRICE.targetSkuPriceInfo)
+    : null;
+  if (targetParsed) return targetParsed;
+
+  const skuPrices = Object.values(modules.PRICE?.skuPriceInfoMap ?? {})
+    .map((entry) => parseSkuPriceEntry(entry))
+    .filter((entry): entry is { price: number; currency: string } => entry != null);
+
+  if (skuPrices.length > 0) {
+    return skuPrices.reduce((lowest, current) =>
+      current.price < lowest.price ? current : lowest,
+    );
+  }
 
   const bannerPrice = findPriceInObject(modules.PRICE_BANNER);
   if (bannerPrice != null) {
@@ -324,25 +377,52 @@ function extractPurchaseLimit(
   selectedSkuId?: number | string,
 ): { stock: number | null; stockNote: string | null } {
   const quantity = modules.QUANTITY_PC;
+  if (!quantity) return { stock: null, stockNote: null };
+
   const skuIdKey = selectedSkuId != null ? String(selectedSkuId) : null;
+  const views: MtopQuantityView[] = [];
 
-  const currentView = quantity?.currentSkuQuantityView;
-  if (currentView?.maxBuyCount != null) {
+  if (quantity.currentSkuQuantityView) {
+    views.push(quantity.currentSkuQuantityView);
+  }
+
+  if (skuIdKey && quantity.allSkuQuantityView?.[skuIdKey]) {
+    views.push(quantity.allSkuQuantityView[skuIdKey]);
+  }
+
+  if (quantity.allSkuQuantityView) {
+    for (const view of Object.values(quantity.allSkuQuantityView)) {
+      if (!views.includes(view)) views.push(view);
+    }
+  }
+
+  const notes = views
+    .map((view) => view.maxBuyCountStr)
+    .filter((note): note is string => Boolean(note));
+
+  const perShopperLimits = notes
+    .map((note) => parseLimitFromNote(note))
+    .filter((limit): limit is number => limit != null);
+
+  if (perShopperLimits.length > 0) {
     return {
-      stock: currentView.maxBuyCount,
-      stockNote: currentView.maxBuyCountStr ?? null,
+      stock: Math.max(...perShopperLimits),
+      stockNote: notes.find((note) => /Max\.?\s*\d+\s*pcs/i.test(note)) ?? notes[0] ?? null,
     };
   }
 
-  if (skuIdKey && quantity?.allSkuQuantityView?.[skuIdKey]?.maxBuyCount != null) {
-    const skuView = quantity.allSkuQuantityView[skuIdKey];
+  const buyCounts = views
+    .map((view) => view.maxBuyCount)
+    .filter((count): count is number => count != null && count > 0);
+
+  if (buyCounts.length > 0) {
     return {
-      stock: skuView.maxBuyCount ?? null,
-      stockNote: skuView.maxBuyCountStr ?? null,
+      stock: Math.max(...buyCounts),
+      stockNote: notes[0] ?? null,
     };
   }
 
-  return { stock: null, stockNote: null };
+  return { stock: null, stockNote: notes[0] ?? null };
 }
 
 async function callMtopProductDetail(
