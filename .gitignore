@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Environment (never commit secrets)
+.env
+.env.local
+.env.*.local
+
+# Keep example env templates
+!.env.example
+
+# Next.js
+.next/
+out/
+
+# Logs & debug
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Vercel
+.vercel
