@@ -178,6 +178,66 @@ interface MtopModuleMap {
     allSkuQuantityView?: Record<string, MtopQuantityView>;
   };
   BOTTOM_BAR_PC?: Record<string, unknown>;
+  SKU?: Record<string, unknown>;
+}
+
+interface PriceHint {
+  price: number;
+  currency: string;
+  original?: number;
+}
+
+function extractPriceHintFromUrl(url: string): PriceHint | null {
+  try {
+    const npi = new URL(url).searchParams.get("pdp_npi");
+    if (!npi) return null;
+
+    const parts = decodeURIComponent(npi).split("!");
+    const currencyIndex = parts.findIndex((part) => /^[A-Z]{3}$/.test(part));
+    if (currencyIndex < 0 || currencyIndex + 2 >= parts.length) return null;
+
+    const currency = parts[currencyIndex];
+    const original = parseNumber(parts[currencyIndex + 1]);
+    const sale = parseNumber(parts[currencyIndex + 2]);
+    if (sale == null) return null;
+
+    return { price: sale, currency, original: original ?? undefined };
+  } catch {
+    return null;
+  }
+}
+
+function collectSkuSaleCandidates(entry: MtopSkuPriceEntry): number[] {
+  const original = parseNestedPrice(entry.originalPrice);
+  const raw = [
+    parseSalePriceLocal(entry.salePriceLocal),
+    parseNumber(entry.salePriceString),
+    parseNestedPrice(entry.taxIncludedPrice),
+    parseNestedPrice(entry.taxIncludedAmount),
+  ].filter((price): price is number => price != null && price > 0);
+
+  if (original != null && original > 0) {
+    return raw.filter((price) => price < original * 0.99);
+  }
+
+  return raw;
+}
+
+function pickDisplayPriceFromCandidates(candidates: number[]): number {
+  const unique = [...new Set(candidates)].sort((a, b) => b - a);
+  if (unique.length === 0) return 0;
+  if (unique.length === 1) return unique[0];
+
+  const highest = unique[0];
+  const secondHighest = unique[1];
+
+  // Drop deep personal-coupon outliers (e.g. £0.99 when shelf price is £2.07).
+  if (highest >= secondHighest * 1.4) {
+    const plausible = unique.filter((price) => price >= highest * 0.45);
+    return Math.max(...plausible);
+  }
+
+  return highest;
 }
 
 function parseNestedPrice(value: unknown): number | null {
@@ -209,20 +269,14 @@ function parseSalePriceLocal(value?: string): number | null {
 
 function parseSkuPriceEntry(entry: MtopSkuPriceEntry): { price: number; currency: string } | null {
   const currency = entry.originalPrice?.currency ?? "GBP";
+  const candidates = collectSkuSaleCandidates(entry);
 
-  // salePriceLocal is the localized display price; salePriceString is the main shelf price.
-  const shelfPrice =
-    parseSalePriceLocal(entry.salePriceLocal) ?? parseNumber(entry.salePriceString);
-
-  if (shelfPrice != null) {
-    return { price: shelfPrice, currency };
+  if (candidates.length > 0) {
+    return { price: pickDisplayPriceFromCandidates(candidates), currency };
   }
 
   const fallback =
-    parseNestedPrice(entry.taxIncludedPrice) ??
-    parseNestedPrice(entry.taxIncludedAmount) ??
-    parseNestedPrice(entry.skuAmount) ??
-    parseNestedPrice(entry.originalPrice);
+    parseNestedPrice(entry.skuAmount) ?? parseNestedPrice(entry.originalPrice);
 
   if (fallback == null) return null;
   return { price: fallback, currency };
@@ -327,49 +381,52 @@ function resolveSelectedSkuPrices(modules: MtopModuleMap): {
   return { primary, second };
 }
 
-function extractDisplayPrice(modules: MtopModuleMap): { price: number; currency: string } | null {
+function extractDisplayPrice(
+  modules: MtopModuleMap,
+  sourceUrl: string,
+): { price: number; currency: string } | null {
+  const urlHint = extractPriceHintFromUrl(sourceUrl);
+
+  const candidates: number[] = [];
+
   const bottomBarPrice = extractBottomBarPrice(modules.BOTTOM_BAR_PC);
-  if (bottomBarPrice) return bottomBarPrice;
+  if (bottomBarPrice) candidates.push(bottomBarPrice.price);
 
   const { primary, second } = resolveSelectedSkuPrices(modules);
+  const selectedId = modules.PRICE?.selectedSkuId;
+  const selectedKey = selectedId != null ? String(selectedId) : null;
 
-  const primaryParsed = primary ? parseSkuPriceEntry(primary) : null;
-  const secondParsed = second ? parseSkuPriceEntry(second) : null;
-
-  if (primaryParsed && secondParsed) {
-    // Lower map often includes stacked coupons; page shows the higher SuperDeals price.
-    return primaryParsed.price >= secondParsed.price ? primaryParsed : secondParsed;
-  }
-
-  if (primaryParsed) return primaryParsed;
-  if (secondParsed) return secondParsed;
-
-  const targetParsed = modules.PRICE?.targetSkuPriceInfo
-    ? parseSkuPriceEntry(modules.PRICE.targetSkuPriceInfo)
-    : null;
-  if (targetParsed) return targetParsed;
-
-  const skuPrices = Object.values(modules.PRICE?.skuPriceInfoMap ?? {})
-    .map((entry) => parseSkuPriceEntry(entry))
-    .filter((entry): entry is { price: number; currency: string } => entry != null);
-
-  if (skuPrices.length > 0) {
-    return skuPrices.reduce((lowest, current) =>
-      current.price < lowest.price ? current : lowest,
-    );
+  for (const entry of [
+    primary,
+    second,
+    modules.PRICE?.targetSkuPriceInfo,
+    selectedKey ? modules.PRICE?.skuPriceInfoMap?.[selectedKey] : null,
+    selectedKey ? modules.PRICE?.skuSecondPriceInfoMap?.[selectedKey] : null,
+  ]) {
+    if (!entry) continue;
+    candidates.push(...collectSkuSaleCandidates(entry));
   }
 
   const bannerPrice = findPriceInObject(modules.PRICE_BANNER);
-  if (bannerPrice != null) {
-    return { price: bannerPrice, currency: "GBP" };
+  if (bannerPrice != null) candidates.push(bannerPrice);
+
+  let currency = primary?.originalPrice?.currency ?? urlHint?.currency ?? "GBP";
+  let price: number | null = candidates.length > 0 ? pickDisplayPriceFromCandidates(candidates) : null;
+
+  if (urlHint) {
+    if (price == null || price < urlHint.price * 0.75) {
+      price = urlHint.price;
+      currency = urlHint.currency;
+    }
   }
 
-  const extendPrice = findPriceInObject(modules.PRICE_EXTEND);
-  if (extendPrice != null) {
-    return { price: extendPrice, currency: "GBP" };
+  if (price == null) {
+    const extendPrice = findPriceInObject(modules.PRICE_EXTEND);
+    if (extendPrice != null) price = extendPrice;
   }
 
-  return null;
+  if (price == null) return null;
+  return { price, currency };
 }
 
 function extractPurchaseLimit(
@@ -377,6 +434,19 @@ function extractPurchaseLimit(
   selectedSkuId?: number | string,
 ): { stock: number | null; stockNote: string | null } {
   const quantity = modules.QUANTITY_PC;
+
+  const blobLimits: number[] = [];
+  for (const blob of [JSON.stringify(quantity ?? {}), JSON.stringify(modules.SKU ?? {})]) {
+    for (const match of blob.matchAll(/Max\.?\s*(\d+)\s*pcs/gi)) {
+      blobLimits.push(Number(match[1]));
+    }
+  }
+
+  if (blobLimits.length > 0) {
+    const max = Math.max(...blobLimits);
+    return { stock: max, stockNote: `Max. ${max} pcs/shopper` };
+  }
+
   if (!quantity) return { stock: null, stockNote: null };
 
   const skuIdKey = selectedSkuId != null ? String(selectedSkuId) : null;
@@ -490,6 +560,7 @@ function parseMtopProduct(
   modules: MtopModuleMap,
   productId: string,
   productUrl: string,
+  sourceUrl: string,
 ): HandlingProductData | null {
   const errorCode = modules.GLOBAL_DATA?.globalData?.errorCode;
   if (errorCode === "SITEM_NOT_EXIST") {
@@ -499,7 +570,7 @@ function parseMtopProduct(
   const title = modules.PRODUCT_TITLE?.text?.trim();
   if (!title) return null;
 
-  const priceResult = extractDisplayPrice(modules);
+  const priceResult = extractDisplayPrice(modules, sourceUrl);
   if (!priceResult) return null;
 
   const { price, currency } = priceResult;
@@ -530,7 +601,11 @@ function parseMtopProduct(
   };
 }
 
-async function fetchViaMtop(productId: string, productUrl: string): Promise<HandlingProductData | null> {
+async function fetchViaMtop(
+  productId: string,
+  productUrl: string,
+  sourceUrl: string,
+): Promise<HandlingProductData | null> {
   let cookies = await bootstrapMtopCookies();
   let modules = await callMtopProductDetail(productId, cookies);
 
@@ -541,7 +616,7 @@ async function fetchViaMtop(productId: string, productUrl: string): Promise<Hand
 
   if (!modules) return null;
 
-  return parseMtopProduct(modules, productId, productUrl);
+  return parseMtopProduct(modules, productId, productUrl, sourceUrl);
 }
 
 async function callAffiliateApi(productId: string): Promise<HandlingProductData | null> {
@@ -684,7 +759,7 @@ export async function fetchAliExpressProduct(url: string): Promise<HandlingProdu
       ? resolvedUrl.split("?")[0]
       : `https://www.aliexpress.com/item/${productId}.html`;
 
-  const mtopProduct = await fetchViaMtop(productId, canonicalUrl);
+  const mtopProduct = await fetchViaMtop(productId, canonicalUrl, trimmedUrl);
   if (mtopProduct) return mtopProduct;
 
   const apiProduct = await callAffiliateApi(productId);

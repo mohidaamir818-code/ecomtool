@@ -1,5 +1,7 @@
-// Unit tests for parsing logic (no live API needed)
 import assert from "node:assert/strict";
+
+const testUrl =
+  "https://www.aliexpress.com/item/1005010230088708.html?pdp_npi=6%40dis%21GBP%215.19%212.18%21%21%2145.73%2119.22";
 
 function parseNumber(value) {
   if (value == null) return null;
@@ -7,53 +9,40 @@ function parseNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function parseSalePriceLocal(value) {
-  if (!value) return null;
-  const leading = value.split("|")[0];
-  const fromLeading = parseNumber(leading);
-  if (fromLeading != null) return fromLeading;
-  const parts = value.split("|");
-  if (parts.length >= 3) {
-    const whole = parseNumber(parts[1]);
-    const fraction = parts[2];
-    if (whole != null && fraction) return parseNumber(`${whole}.${fraction.padStart(2, "0")}`);
+function extractPriceHintFromUrl(url) {
+  const npi = new URL(url).searchParams.get("pdp_npi");
+  if (!npi) return null;
+  const parts = decodeURIComponent(npi).split("!");
+  const currencyIndex = parts.findIndex((part) => /^[A-Z]{3}$/.test(part));
+  if (currencyIndex < 0 || currencyIndex + 2 >= parts.length) return null;
+  const currency = parts[currencyIndex];
+  const original = parseNumber(parts[currencyIndex + 1]);
+  const sale = parseNumber(parts[currencyIndex + 2]);
+  if (sale == null) return null;
+  return { price: sale, currency, original: original ?? undefined };
+}
+
+function pickDisplayPriceFromCandidates(candidates) {
+  const unique = [...new Set(candidates)].sort((a, b) => b - a);
+  if (unique.length === 1) return unique[0];
+  const highest = unique[0];
+  const secondHighest = unique[1];
+  if (highest >= secondHighest * 1.4) {
+    const plausible = unique.filter((price) => price >= highest * 0.45);
+    return Math.max(...plausible);
   }
-  return null;
+  return highest;
 }
 
-function parseSkuPriceEntry(entry) {
-  const currency = entry.originalPrice?.currency ?? "GBP";
-  const shelfPrice =
-    parseSalePriceLocal(entry.salePriceLocal) ?? parseNumber(entry.salePriceString);
-  if (shelfPrice != null) return { price: shelfPrice, currency };
-  return null;
-}
+const hint = extractPriceHintFromUrl(testUrl);
+assert.equal(hint?.price, 2.18, "URL hint should parse sale price 2.18");
+assert.equal(hint?.currency, "GBP");
 
-function parseLimitFromNote(note) {
-  if (!note) return null;
-  const maxPerShopper = note.match(/Max\.?\s*(\d+)\s*pcs/i);
-  if (maxPerShopper) return Number(maxPerShopper[1]);
-  const onlyLeft = note.match(/Only\s+(\d+)\s+left/i);
-  if (onlyLeft) return Number(onlyLeft[1]);
-  return null;
-}
+const picked = pickDisplayPriceFromCandidates([0.99, 2.07, 2.18]);
+assert.equal(picked, 2.18, "should drop 0.99 coupon outlier");
 
-// Vacuum product: API may return coupon price in salePriceString but display price in salePriceLocal
-const vacuumPrice = parseSkuPriceEntry({
-  salePriceString: "￡3.74",
-  salePriceLocal: "￡5.08|5|08",
-  originalPrice: { value: 10.62, currency: "GBP" },
-});
-assert.equal(vacuumPrice.price, 5.08, "price should be 5.08 not 3.74");
+const limitBlob = JSON.stringify({ maxBuyCount: 1, maxBuyCountStr: "Max. 10 pcs/shopper" });
+const match = [...limitBlob.matchAll(/Max\.?\s*(\d+)\s*pcs/gi)][0];
+assert.equal(Number(match[1]), 10);
 
-// Higher of two SKU price maps
-const primary = parseSkuPriceEntry({ salePriceString: "￡3.74" });
-const second = parseSkuPriceEntry({ salePriceString: "￡5.08" });
-const picked = primary.price >= second.price ? primary : second;
-assert.equal(picked.price, 5.08, "should pick higher shelf price");
-
-// Max qty from shopper limit text
-assert.equal(parseLimitFromNote("Max. 10 pcs/shopper"), 10);
-assert.equal(parseLimitFromNote("Only 8 left"), 8);
-
-console.log("All parsing tests passed.");
+console.log("All tests passed.");
