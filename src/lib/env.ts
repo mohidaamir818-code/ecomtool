@@ -16,6 +16,8 @@ export const serverEnv = {
     process.env.ALIEXPRESS_APP_SECRET ??
     process.env.ALIEXPRESS_APP__SECRET ??
     "",
+  aliexpressAccessToken: () => process.env.ALIEXPRESS_ACCESS_TOKEN ?? "",
+  aliexpressRefreshToken: () => process.env.ALIEXPRESS_REFRESH_TOKEN ?? "",
   aliexpressApiKey: () => process.env.ALIEXPRESS_API_KEY ?? "",
   ebayAppId: () => process.env.EBAY_APP_ID ?? "",
   ebayCertId: () => process.env.EBAY_CERT_ID ?? "",

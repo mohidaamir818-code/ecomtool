@@ -2,6 +2,7 @@ import "server-only";
 
 import crypto from "crypto";
 import { serverEnv } from "@/lib/env";
+import { getAliExpressAccessToken } from "@/lib/aliexpress/oauth";
 import type { HandlingProductData } from "@/types/handling";
 
 const MTOP_APP_KEY = "12574478";
@@ -24,8 +25,9 @@ function formatTimestamp(): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 }
 
-function signAffiliateParams(params: Record<string, string>, secret: string): string {
+function signMd5Params(params: Record<string, string>, secret: string): string {
   const sorted = Object.keys(params)
+    .filter((key) => key !== "sign")
     .sort()
     .map((key) => `${key}${params[key]}`)
     .join("");
@@ -35,6 +37,17 @@ function signAffiliateParams(params: Record<string, string>, secret: string): st
     .update(`${secret}${sorted}${secret}`, "utf8")
     .digest("hex")
     .toUpperCase();
+}
+
+function signHmacSha256Params(params: Record<string, string>, secret: string): string {
+  const method = params.method;
+  const sorted = Object.keys(params)
+    .filter((key) => key !== "sign")
+    .sort()
+    .map((key) => `${key}${params[key]}`)
+    .join("");
+
+  return crypto.createHmac("sha256", secret).update(`${method}${sorted}`, "utf8").digest("hex").toUpperCase();
 }
 
 function parseNumber(value: unknown): number | null {
@@ -619,7 +632,14 @@ async function fetchViaMtop(
   return parseMtopProduct(modules, productId, productUrl, sourceUrl);
 }
 
-async function callAffiliateApi(productId: string): Promise<HandlingProductData | null> {
+async function callOpenPlatformApi(
+  method: string,
+  businessParams: Record<string, string>,
+  options: {
+    signMethod: "md5" | "sha256";
+    accessToken?: string;
+  },
+): Promise<Record<string, unknown> | null> {
   const appKey = serverEnv.aliexpressAppKey();
   const appSecret = serverEnv.aliexpressAppSecret();
 
@@ -627,17 +647,25 @@ async function callAffiliateApi(productId: string): Promise<HandlingProductData 
 
   const params: Record<string, string> = {
     app_key: appKey,
-    method: "aliexpress.affiliate.productdetail.get",
-    sign_method: "md5",
-    timestamp: formatTimestamp(),
+    method,
     format: "json",
-    v: "2.0",
-    product_ids: productId,
-    target_currency: "GBP",
-    target_language: "EN",
+    ...businessParams,
   };
 
-  params.sign = signAffiliateParams(params, appSecret);
+  if (options.signMethod === "md5") {
+    params.sign_method = "md5";
+    params.v = "2.0";
+    params.timestamp = formatTimestamp();
+    params.sign = signMd5Params(params, appSecret);
+  } else {
+    params.sign_method = "sha256";
+    params.timestamp = String(Date.now());
+    params.simplify = "true";
+    if (options.accessToken) {
+      params.session = options.accessToken;
+    }
+    params.sign = signHmacSha256Params(params, appSecret);
+  }
 
   try {
     const response = await fetch(AFFILIATE_ENDPOINT, {
@@ -649,39 +677,173 @@ async function callAffiliateApi(productId: string): Promise<HandlingProductData 
       cache: "no-store",
     });
 
-    const payload = await response.json();
-    const result =
-      payload?.aliexpress_affiliate_productdetail_get_response?.resp_result?.result
-        ?.products?.product?.[0] ??
-      payload?.aliexpress_affiliate_productdetail_get_response?.resp_result?.result
-        ?.products?.[0];
+    const payload = (await response.json()) as Record<string, unknown>;
+    if (payload.error_response) return null;
 
-    if (!result) return null;
-
-    const price = parseNumber(
-      result.target_sale_price ??
-        result.target_app_sale_price ??
-        result.sale_price ??
-        result.app_sale_price,
-    );
-
-    if (!result.product_title || price == null) return null;
-
-    return {
-      source: "aliexpress",
-      externalId: String(result.product_id ?? productId),
-      productUrl: result.product_detail_url ?? `https://www.aliexpress.com/item/${productId}.html`,
-      title: String(result.product_title),
-      imageUrl: result.product_main_image_url ?? result.product_small_image_urls?.string?.[0] ?? null,
-      price,
-      currency: String(result.target_sale_price_currency ?? "GBP"),
-      stock: null,
-      orders: result.lastest_volume != null ? String(result.lastest_volume) : null,
-      rating: parseNumber(result.evaluate_rate),
-    };
+    return payload;
   } catch {
     return null;
   }
+}
+
+function normalizeDsSkuList(raw: unknown): Array<Record<string, unknown>> {
+  if (!raw || typeof raw !== "object") return [];
+
+  const record = raw as Record<string, unknown>;
+  const nested =
+    record.ae_item_sku_info_d_t_o ??
+    record.ae_item_sku_info_dto ??
+    record.ae_item_sku_info_DTO;
+
+  if (Array.isArray(nested)) return nested as Array<Record<string, unknown>>;
+  if (nested && typeof nested === "object") return [nested as Record<string, unknown>];
+  if (Array.isArray(raw)) return raw as Array<Record<string, unknown>>;
+
+  return [];
+}
+
+function parseDsProductPayload(
+  payload: Record<string, unknown>,
+  productId: string,
+): HandlingProductData | null {
+  const response = payload.aliexpress_ds_product_get_response as
+    | { result?: Record<string, unknown> }
+    | undefined;
+  const result = response?.result;
+  if (!result) return null;
+
+  const base = result.ae_item_base_info_dto as Record<string, unknown> | undefined;
+  const title = base?.subject ? String(base.subject) : null;
+  if (!title) return null;
+
+  const skus = normalizeDsSkuList(result.ae_item_sku_info_dtos);
+  let price: number | null = null;
+  let stock: number | null = null;
+  let currency = base?.currency_code ? String(base.currency_code) : "GBP";
+
+  for (const sku of skus) {
+    const skuPrice = parseNumber(sku.offer_sale_price ?? sku.sku_price);
+    const skuStock = parseNumber(
+      sku.sku_available_stock ?? sku.s_k_u_available_stock ?? sku.ipm_sku_stock,
+    );
+
+    if (skuPrice != null && (price == null || skuPrice < price)) {
+      price = skuPrice;
+      stock = skuStock;
+      if (sku.currency_code) currency = String(sku.currency_code);
+    }
+  }
+
+  if (price == null) return null;
+
+  const multimedia = result.ae_multimedia_info_dto as Record<string, unknown> | undefined;
+  const imageUrls = multimedia?.image_urls as { string?: string[] } | string[] | undefined;
+  const imageUrl = Array.isArray(imageUrls)
+    ? imageUrls[0]
+    : imageUrls?.string?.[0] ?? null;
+
+  return {
+    source: "aliexpress",
+    externalId: String(base?.product_id ?? productId),
+    productUrl: `https://www.aliexpress.com/item/${productId}.html`,
+    title,
+    imageUrl: imageUrl ? String(imageUrl) : null,
+    price,
+    currency,
+    stock,
+    orders: base?.evaluation_count ? String(base.evaluation_count) : null,
+    rating: parseNumber(base?.avg_evaluation_rating),
+  };
+}
+
+async function callAffiliateProductApi(productId: string): Promise<HandlingProductData | null> {
+  const payload = await callOpenPlatformApi(
+    "aliexpress.affiliate.productdetail.get",
+    {
+      product_ids: productId,
+      target_currency: "GBP",
+      target_language: "EN",
+    },
+    { signMethod: "md5" },
+  );
+
+  if (!payload) return null;
+
+  const affiliateResponse = payload.aliexpress_affiliate_productdetail_get_response as
+    | {
+        resp_result?: {
+          result?: {
+            products?: { product?: unknown[] } | unknown[];
+          };
+        };
+      }
+    | undefined;
+
+  const products = affiliateResponse?.resp_result?.result?.products;
+  const result = Array.isArray(products)
+    ? products[0]
+    : products?.product?.[0];
+
+  if (!result || typeof result !== "object") return null;
+
+  const item = result as Record<string, unknown>;
+  const price = parseNumber(
+    item.target_sale_price ??
+      item.target_app_sale_price ??
+      item.sale_price ??
+      item.app_sale_price,
+  );
+
+  if (!item.product_title || price == null) return null;
+
+  const imageUrls = item.product_small_image_urls as { string?: string[] } | undefined;
+
+  return {
+    source: "aliexpress",
+    externalId: String(item.product_id ?? productId),
+    productUrl:
+      String(item.product_detail_url ?? `https://www.aliexpress.com/item/${productId}.html`),
+    title: String(item.product_title),
+    imageUrl:
+      (item.product_main_image_url ? String(item.product_main_image_url) : null) ??
+      imageUrls?.string?.[0] ??
+      null,
+    price,
+    currency: String(item.target_sale_price_currency ?? "GBP"),
+    stock: null,
+    orders: item.lastest_volume != null ? String(item.lastest_volume) : null,
+    rating: parseNumber(item.evaluate_rate),
+  };
+}
+
+async function callDropshipProductApi(productId: string): Promise<HandlingProductData | null> {
+  const accessToken = await getAliExpressAccessToken();
+  if (!accessToken) return null;
+
+  const payload = await callOpenPlatformApi(
+    "aliexpress.ds.product.get",
+    {
+      product_id: productId,
+      ship_to_country: "GB",
+      target_currency: "GBP",
+      target_language: "EN",
+    },
+    { signMethod: "sha256", accessToken },
+  );
+
+  if (!payload) return null;
+
+  return parseDsProductPayload(payload, productId);
+}
+
+async function fetchViaOpenPlatform(productId: string): Promise<HandlingProductData | null> {
+  const affiliateProduct = await callAffiliateProductApi(productId);
+  if (affiliateProduct) return affiliateProduct;
+
+  const dropshipProduct = await callDropshipProductApi(productId);
+  if (dropshipProduct) return dropshipProduct;
+
+  return null;
 }
 
 async function scrapeAliExpressHtml(url: string, productId: string): Promise<HandlingProductData | null> {
@@ -759,11 +921,11 @@ export async function fetchAliExpressProduct(url: string): Promise<HandlingProdu
       ? resolvedUrl.split("?")[0]
       : `https://www.aliexpress.com/item/${productId}.html`;
 
+  const openPlatformProduct = await fetchViaOpenPlatform(productId);
+  if (openPlatformProduct) return openPlatformProduct;
+
   const mtopProduct = await fetchViaMtop(productId, canonicalUrl, trimmedUrl);
   if (mtopProduct) return mtopProduct;
-
-  const apiProduct = await callAffiliateApi(productId);
-  if (apiProduct) return apiProduct;
 
   const htmlProduct = await scrapeAliExpressHtml(canonicalUrl, productId);
   if (htmlProduct) return htmlProduct;

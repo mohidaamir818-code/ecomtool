@@ -1,0 +1,219 @@
+import "server-only";
+
+import crypto from "crypto";
+import { getSupabaseAdmin } from "@/lib/supabase/server";
+import { serverEnv } from "@/lib/env";
+
+const AUTH_BASE = "https://api-sg.aliexpress.com";
+
+interface TokenResponse {
+  access_token?: string;
+  refresh_token?: string;
+  expires_in?: number;
+  refresh_token_valid_time?: number;
+  token_type?: string;
+  scope?: string;
+}
+
+function signSha256(params: Record<string, string>, secret: string): string {
+  const method = params.method;
+  const sorted = Object.keys(params)
+    .filter((key) => key !== "sign")
+    .sort()
+    .map((key) => `${key}${params[key]}`)
+    .join("");
+
+  return crypto
+    .createHmac("sha256", secret)
+    .update(`${method}${sorted}`, "utf8")
+    .digest("hex")
+    .toUpperCase();
+}
+
+function computeExpiry(seconds?: number): string | null {
+  if (!seconds || seconds <= 0) return null;
+  return new Date(Date.now() + seconds * 1000).toISOString();
+}
+
+function extractTokenPayload(payload: unknown): TokenResponse | null {
+  if (!payload || typeof payload !== "object") return null;
+  const record = payload as Record<string, unknown>;
+
+  if (record.error_response) return null;
+
+  return {
+    access_token:
+      typeof record.access_token === "string"
+        ? record.access_token
+        : undefined,
+    refresh_token:
+      typeof record.refresh_token === "string"
+        ? record.refresh_token
+        : undefined,
+    expires_in:
+      typeof record.expires_in === "number"
+        ? record.expires_in
+        : typeof record.expires_in === "string"
+          ? Number(record.expires_in)
+          : undefined,
+    refresh_token_valid_time:
+      typeof record.refresh_token_valid_time === "number"
+        ? record.refresh_token_valid_time
+        : typeof record.refresh_token_valid_time === "string"
+          ? Number(record.refresh_token_valid_time)
+          : undefined,
+    token_type:
+      typeof record.token_type === "string" ? record.token_type : undefined,
+    scope: typeof record.scope === "string" ? record.scope : undefined,
+  };
+}
+
+async function callAuthApi(
+  method: "/auth/token/create" | "/auth/token/refresh",
+  businessParams: Record<string, string>,
+): Promise<{ token: TokenResponse | null; raw: unknown }> {
+  const appKey = serverEnv.aliexpressAppKey();
+  const appSecret = serverEnv.aliexpressAppSecret();
+  if (!appKey || !appSecret) return { token: null, raw: null };
+
+  const params: Record<string, string> = {
+    app_key: appKey,
+    method,
+    sign_method: "sha256",
+    timestamp: String(Date.now()),
+    format: "json",
+    simplify: "true",
+    ...businessParams,
+  };
+  params.sign = signSha256(params, appSecret);
+
+  const response = await fetch(`${AUTH_BASE}/sync`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
+    },
+    body: new URLSearchParams(params),
+    cache: "no-store",
+  });
+
+  const raw = (await response.json()) as unknown;
+  return { token: extractTokenPayload(raw), raw };
+}
+
+async function persistAliExpressTokens(token: TokenResponse, raw: unknown): Promise<void> {
+  if (!token.access_token || !token.refresh_token) return;
+
+  const supabase = getSupabaseAdmin();
+  const { error } = await supabase.from("aliexpress_oauth_tokens").upsert(
+    {
+      provider: "aliexpress",
+      access_token: token.access_token,
+      refresh_token: token.refresh_token,
+      access_token_expires_at: computeExpiry(token.expires_in),
+      refresh_token_expires_at: computeExpiry(token.refresh_token_valid_time),
+      scope: token.scope ?? null,
+      token_type: token.token_type ?? null,
+      raw_response: raw,
+    },
+    { onConflict: "provider" },
+  );
+
+  if (error) {
+    throw new Error(`Failed to save AliExpress OAuth token: ${error.message}`);
+  }
+}
+
+export function buildAliExpressAuthorizeUrl(baseUrl: string, state: string): string {
+  const appKey = serverEnv.aliexpressAppKey();
+  const callback =
+    process.env.ALIEXPRESS_OAUTH_REDIRECT_URL?.trim() ||
+    `${baseUrl}/api/aliexpress/callback`;
+
+  const params = new URLSearchParams({
+    response_type: "code",
+    force_auth: "true",
+    client_id: appKey,
+    redirect_url: callback,
+    state,
+  });
+
+  return `${AUTH_BASE}/oauth/authorize?${params.toString()}`;
+}
+
+export async function exchangeAliExpressCode(code: string): Promise<void> {
+  const { token, raw } = await callAuthApi("/auth/token/create", { code });
+  if (!token?.access_token || !token.refresh_token) {
+    throw new Error("AliExpress OAuth code exchange failed.");
+  }
+  await persistAliExpressTokens(token, raw);
+}
+
+export async function refreshAliExpressToken(refreshToken: string): Promise<string | null> {
+  const { token, raw } = await callAuthApi("/auth/token/refresh", {
+    refresh_token: refreshToken,
+  });
+
+  if (!token?.access_token || !token.refresh_token) {
+    return null;
+  }
+
+  await persistAliExpressTokens(token, raw);
+  return token.access_token;
+}
+
+export async function getAliExpressAccessToken(): Promise<string | null> {
+  const envToken = serverEnv.aliexpressAccessToken();
+  if (envToken) return envToken;
+
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("aliexpress_oauth_tokens")
+    .select(
+      "access_token, refresh_token, access_token_expires_at, refresh_token_expires_at",
+    )
+    .eq("provider", "aliexpress")
+    .maybeSingle();
+
+  if (error || !data) return null;
+
+  const expiresAt = data.access_token_expires_at
+    ? new Date(data.access_token_expires_at)
+    : null;
+  const now = Date.now();
+  const hasValidAccessToken =
+    !expiresAt || expiresAt.getTime() - now > 5 * 60 * 1000;
+
+  if (hasValidAccessToken && data.access_token) {
+    return data.access_token;
+  }
+
+  if (!data.refresh_token) return null;
+
+  const refreshExpiresAt = data.refresh_token_expires_at
+    ? new Date(data.refresh_token_expires_at)
+    : null;
+  if (refreshExpiresAt && refreshExpiresAt.getTime() <= now) {
+    return null;
+  }
+
+  return refreshAliExpressToken(data.refresh_token);
+}
+
+export async function getAliExpressTokenStatus(): Promise<{
+  connected: boolean;
+  accessTokenExpiresAt: string | null;
+  refreshTokenExpiresAt: string | null;
+}> {
+  const supabase = getSupabaseAdmin();
+  const { data } = await supabase
+    .from("aliexpress_oauth_tokens")
+    .select("access_token_expires_at, refresh_token_expires_at")
+    .eq("provider", "aliexpress")
+    .maybeSingle();
+
+  return {
+    connected: Boolean(data),
+    accessTokenExpiresAt: data?.access_token_expires_at ?? null,
+    refreshTokenExpiresAt: data?.refresh_token_expires_at ?? null,
+  };
+}
