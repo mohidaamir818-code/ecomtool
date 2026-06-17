@@ -1,15 +1,14 @@
 export interface EbayListing {
   id: string;
   title: string;
+  variantLabel: string | null;
   sellerName: string;
   hasVariations: boolean;
-  priceMin: number;
-  priceMax: number;
+  price: number;
   priceLabel: string;
   shippingCost: number | null;
   shippingLabel: string;
   totalPrice: number;
-  totalPriceMax: number;
   totalPriceLabel: string;
   currency: string;
   condition: string;
@@ -22,7 +21,10 @@ export interface EbaySearchResponse {
   error?: string;
   query?: string;
   listings?: EbayListing[];
+  /** eBay search hit count (parent listings) */
   total?: number;
+  /** Expanded row count returned for this page */
+  offerCount?: number;
   offset?: number;
   limit?: number;
   sort?: "asc" | "desc";

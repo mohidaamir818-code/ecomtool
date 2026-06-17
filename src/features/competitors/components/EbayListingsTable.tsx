@@ -5,6 +5,7 @@ import type { EbayListing } from "@/types/ebay";
 interface EbayListingsTableProps {
   listings: EbayListing[];
   total: number;
+  offerCount: number;
   offset: number;
   limit: number;
   sort: "asc" | "desc";
@@ -18,6 +19,7 @@ interface EbayListingsTableProps {
 export function EbayListingsTable({
   listings,
   total,
+  offerCount,
   offset,
   limit,
   sort,
@@ -34,7 +36,7 @@ export function EbayListingsTable({
       ? listings.filter((listing) => listing.totalPrice <= alertBelow).length
       : 0;
 
-  if (total === 0 && !isLoading) {
+  if (offerCount === 0 && !isLoading) {
     return (
       <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center shadow-sm">
         <p className="text-lg font-bold text-[#111827]">No listings found</p>
@@ -53,10 +55,12 @@ export function EbayListingsTable({
             {total.toLocaleString()} listing{total === 1 ? "" : "s"} on eBay UK
           </p>
           <p className="mt-0.5 text-xs text-[#6B7280]">
-            Showing {offset + 1}–{Math.min(offset + listings.length, total)} of {total.toLocaleString()}
+            {offerCount} offer{offerCount === 1 ? "" : "s"} on this page (exact variant prices)
+            {" · "}
+            Listings {offset + 1}–{Math.min(offset + limit, total)} of {total.toLocaleString()}
             {alertBelow !== null && alertCount > 0 && (
               <span className="ml-2 font-medium text-amber-600">
-                · {alertCount} below £{alertBelow.toFixed(2)} on this page
+                · {alertCount} below £{alertBelow.toFixed(2)}
               </span>
             )}
           </p>
@@ -86,11 +90,12 @@ export function EbayListingsTable({
 
       <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] text-left text-sm">
+          <table className="w-full min-w-[800px] text-left text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50/80 text-xs font-semibold uppercase tracking-wide text-[#6B7280]">
                 <th className="px-4 py-3">Seller</th>
                 <th className="px-4 py-3">Listing</th>
+                <th className="px-4 py-3">Variant</th>
                 <th className="px-4 py-3">Condition</th>
                 <th className="px-4 py-3">Price</th>
                 <th className="px-4 py-3">Shipping</th>
@@ -101,7 +106,7 @@ export function EbayListingsTable({
             <tbody className="divide-y divide-gray-50">
               {isLoading && listings.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-16 text-center text-[#6B7280]">
+                  <td colSpan={8} className="px-4 py-16 text-center text-[#6B7280]">
                     <svg
                       className="mx-auto mb-3 h-7 w-7 animate-spin text-brand"
                       viewBox="0 0 24 24"
@@ -122,7 +127,7 @@ export function EbayListingsTable({
                         d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
                       />
                     </svg>
-                    Loading eBay listings...
+                    Loading accurate eBay prices...
                   </td>
                 </tr>
               ) : (
@@ -150,7 +155,7 @@ export function EbayListingsTable({
                           <span className="font-medium text-[#111827]">{listing.sellerName}</span>
                         </div>
                       </td>
-                      <td className="max-w-[240px] px-4 py-3">
+                      <td className="max-w-[220px] px-4 py-3">
                         <div className="space-y-1.5">
                           {listing.hasVariations && (
                             <span className="inline-flex rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700">
@@ -161,6 +166,9 @@ export function EbayListingsTable({
                             {listing.title}
                           </p>
                         </div>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-[#6B7280]">
+                        {listing.variantLabel ?? "—"}
                       </td>
                       <td className="px-4 py-3 text-[#6B7280]">{listing.condition}</td>
                       <td className="px-4 py-3 font-semibold text-[#111827]">{listing.priceLabel}</td>

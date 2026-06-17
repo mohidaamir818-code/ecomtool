@@ -5,6 +5,8 @@ node_modules/
 .env
 .env.local
 .env.*.local
+.env.development
+.env.production
 
 # Keep example env templates
 !.env.example
@@ -32,8 +34,9 @@ next-env.d.ts
 # Vercel
 .vercel
 
-# Local debug API captures (may contain signed responses or tokens)
-scripts/ds-raw-*.json
-scripts/debug-*.json
-scripts/mtop-*.json
-scripts/ae-sample.html
+# Local debug scripts output (never commit API captures or tokens)
+scripts/*.json
+scripts/*.html
+scripts/ds-raw-*
+scripts/debug-*
+scripts/mtop-*

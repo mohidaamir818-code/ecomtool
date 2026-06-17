@@ -5,7 +5,7 @@ export async function GET(request: NextRequest) {
   try {
     const query = request.nextUrl.searchParams.get("q")?.trim() ?? "";
     const offset = Number(request.nextUrl.searchParams.get("offset") ?? 0);
-    const limit = Number(request.nextUrl.searchParams.get("limit") ?? 50);
+    const limit = Number(request.nextUrl.searchParams.get("limit") ?? 25);
     const sortParam = request.nextUrl.searchParams.get("sort");
     const sort = sortParam === "desc" ? "desc" : "asc";
 
@@ -23,6 +23,7 @@ export async function GET(request: NextRequest) {
       query,
       listings: result.listings,
       total: result.total,
+      offerCount: result.offerCount,
       offset: result.offset,
       limit: result.limit,
       sort,

@@ -25,12 +25,13 @@ type EbaySearchState = {
   alertBelow: number | null;
   listings: EbayListing[];
   total: number;
+  offerCount: number;
   offset: number;
   limit: number;
   sort: "asc" | "desc";
 };
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 25;
 
 export function CompetitorsShell() {
   const [platform, setPlatform] = useState<Platform>("amazef");
@@ -129,6 +130,7 @@ export function CompetitorsShell() {
           alertBelow: params.alertBelow,
           listings: data.listings ?? [],
           total: data.total ?? 0,
+          offerCount: data.offerCount ?? data.listings?.length ?? 0,
           offset: data.offset ?? offset,
           limit: data.limit ?? PAGE_SIZE,
           sort: data.sort ?? sort,
@@ -318,6 +320,7 @@ export function CompetitorsShell() {
                   <EbayListingsTable
                     listings={ebaySearch.listings}
                     total={ebaySearch.total}
+                    offerCount={ebaySearch.offerCount}
                     offset={ebaySearch.offset}
                     limit={ebaySearch.limit}
                     sort={ebaySearch.sort}
@@ -353,16 +356,14 @@ export function CompetitorsShell() {
               <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
                 <h3 className="text-sm font-semibold text-[#111827]">eBay Browse API</h3>
                 <p className="mt-2 text-sm leading-relaxed text-[#6B7280]">
-                  Results come directly from eBay UK. Each row shows seller, item price, shipping,
-                  condition, and a link to the listing. Sort by total price and optionally highlight
-                  listings below your alert threshold.
+                  Each row is an exact eBay offer: variant listings are expanded so you see the real
+                  price per colour/size, with shipping and a direct link to that variant on eBay UK.
                 </p>
                 <ul className="mt-4 space-y-2 text-xs text-[#6B7280]">
-                  <li>· Seller: <span className="text-[#374151]">seller.username</span></li>
-                  <li>· Price: <span className="text-[#374151]">price.value</span></li>
-                  <li>· Shipping: <span className="text-[#374151]">shippingOptions[0].shippingCost</span></li>
-                  <li>· Condition: <span className="text-[#374151]">condition</span></li>
-                  <li>· Link: <span className="text-[#374151]">itemWebUrl</span></li>
+                  <li>· Variation listings → one row per variant</li>
+                  <li>· Single listings → full item detail from eBay</li>
+                  <li>· Shipping uses lowest tier across all options</li>
+                  <li>· Links open the exact variant on eBay</li>
                 </ul>
               </div>
             )}
