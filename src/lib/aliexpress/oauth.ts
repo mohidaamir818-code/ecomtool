@@ -25,19 +25,26 @@ interface TokenResponse {
   scope?: string;
 }
 
-function signSha256(params: Record<string, string>, secret: string): string {
-  const method = params.method;
-  const sorted = Object.keys(params)
+function buildSyncSignPayload(params: Record<string, string>): string {
+  return Object.keys(params)
     .filter((key) => key !== "sign")
-    .sort()
+    .sort((a, b) => a.localeCompare(b))
     .map((key) => `${key}${params[key]}`)
     .join("");
+}
 
-  return crypto
+function signSha256(params: Record<string, string>, secret: string): {
+  stringToSign: string;
+  signature: string;
+} {
+  const stringToSign = buildSyncSignPayload(params);
+  const signature = crypto
     .createHmac("sha256", secret)
-    .update(`${method}${sorted}`, "utf8")
+    .update(stringToSign, "utf8")
     .digest("hex")
     .toUpperCase();
+
+  return { stringToSign, signature };
 }
 
 function computeExpiry(seconds?: number): string | null {
@@ -88,15 +95,20 @@ async function callAuthApi(
 
   const params: Record<string, string> = {
     app_key: appKey,
-    app_secret: appSecret,
     method,
     sign_method: "sha256",
     timestamp: String(Date.now()),
+    v: "2.0",
     format: "json",
     simplify: "true",
     ...businessParams,
   };
-  params.sign = signSha256(params, appSecret);
+  const { stringToSign, signature } = signSha256(params, appSecret);
+  params.sign = signature;
+
+  console.log("[AliExpress OAuth /sync] method:", method);
+  console.log("[AliExpress OAuth /sync] stringToSign:", stringToSign);
+  console.log("[AliExpress OAuth /sync] signature:", signature);
 
   const response = await fetch(`${AUTH_BASE}/sync`, {
     method: "POST",
