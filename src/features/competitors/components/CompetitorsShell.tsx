@@ -3,10 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { DashboardLayout } from "@/features/dashboard/components/DashboardLayout";
 import type { CompetitorCheck, CompetitorCheckResponse, CompetitorMatch } from "@/types/competitor";
+import type { EbayListing, EbaySearchResponse } from "@/types/ebay";
 import { CompetitorCheckForm } from "./CompetitorCheckForm";
 import { CompetitorMatchCard } from "./CompetitorMatchCard";
 import { CompetitorResultBanner } from "./CompetitorResultBanner";
+import { EbayListingsTable } from "./EbayListingsTable";
+import { EbaySearchForm } from "./EbaySearchForm";
 import { RecentCompetitorChecks } from "./RecentCompetitorChecks";
+
+type Platform = "amazef" | "ebay";
 
 type CheckResult = {
   message: string;
@@ -15,7 +20,20 @@ type CheckResult = {
   totalSearched: number;
 };
 
+type EbaySearchState = {
+  query: string;
+  alertBelow: number | null;
+  listings: EbayListing[];
+  total: number;
+  offset: number;
+  limit: number;
+  sort: "asc" | "desc";
+};
+
+const PAGE_SIZE = 50;
+
 export function CompetitorsShell() {
+  const [platform, setPlatform] = useState<Platform>("amazef");
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -23,6 +41,9 @@ export function CompetitorsShell() {
   const [selectedCheckId, setSelectedCheckId] = useState<string | null>(null);
   const [loadingCheckId, setLoadingCheckId] = useState<string | null>(null);
   const [result, setResult] = useState<CheckResult | null>(null);
+
+  const [ebaySearch, setEbaySearch] = useState<EbaySearchState | null>(null);
+  const [ebayLoading, setEbayLoading] = useState(false);
 
   const loadRecentChecks = useCallback(async (id: string) => {
     setLoading(true);
@@ -75,6 +96,52 @@ export function CompetitorsShell() {
     }
   }, []);
 
+  const fetchEbayListings = useCallback(
+    async (params: {
+      query: string;
+      alertBelow: number | null;
+      offset?: number;
+      sort?: "asc" | "desc";
+    }) => {
+      setEbayLoading(true);
+      setError("");
+
+      const offset = params.offset ?? 0;
+      const sort = params.sort ?? "asc";
+
+      try {
+        const url = new URL("/api/competitors/ebay/search", window.location.origin);
+        url.searchParams.set("q", params.query);
+        url.searchParams.set("offset", String(offset));
+        url.searchParams.set("limit", String(PAGE_SIZE));
+        url.searchParams.set("sort", sort);
+
+        const response = await fetch(url.toString());
+        const data = (await response.json()) as EbaySearchResponse;
+
+        if (!response.ok) {
+          setError(data.error ?? "eBay search failed.");
+          return;
+        }
+
+        setEbaySearch({
+          query: params.query,
+          alertBelow: params.alertBelow,
+          listings: data.listings ?? [],
+          total: data.total ?? 0,
+          offset: data.offset ?? offset,
+          limit: data.limit ?? PAGE_SIZE,
+          sort: data.sort ?? sort,
+        });
+      } catch {
+        setError("Network error while searching eBay.");
+      } finally {
+        setEbayLoading(false);
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     const id = sessionStorage.getItem("ecomtools_user_id");
     if (id) {
@@ -84,6 +151,14 @@ export function CompetitorsShell() {
       setLoading(false);
     }
   }, [loadRecentChecks]);
+
+  function handlePlatformChange(next: Platform) {
+    setPlatform(next);
+    setError("");
+    setResult(null);
+    setSelectedCheckId(null);
+    setEbaySearch(null);
+  }
 
   function handleSelectCheck(checkId: string | null) {
     setSelectedCheckId(checkId);
@@ -98,7 +173,7 @@ export function CompetitorsShell() {
     }
   }
 
-  function handleSuccess(data: CompetitorCheckResponse) {
+  function handleAmazefSuccess(data: CompetitorCheckResponse) {
     setResult({
       message: data.message ?? "",
       userPriceLabel: data.userPriceLabel ?? "",
@@ -107,6 +182,30 @@ export function CompetitorsShell() {
     });
     setRecentChecks(data.recentChecks ?? []);
     setSelectedCheckId(data.check?.id ?? null);
+  }
+
+  function handleEbaySearch(params: { query: string; alertBelow: number | null }) {
+    fetchEbayListings({ ...params, offset: 0, sort: "asc" });
+  }
+
+  function handleEbaySortChange(sort: "asc" | "desc") {
+    if (!ebaySearch) return;
+    fetchEbayListings({
+      query: ebaySearch.query,
+      alertBelow: ebaySearch.alertBelow,
+      offset: ebaySearch.offset,
+      sort,
+    });
+  }
+
+  function handleEbayPageChange(offset: number) {
+    if (!ebaySearch) return;
+    fetchEbayListings({
+      query: ebaySearch.query,
+      alertBelow: ebaySearch.alertBelow,
+      offset,
+      sort: ebaySearch.sort,
+    });
   }
 
   return (
@@ -118,9 +217,24 @@ export function CompetitorsShell() {
           </span>
           <h1 className="mt-3 text-2xl font-bold text-[#111827] lg:text-3xl">Check Competitors</h1>
           <p className="mt-1 max-w-2xl text-sm leading-relaxed text-[#6B7280]">
-            Enter your product and selling price. We scan Amazef listings and instantly show if any
-            seller is undercutting you.
+            Compare prices across marketplaces. Search Amazef for undercuts on your price, or browse
+            all eBay sellers for a product keyword.
           </p>
+
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <label htmlFor="platform-select" className="text-sm font-semibold text-[#374151]">
+              Platform
+            </label>
+            <select
+              id="platform-select"
+              value={platform}
+              onChange={(event) => handlePlatformChange(event.target.value as Platform)}
+              className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-[#111827] shadow-sm outline-none transition-all focus:border-brand focus:ring-4 focus:ring-brand/10"
+            >
+              <option value="amazef">Amazef</option>
+              <option value="ebay">eBay</option>
+            </select>
+          </div>
         </header>
 
         {error && (
@@ -131,85 +245,126 @@ export function CompetitorsShell() {
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <div className="space-y-6 lg:col-span-2">
-            {userId && <CompetitorCheckForm userId={userId} onSuccess={handleSuccess} />}
-
-            {loadingCheckId && !result && (
-              <div className="flex items-center justify-center rounded-2xl border border-gray-100 bg-white py-16 shadow-sm">
-                <svg className="h-7 w-7 animate-spin text-brand" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-              </div>
-            )}
-
-            {result && (
-              <div className="space-y-5">
-                {selectedCheckId && (
-                  <p className="text-sm font-medium text-brand">
-                    Viewing selected check only
-                  </p>
+            {platform === "amazef" ? (
+              <>
+                {userId && (
+                  <CompetitorCheckForm userId={userId} onSuccess={handleAmazefSuccess} />
                 )}
 
-                <CompetitorResultBanner
-                  message={result.message}
-                  userPriceLabel={result.userPriceLabel}
-                  matches={result.matches}
-                  totalSearched={result.totalSearched}
-                />
+                {loadingCheckId && !result && (
+                  <div className="flex items-center justify-center rounded-2xl border border-gray-100 bg-white py-16 shadow-sm">
+                    <svg className="h-7 w-7 animate-spin text-brand" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  </div>
+                )}
 
-                {result.matches.length > 0 ? (
-                  <div>
-                    <h3 className="mb-4 text-base font-semibold text-[#111827]">
-                      Sellers under your price
-                    </h3>
-                    <div className="space-y-4">
-                      {result.matches.map((match) => (
-                        <CompetitorMatchCard
-                          key={match.id}
-                          match={match}
-                          userPriceLabel={result.userPriceLabel}
-                        />
-                      ))}
-                    </div>
+                {result && (
+                  <div className="space-y-5">
+                    {selectedCheckId && (
+                      <p className="text-sm font-medium text-brand">Viewing selected check only</p>
+                    )}
+
+                    <CompetitorResultBanner
+                      message={result.message}
+                      userPriceLabel={result.userPriceLabel}
+                      matches={result.matches}
+                      totalSearched={result.totalSearched}
+                    />
+
+                    {result.matches.length > 0 ? (
+                      <div>
+                        <h3 className="mb-4 text-base font-semibold text-[#111827]">
+                          Sellers under your price
+                        </h3>
+                        <div className="space-y-4">
+                          {result.matches.map((match) => (
+                            <CompetitorMatchCard
+                              key={match.id}
+                              match={match}
+                              userPriceLabel={result.userPriceLabel}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    ) : result.totalSearched > 0 ? (
+                      <div className="rounded-2xl border border-emerald-100 bg-white p-8 text-center shadow-sm">
+                        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50 text-emerald-500">
+                          <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden>
+                            <path
+                              d="M8 14l4 4 8-8"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        </div>
+                        <p className="text-lg font-bold text-[#111827]">You&apos;re competitively priced</p>
+                        <p className="mt-2 text-sm text-[#6B7280]">
+                          No sellers on Amazef are listing this product below {result.userPriceLabel}.
+                        </p>
+                      </div>
+                    ) : null}
                   </div>
-                ) : result.totalSearched > 0 ? (
-                  <div className="rounded-2xl border border-emerald-100 bg-white p-8 text-center shadow-sm">
-                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50 text-emerald-500">
-                      <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden>
-                        <path
-                          d="M8 14l4 4 8-8"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </div>
-                    <p className="text-lg font-bold text-[#111827]">You&apos;re competitively priced</p>
-                    <p className="mt-2 text-sm text-[#6B7280]">
-                      No sellers on Amazef are listing this product below {result.userPriceLabel}.
-                    </p>
-                  </div>
-                ) : null}
-              </div>
+                )}
+              </>
+            ) : (
+              <>
+                <EbaySearchForm onSearch={handleEbaySearch} isSearching={ebayLoading && !ebaySearch} />
+
+                {ebaySearch && (
+                  <EbayListingsTable
+                    listings={ebaySearch.listings}
+                    total={ebaySearch.total}
+                    offset={ebaySearch.offset}
+                    limit={ebaySearch.limit}
+                    sort={ebaySearch.sort}
+                    alertBelow={ebaySearch.alertBelow}
+                    query={ebaySearch.query}
+                    isLoading={ebayLoading}
+                    onSortChange={handleEbaySortChange}
+                    onPageChange={handleEbayPageChange}
+                  />
+                )}
+              </>
             )}
           </div>
 
           <div>
-            {loading ? (
-              <div className="flex items-center justify-center rounded-2xl border border-gray-100 bg-white py-16 shadow-sm">
-                <svg className="h-7 w-7 animate-spin text-brand" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-              </div>
+            {platform === "amazef" ? (
+              loading ? (
+                <div className="flex items-center justify-center rounded-2xl border border-gray-100 bg-white py-16 shadow-sm">
+                  <svg className="h-7 w-7 animate-spin text-brand" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                </div>
+              ) : (
+                <RecentCompetitorChecks
+                  checks={recentChecks}
+                  selectedCheckId={selectedCheckId}
+                  onSelectCheck={handleSelectCheck}
+                  loadingCheckId={loadingCheckId}
+                />
+              )
             ) : (
-              <RecentCompetitorChecks
-                checks={recentChecks}
-                selectedCheckId={selectedCheckId}
-                onSelectCheck={handleSelectCheck}
-                loadingCheckId={loadingCheckId}
-              />
+              <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
+                <h3 className="text-sm font-semibold text-[#111827]">eBay Browse API</h3>
+                <p className="mt-2 text-sm leading-relaxed text-[#6B7280]">
+                  Results come directly from eBay UK. Each row shows seller, item price, shipping,
+                  condition, and a link to the listing. Sort by total price and optionally highlight
+                  listings below your alert threshold.
+                </p>
+                <ul className="mt-4 space-y-2 text-xs text-[#6B7280]">
+                  <li>· Seller: <span className="text-[#374151]">seller.username</span></li>
+                  <li>· Price: <span className="text-[#374151]">price.value</span></li>
+                  <li>· Shipping: <span className="text-[#374151]">shippingOptions[0].shippingCost</span></li>
+                  <li>· Condition: <span className="text-[#374151]">condition</span></li>
+                  <li>· Link: <span className="text-[#374151]">itemWebUrl</span></li>
+                </ul>
+              </div>
             )}
           </div>
         </div>

@@ -3,7 +3,7 @@ import { CompetitorsShell } from "@/features/competitors/components/CompetitorsS
 
 export const metadata: Metadata = {
   title: "Check Competitors — EcomTools",
-  description: "Compare your selling price against Amazef competitors.",
+  description: "Compare your selling price against Amazef and eBay competitors.",
 };
 
 export default function CompetitorsPage() {
