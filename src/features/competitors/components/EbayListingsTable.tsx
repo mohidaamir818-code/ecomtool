@@ -151,9 +151,16 @@ export function EbayListingsTable({
                         </div>
                       </td>
                       <td className="max-w-[240px] px-4 py-3">
-                        <p className="line-clamp-2 text-[#374151]" title={listing.title}>
-                          {listing.title}
-                        </p>
+                        <div className="space-y-1.5">
+                          {listing.hasVariations && (
+                            <span className="inline-flex rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700">
+                              Variations
+                            </span>
+                          )}
+                          <p className="line-clamp-2 text-[#374151]" title={listing.title}>
+                            {listing.title}
+                          </p>
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-[#6B7280]">{listing.condition}</td>
                       <td className="px-4 py-3 font-semibold text-[#111827]">{listing.priceLabel}</td>

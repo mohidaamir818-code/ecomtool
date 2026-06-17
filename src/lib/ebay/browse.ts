@@ -7,6 +7,7 @@ const EBAY_API_BASE = "https://api.ebay.com";
 const MARKETPLACE_ID = "EBAY_GB";
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
+const VARIATION_FETCH_BATCH = 10;
 
 let cachedToken: { token: string; expiresAt: number } | null = null;
 
@@ -15,6 +16,11 @@ function formatPrice(price: number, currency: string): string {
   if (currency === "USD") return `$${price.toFixed(2)}`;
   if (currency === "EUR") return `€${price.toFixed(2)}`;
   return `${currency} ${price.toFixed(2)}`;
+}
+
+function formatPriceRange(min: number, max: number, currency: string): string {
+  if (min === max) return formatPrice(min, currency);
+  return `${formatPrice(min, currency)} – ${formatPrice(max, currency)}`;
 }
 
 async function getAccessToken(): Promise<string> {
@@ -58,44 +64,196 @@ async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
 
+function ebayHeaders(token: string): HeadersInit {
+  return {
+    Authorization: `Bearer ${token}`,
+    "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
+  };
+}
+
+interface EbayMoney {
+  value?: string;
+  currency?: string;
+}
+
+interface EbayShippingOption {
+  shippingCost?: EbayMoney;
+}
+
 interface EbayItemSummary {
   itemId?: string;
   legacyItemId?: string;
   title?: string;
   itemWebUrl?: string;
   condition?: string;
-  price?: { value?: string; currency?: string };
+  price?: EbayMoney;
   seller?: { username?: string };
-  shippingOptions?: Array<{ shippingCost?: { value?: string; currency?: string } }>;
+  shippingOptions?: EbayShippingOption[];
   image?: { imageUrl?: string };
+  itemGroupType?: string;
+  itemGroupHref?: string;
 }
 
-function mapItemSummary(item: EbayItemSummary): EbayListing {
-  const currency = item.price?.currency ?? "GBP";
-  const price = Number.parseFloat(item.price?.value ?? "0") || 0;
+interface VariationPriceRange {
+  min: number;
+  max: number;
+  currency: string;
+}
 
-  const shippingOption = item.shippingOptions?.[0]?.shippingCost;
-  const shippingCost =
-    shippingOption?.value !== undefined ? Number.parseFloat(shippingOption.value) : null;
-  const shippingCurrency = shippingOption?.currency ?? currency;
+function resolveMinShipping(
+  shippingOptions: EbayShippingOption[] | undefined,
+  fallbackCurrency: string,
+): { minCost: number | null; currency: string; multipleTiers: boolean; label: string } {
+  if (!shippingOptions?.length) {
+    return { minCost: null, currency: fallbackCurrency, multipleTiers: false, label: "—" };
+  }
 
-  const totalPrice = price + (shippingCost ?? 0);
+  const parsed = shippingOptions
+    .map((option) => {
+      if (option.shippingCost?.value === undefined) return null;
+      const value = Number.parseFloat(option.shippingCost.value);
+      if (!Number.isFinite(value)) return null;
+      return {
+        value,
+        currency: option.shippingCost.currency ?? fallbackCurrency,
+      };
+    })
+    .filter((entry): entry is { value: number; currency: string } => entry !== null);
+
+  if (!parsed.length) {
+    return { minCost: null, currency: fallbackCurrency, multipleTiers: false, label: "—" };
+  }
+
+  const minEntry = parsed.reduce((lowest, current) =>
+    current.value < lowest.value ? current : lowest,
+  );
+  const multipleTiers = parsed.length > 1 && new Set(parsed.map((entry) => entry.value)).size > 1;
+
+  let label: string;
+  if (multipleTiers) {
+    label =
+      minEntry.value === 0
+        ? "from Free"
+        : `from ${formatPrice(minEntry.value, minEntry.currency)}`;
+  } else if (minEntry.value === 0) {
+    label = "Free";
+  } else {
+    label = formatPrice(minEntry.value, minEntry.currency);
+  }
+
+  return {
+    minCost: minEntry.value,
+    currency: minEntry.currency,
+    multipleTiers,
+    label,
+  };
+}
+
+async function fetchVariationPriceRange(
+  token: string,
+  itemGroupHref: string,
+): Promise<VariationPriceRange | null> {
+  const response = await fetch(itemGroupHref, {
+    headers: ebayHeaders(token),
+    next: { revalidate: 0 },
+  });
+
+  if (!response.ok) return null;
+
+  const data = (await response.json()) as {
+    items?: Array<{ price?: EbayMoney }>;
+  };
+
+  const prices = (data.items ?? [])
+    .map((item) => ({
+      value: Number.parseFloat(item.price?.value ?? "0"),
+      currency: item.price?.currency ?? "GBP",
+    }))
+    .filter((entry) => entry.value > 0);
+
+  if (!prices.length) return null;
+
+  return {
+    min: Math.min(...prices.map((entry) => entry.value)),
+    max: Math.max(...prices.map((entry) => entry.value)),
+    currency: prices[0].currency,
+  };
+}
+
+async function loadVariationPriceRanges(
+  token: string,
+  items: EbayItemSummary[],
+): Promise<Map<string, VariationPriceRange>> {
+  const variationEntries = items
+    .filter(
+      (item) =>
+        item.itemGroupType === "SELLER_DEFINED_VARIATIONS" &&
+        item.itemGroupHref &&
+        item.itemId,
+    )
+    .map((item) => ({ id: item.itemId!, href: item.itemGroupHref! }));
+
+  const ranges = new Map<string, VariationPriceRange>();
+
+  for (let index = 0; index < variationEntries.length; index += VARIATION_FETCH_BATCH) {
+    const batch = variationEntries.slice(index, index + VARIATION_FETCH_BATCH);
+    const results = await Promise.all(
+      batch.map(async ({ id, href }) => {
+        const range = await fetchVariationPriceRange(token, href);
+        return { id, range };
+      }),
+    );
+
+    for (const { id, range } of results) {
+      if (range) ranges.set(id, range);
+    }
+  }
+
+  return ranges;
+}
+
+function mapItemSummary(
+  item: EbayItemSummary,
+  variationRanges: Map<string, VariationPriceRange>,
+): EbayListing {
+  const baseCurrency = item.price?.currency ?? "GBP";
+  const basePrice = Number.parseFloat(item.price?.value ?? "0") || 0;
+  const hasVariations = item.itemGroupType === "SELLER_DEFINED_VARIATIONS";
+  const variationRange = item.itemId ? variationRanges.get(item.itemId) : undefined;
+
+  const priceMin = variationRange?.min ?? basePrice;
+  const priceMax = variationRange?.max ?? basePrice;
+  const currency = variationRange?.currency ?? baseCurrency;
+
+  const shipping = resolveMinShipping(item.shippingOptions, currency);
+  const minShipping = shipping.minCost ?? 0;
+
+  const totalPrice = priceMin + minShipping;
+  const totalPriceMax = priceMax + minShipping;
+
+  let totalPriceLabel = formatPrice(totalPrice, currency);
+  if (hasVariations && priceMin !== priceMax) {
+    totalPriceLabel = formatPriceRange(totalPrice, totalPriceMax, currency);
+  } else if (shipping.multipleTiers) {
+    totalPriceLabel = `from ${formatPrice(totalPrice, currency)}`;
+  }
 
   return {
     id: item.itemId ?? item.legacyItemId ?? crypto.randomUUID(),
     title: item.title ?? "Untitled listing",
     sellerName: item.seller?.username ?? "Unknown seller",
-    price,
-    priceLabel: formatPrice(price, currency),
-    shippingCost,
-    shippingLabel:
-      shippingCost === null
-        ? "—"
-        : shippingCost === 0
-          ? "Free"
-          : formatPrice(shippingCost, shippingCurrency),
+    hasVariations,
+    priceMin,
+    priceMax,
+    priceLabel:
+      hasVariations && priceMin !== priceMax
+        ? formatPriceRange(priceMin, priceMax, currency)
+        : formatPrice(priceMin, currency),
+    shippingCost: shipping.minCost,
+    shippingLabel: shipping.label,
     totalPrice,
-    totalPriceLabel: formatPrice(totalPrice, currency),
+    totalPriceMax,
+    totalPriceLabel,
     currency,
     condition: item.condition ?? "—",
     listingUrl: item.itemWebUrl ?? "",
@@ -126,10 +284,7 @@ export async function searchEbayListings(params: {
   url.searchParams.set("sort", sort);
 
   const response = await fetch(url.toString(), {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
-    },
+    headers: ebayHeaders(token),
     next: { revalidate: 0 },
   });
 
@@ -144,7 +299,9 @@ export async function searchEbayListings(params: {
     throw new Error(message);
   }
 
-  const listings = (data.itemSummaries ?? []).map(mapItemSummary);
+  const summaries = data.itemSummaries ?? [];
+  const variationRanges = await loadVariationPriceRanges(token, summaries);
+  const listings = summaries.map((item) => mapItemSummary(item, variationRanges));
 
   return {
     listings,

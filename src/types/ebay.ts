@@ -2,11 +2,14 @@ export interface EbayListing {
   id: string;
   title: string;
   sellerName: string;
-  price: number;
+  hasVariations: boolean;
+  priceMin: number;
+  priceMax: number;
   priceLabel: string;
   shippingCost: number | null;
   shippingLabel: string;
   totalPrice: number;
+  totalPriceMax: number;
   totalPriceLabel: string;
   currency: string;
   condition: string;
