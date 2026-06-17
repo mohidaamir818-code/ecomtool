@@ -777,10 +777,19 @@ function parseDsProductPayload(
   if (!defaultVariant) return null;
 
   const multimedia = result.ae_multimedia_info_dto as Record<string, unknown> | undefined;
-  const imageUrls = multimedia?.image_urls as { string?: string[] } | string[] | undefined;
+  const imageUrls = multimedia?.image_urls as
+    | { string?: string[] }
+    | string[]
+    | string
+    | undefined;
   const imageUrl = Array.isArray(imageUrls)
     ? imageUrls[0]
-    : imageUrls?.string?.[0] ?? null;
+    : typeof imageUrls === "string"
+      ? imageUrls.split(";").find((url) => url.trim()) ?? null
+      : imageUrls?.string?.[0] ?? null;
+
+  const soldCount = parseNumber(base?.sales_count);
+  const ratingValue = parseNumber(base?.avg_evaluation_rating);
 
   console.log("[AliExpress Fetch Debug] Dropship parsed price", {
     source: "dropship",
@@ -803,8 +812,9 @@ function parseDsProductPayload(
     price: defaultVariant.price,
     currency: defaultVariant.currency,
     stock: defaultVariant.stock,
-    orders: base?.evaluation_count ? String(base.evaluation_count) : null,
-    rating: parseNumber(base?.avg_evaluation_rating),
+    orders:
+      soldCount != null ? `${soldCount.toLocaleString()} sold` : base?.sales_count ? String(base.sales_count) : null,
+    rating: ratingValue != null && ratingValue > 0 ? ratingValue : null,
     variants,
     selectedVariantId: defaultVariant.id,
   };
