@@ -1,9 +1,0 @@
-{
-  "error_response": {
-    "type": "ISV",
-    "code": "IncompleteSignature",
-    "msg": "The request signature does not conform to platform standards",
-    "request_id": "2102ece217816910109404006",
-    "_trace_id_": "2102f1cd17816910109377832e109d"
-  }
-}

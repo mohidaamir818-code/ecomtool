@@ -1,15 +1,7 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-
-function loadEnv() {
-  const envPath = path.join(process.cwd(), ".env.local");
-  if (!fs.existsSync(envPath)) return;
-  for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
-    const m = line.match(/^([^#=]+)=(.*)$/);
-    if (m) process.env[m[1].trim()] = m[2].trim();
-  }
-}
+import { loadEnv, requireEnv } from "./load-env.mjs";
 
 function clean(value) {
   if (!value) return "";
@@ -92,12 +84,8 @@ if (!productId) {
   process.exit(1);
 }
 
-const appKey = clean(process.env.ALIEXPRESS_APP_KEY || process.env.ALIEXPRESS_API_KEY);
-const appSecret = clean(process.env.ALIEXPRESS_APP_SECRET || process.env.ALIEXPRESS_APP__SECRET);
-if (!appKey || !appSecret) {
-  console.error("Missing ALIEXPRESS_APP_KEY or ALIEXPRESS_APP_SECRET");
-  process.exit(1);
-}
+const appKey = requireEnv("ALIEXPRESS_APP_KEY");
+const appSecret = requireEnv("ALIEXPRESS_APP_SECRET");
 
 let accessToken = clean(process.env.ALIEXPRESS_ACCESS_TOKEN);
 if (!accessToken) {

@@ -31,3 +31,9 @@ next-env.d.ts
 
 # Vercel
 .vercel
+
+# Local debug API captures (may contain signed responses or tokens)
+scripts/ds-raw-*.json
+scripts/debug-*.json
+scripts/mtop-*.json
+scripts/ae-sample.html

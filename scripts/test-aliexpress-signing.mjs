@@ -1,20 +1,10 @@
 import crypto from "crypto";
-import fs from "fs";
-import path from "path";
-
-function loadEnv() {
-  const envPath = path.join(process.cwd(), ".env.local");
-  if (!fs.existsSync(envPath)) return;
-  for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
-    const m = line.match(/^([^#=]+)=(.*)$/);
-    if (m) process.env[m[1].trim()] = m[2].trim();
-  }
-}
+import { loadEnv, requireEnv } from "./load-env.mjs";
 
 loadEnv();
 
-const appKey = process.env.ALIEXPRESS_APP_KEY ?? "";
-const appSecret = (process.env.ALIEXPRESS_APP_SECRET ?? process.env.ALIEXPRESS_APP__SECRET ?? "").trim();
+const appKey = requireEnv("ALIEXPRESS_APP_KEY");
+const appSecret = requireEnv("ALIEXPRESS_APP_SECRET");
 const accessToken = process.env.ALIEXPRESS_ACCESS_TOKEN ?? "";
 const productId = "1005010230088708";
 const ENDPOINT = "https://api-sg.aliexpress.com/sync";

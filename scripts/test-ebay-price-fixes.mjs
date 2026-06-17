@@ -1,9 +1,15 @@
 /**
  * Verifies eBay price range, shipping, and variation handling.
  * Run: node scripts/test-ebay-price-fixes.mjs
+ *
+ * Requires EBAY_APP_ID and EBAY_CERT_ID in .env.local
  */
-const appId = process.env.EBAY_APP_ID || "MohidAam-ecomtool-PRD-fa92c9933-807f2aa9";
-const certId = process.env.EBAY_CERT_ID || "PRD-a92c9933498f-835b-4641-aaa9-0a96";
+import { loadEnv, requireEnv } from "./load-env.mjs";
+
+loadEnv();
+
+const appId = requireEnv("EBAY_APP_ID");
+const certId = requireEnv("EBAY_CERT_ID");
 const auth = Buffer.from(`${appId}:${certId}`).toString("base64");
 const MARKETPLACE_ID = "EBAY_GB";
 
@@ -118,7 +124,6 @@ async function main() {
     console.log("---");
   }
 
-  // Spot-check known listings
   const known = searchData.itemSummaries.find((i) => i.legacyItemId === "127815668365");
   if (known) {
     const range = await fetchVariationRange(token, known.itemGroupHref);
@@ -137,7 +142,9 @@ async function main() {
   console.log(`Price: ${formatPrice(parseFloat(lupoDetail.price.value), "GBP")}`);
   console.log(`Shipping tiers: ${lupoDetail.shippingOptions?.length}`);
   console.log(`Shipping label: ${lupoShip.label}`);
-  console.log(`Total: ${lupoShip.multipleTiers ? `from ${formatPrice(parseFloat(lupoDetail.price.value) + (lupoShip.minCost ?? 0), "GBP")}` : formatPrice(parseFloat(lupoDetail.price.value) + (lupoShip.minCost ?? 0), "GBP")}`);
+  console.log(
+    `Total: ${lupoShip.multipleTiers ? `from ${formatPrice(parseFloat(lupoDetail.price.value) + (lupoShip.minCost ?? 0), "GBP")}` : formatPrice(parseFloat(lupoDetail.price.value) + (lupoShip.minCost ?? 0), "GBP")}`,
+  );
 }
 
 main().catch(console.error);

@@ -1,7 +1,10 @@
 import crypto from "crypto";
+import { loadEnv, requireEnv } from "./load-env.mjs";
 
-const appKey = process.env.ALIEXPRESS_APP_KEY ?? "537086";
-const appSecret = process.env.ALIEXPRESS_APP_SECRET ?? "";
+loadEnv();
+
+const appKey = requireEnv("ALIEXPRESS_APP_KEY");
+const appSecret = requireEnv("ALIEXPRESS_APP_SECRET");
 
 function formatTimestamp() {
   const now = new Date();
