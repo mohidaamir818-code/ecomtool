@@ -6,6 +6,15 @@ export function requireServerEnv(key: string): string {
   return value;
 }
 
+function cleanOptionalEnv(value: string | undefined): string {
+  if (!value) return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (trimmed.toLowerCase() === "pending") return "";
+  if (trimmed.startsWith("your-")) return "";
+  return trimmed;
+}
+
 export const serverEnv = {
   supabaseUrl: () =>
     requireServerEnv("NEXT_PUBLIC_SUPABASE_URL").replace(/\/rest\/v1\/?$/, ""),
@@ -16,8 +25,8 @@ export const serverEnv = {
     process.env.ALIEXPRESS_APP_SECRET ??
     process.env.ALIEXPRESS_APP__SECRET ??
     "",
-  aliexpressAccessToken: () => process.env.ALIEXPRESS_ACCESS_TOKEN ?? "",
-  aliexpressRefreshToken: () => process.env.ALIEXPRESS_REFRESH_TOKEN ?? "",
+  aliexpressAccessToken: () => cleanOptionalEnv(process.env.ALIEXPRESS_ACCESS_TOKEN),
+  aliexpressRefreshToken: () => cleanOptionalEnv(process.env.ALIEXPRESS_REFRESH_TOKEN),
   aliexpressApiKey: () => process.env.ALIEXPRESS_API_KEY ?? "",
   ebayAppId: () => process.env.EBAY_APP_ID ?? "",
   ebayCertId: () => process.env.EBAY_CERT_ID ?? "",

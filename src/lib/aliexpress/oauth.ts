@@ -6,6 +6,16 @@ import { serverEnv } from "@/lib/env";
 
 const AUTH_BASE = "https://api-sg.aliexpress.com";
 
+class AliExpressOAuthError extends Error {
+  constructor(
+    message: string,
+    public readonly details: Record<string, unknown> | null = null,
+  ) {
+    super(message);
+    this.name = "AliExpressOAuthError";
+  }
+}
+
 interface TokenResponse {
   access_token?: string;
   refresh_token?: string;
@@ -78,6 +88,7 @@ async function callAuthApi(
 
   const params: Record<string, string> = {
     app_key: appKey,
+    app_secret: appSecret,
     method,
     sign_method: "sha256",
     timestamp: String(Date.now()),
@@ -98,6 +109,48 @@ async function callAuthApi(
 
   const raw = (await response.json()) as unknown;
   return { token: extractTokenPayload(raw), raw };
+}
+
+async function callAuthApiRest(
+  path: "/auth/token/create" | "/auth/token/refresh",
+  businessParams: Record<string, string>,
+): Promise<{ token: TokenResponse | null; raw: unknown }> {
+  const appKey = serverEnv.aliexpressAppKey();
+  const appSecret = serverEnv.aliexpressAppSecret();
+  if (!appKey || !appSecret) return { token: null, raw: null };
+
+  const response = await fetch(`${AUTH_BASE}/rest${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
+    },
+    body: new URLSearchParams({
+      app_key: appKey,
+      app_secret: appSecret,
+      ...businessParams,
+    }),
+    cache: "no-store",
+  });
+
+  const raw = (await response.json()) as unknown;
+  return { token: extractTokenPayload(raw), raw };
+}
+
+function normalizeAliExpressError(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const errorResponse = record.error_response as Record<string, unknown> | undefined;
+
+  if (errorResponse) {
+    return {
+      code: errorResponse.code ?? null,
+      message: errorResponse.msg ?? null,
+      request_id: errorResponse.request_id ?? null,
+      trace_id: errorResponse._trace_id_ ?? null,
+    };
+  }
+
+  return null;
 }
 
 async function persistAliExpressTokens(token: TokenResponse, raw: unknown): Promise<void> {
@@ -141,24 +194,61 @@ export function buildAliExpressAuthorizeUrl(baseUrl: string, state: string): str
 }
 
 export async function exchangeAliExpressCode(code: string): Promise<void> {
-  const { token, raw } = await callAuthApi("/auth/token/create", { code });
-  if (!token?.access_token || !token.refresh_token) {
-    throw new Error("AliExpress OAuth code exchange failed.");
+  const redirectUrl = process.env.ALIEXPRESS_OAUTH_REDIRECT_URL?.trim();
+  const commonParams: Record<string, string> = {
+    code,
+    grant_type: "authorization_code",
+  };
+  if (redirectUrl) {
+    commonParams.redirect_uri = redirectUrl;
+    commonParams.redirect_url = redirectUrl;
   }
-  await persistAliExpressTokens(token, raw);
+
+  const attempts: Array<{ source: string; token: TokenResponse | null; raw: unknown }> = [];
+
+  const syncAttempt = await callAuthApi("/auth/token/create", commonParams);
+  attempts.push({ source: "/sync", ...syncAttempt });
+  if (syncAttempt.token?.access_token && syncAttempt.token.refresh_token) {
+    await persistAliExpressTokens(syncAttempt.token, syncAttempt.raw);
+    return;
+  }
+
+  const restAttempt = await callAuthApiRest("/auth/token/create", commonParams);
+  attempts.push({ source: "/rest/auth/token/create", ...restAttempt });
+  if (restAttempt.token?.access_token && restAttempt.token.refresh_token) {
+    await persistAliExpressTokens(restAttempt.token, restAttempt.raw);
+    return;
+  }
+
+  throw new AliExpressOAuthError("AliExpress OAuth code exchange failed.", {
+    attempts: attempts.map(({ source, raw }) => ({
+      source,
+      error: normalizeAliExpressError(raw),
+      raw,
+    })),
+  });
 }
 
 export async function refreshAliExpressToken(refreshToken: string): Promise<string | null> {
-  const { token, raw } = await callAuthApi("/auth/token/refresh", {
+  const syncAttempt = await callAuthApi("/auth/token/refresh", {
     refresh_token: refreshToken,
+    grant_type: "refresh_token",
   });
-
-  if (!token?.access_token || !token.refresh_token) {
-    return null;
+  if (syncAttempt.token?.access_token && syncAttempt.token.refresh_token) {
+    await persistAliExpressTokens(syncAttempt.token, syncAttempt.raw);
+    return syncAttempt.token.access_token;
   }
 
-  await persistAliExpressTokens(token, raw);
-  return token.access_token;
+  const restAttempt = await callAuthApiRest("/auth/token/refresh", {
+    refresh_token: refreshToken,
+    grant_type: "refresh_token",
+  });
+  if (restAttempt.token?.access_token && restAttempt.token.refresh_token) {
+    await persistAliExpressTokens(restAttempt.token, restAttempt.raw);
+    return restAttempt.token.access_token;
+  }
+
+  return null;
 }
 
 export async function getAliExpressAccessToken(): Promise<string | null> {
@@ -216,4 +306,16 @@ export async function getAliExpressTokenStatus(): Promise<{
     accessTokenExpiresAt: data?.access_token_expires_at ?? null,
     refreshTokenExpiresAt: data?.refresh_token_expires_at ?? null,
   };
+}
+
+export function formatAliExpressOAuthError(
+  error: unknown,
+): { message: string; details: Record<string, unknown> | null } {
+  if (error instanceof AliExpressOAuthError) {
+    return { message: error.message, details: error.details };
+  }
+  if (error instanceof Error) {
+    return { message: error.message, details: null };
+  }
+  return { message: "AliExpress OAuth failed.", details: null };
 }

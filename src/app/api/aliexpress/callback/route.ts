@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exchangeAliExpressCode } from "@/lib/aliexpress/oauth";
+import {
+  exchangeAliExpressCode,
+  formatAliExpressOAuthError,
+} from "@/lib/aliexpress/oauth";
 
 export async function GET(request: NextRequest) {
   const url = request.nextUrl;
@@ -29,11 +32,19 @@ export async function GET(request: NextRequest) {
     response.cookies.delete("aliexpress_oauth_state");
     return response;
   } catch (error) {
+    const formatted = formatAliExpressOAuthError(error);
+    console.error("AliExpress OAuth callback exchange failed", {
+      codePresent: Boolean(code),
+      statePresent: Boolean(state),
+      expectedStatePresent: Boolean(expectedState),
+      details: formatted.details,
+    });
+
     redirectUrl.searchParams.set("status", "error");
-    redirectUrl.searchParams.set(
-      "message",
-      error instanceof Error ? error.message : "AliExpress OAuth failed.",
-    );
+    const detailsText = formatted.details
+      ? ` Details: ${JSON.stringify(formatted.details).slice(0, 400)}`
+      : "";
+    redirectUrl.searchParams.set("message", `${formatted.message}${detailsText}`);
     return NextResponse.redirect(redirectUrl);
   }
 }
