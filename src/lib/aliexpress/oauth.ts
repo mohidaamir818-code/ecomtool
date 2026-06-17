@@ -47,9 +47,58 @@ function signSha256(params: Record<string, string>, secret: string): {
   return { stringToSign, signature };
 }
 
-function computeExpiry(seconds?: number): string | null {
-  if (!seconds || seconds <= 0) return null;
-  return new Date(Date.now() + seconds * 1000).toISOString();
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function resolveExpiryTimestamp(
+  rawValue: unknown,
+  label: "access_token_expires_at" | "refresh_token_expires_at",
+): string | null {
+  const value = toFiniteNumber(rawValue);
+  if (!value || value <= 0) return null;
+
+  const nowMs = Date.now();
+  let expiryMs: number;
+
+  // Handle multiple AliExpress formats:
+  // - duration seconds (common): 3600
+  // - absolute unix seconds: 1781688888
+  // - absolute unix milliseconds: 1781688888123
+  if (value >= 1_000_000_000_000) {
+    expiryMs = value;
+  } else if (value >= 1_000_000_000) {
+    expiryMs = value * 1000;
+  } else {
+    expiryMs = nowMs + value * 1000;
+  }
+
+  const minAllowedMs = nowMs - 24 * 60 * 60 * 1000;
+  const maxAllowedMs = nowMs + 20 * 365 * 24 * 60 * 60 * 1000;
+  if (!Number.isFinite(expiryMs) || expiryMs < minAllowedMs || expiryMs > maxAllowedMs) {
+    throw new AliExpressOAuthError(`Invalid ${label} value from AliExpress token response.`, {
+      label,
+      rawValue,
+      computedEpochMs: expiryMs,
+      nowEpochMs: nowMs,
+    });
+  }
+
+  const iso = new Date(expiryMs).toISOString();
+  if (iso === "Invalid Date") {
+    throw new AliExpressOAuthError(`Invalid ${label} date generated from token response.`, {
+      label,
+      rawValue,
+      computedEpochMs: expiryMs,
+    });
+  }
+
+  return iso;
 }
 
 function extractTokenPayload(payload: unknown): TokenResponse | null {
@@ -168,14 +217,23 @@ function normalizeAliExpressError(raw: unknown): Record<string, unknown> | null 
 async function persistAliExpressTokens(token: TokenResponse, raw: unknown): Promise<void> {
   if (!token.access_token || !token.refresh_token) return;
 
+  const accessTokenExpiry = resolveExpiryTimestamp(
+    token.expires_in,
+    "access_token_expires_at",
+  );
+  const refreshTokenExpiry = resolveExpiryTimestamp(
+    token.refresh_token_valid_time,
+    "refresh_token_expires_at",
+  );
+
   const supabase = getSupabaseAdmin();
   const { error } = await supabase.from("aliexpress_oauth_tokens").upsert(
     {
       provider: "aliexpress",
       access_token: token.access_token,
       refresh_token: token.refresh_token,
-      access_token_expires_at: computeExpiry(token.expires_in),
-      refresh_token_expires_at: computeExpiry(token.refresh_token_valid_time),
+      access_token_expires_at: accessTokenExpiry,
+      refresh_token_expires_at: refreshTokenExpiry,
       scope: token.scope ?? null,
       token_type: token.token_type ?? null,
       raw_response: raw,
