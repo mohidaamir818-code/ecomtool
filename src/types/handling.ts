@@ -1,5 +1,13 @@
 export type HandlingUpdateMode = "auto_24h" | "custom" | "manual";
 
+export interface HandlingProductVariant {
+  id: string;
+  label: string;
+  price: number;
+  currency: string;
+  stock: number | null;
+}
+
 export interface HandlingProductData {
   source: "aliexpress";
   externalId: string;
@@ -11,6 +19,8 @@ export interface HandlingProductData {
   stock: number | null;
   orders: string | null;
   rating: number | null;
+  variants?: HandlingProductVariant[];
+  selectedVariantId?: string;
 }
 
 export interface HandlingProduct {

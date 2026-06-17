@@ -24,6 +24,7 @@ export function AddProductFlow({ userId, onAdded }: AddProductFlowProps) {
   const [isError, setIsError] = useState(false);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [selectedVariantId, setSelectedVariantId] = useState<string>("");
 
   function resetPreview() {
     setPreview(null);
@@ -61,6 +62,7 @@ export function AddProductFlow({ userId, onAdded }: AddProductFlowProps) {
       }
 
       setPreview(data.product);
+      setSelectedVariantId(data.product?.selectedVariantId ?? data.product?.variants?.[0]?.id ?? "");
     } catch {
       setNotice("Network error while fetching product.");
       setIsError(true);
@@ -116,6 +118,21 @@ export function AddProductFlow({ userId, onAdded }: AddProductFlowProps) {
     } finally {
       setSaving(false);
     }
+  }
+
+  function handleVariantChange(variantId: string) {
+    if (!preview?.variants?.length) return;
+    const variant = preview.variants.find((item) => item.id === variantId);
+    if (!variant) return;
+
+    setSelectedVariantId(variantId);
+    setPreview({
+      ...preview,
+      price: variant.price,
+      currency: variant.currency,
+      stock: variant.stock,
+      selectedVariantId: variant.id,
+    });
   }
 
   return (
@@ -188,6 +205,24 @@ export function AddProductFlow({ userId, onAdded }: AddProductFlowProps) {
                     <p className="text-sm font-bold">{preview.rating ?? "—"}</p>
                   </div>
                 </div>
+                {preview.variants && preview.variants.length > 0 ? (
+                  <div className="mt-4">
+                    <label className="mb-1 block text-[10px] font-medium uppercase text-[#9CA3AF]">
+                      Variant
+                    </label>
+                    <select
+                      value={selectedVariantId}
+                      onChange={(event) => handleVariantChange(event.target.value)}
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#111827] outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+                    >
+                      {preview.variants.map((variant) => (
+                        <option key={variant.id} value={variant.id}>
+                          {variant.label} - {formatPreviewPrice(variant.price, variant.currency)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
               </div>
             </div>
 

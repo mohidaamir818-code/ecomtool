@@ -3,7 +3,7 @@ import "server-only";
 import crypto from "crypto";
 import { serverEnv } from "@/lib/env";
 import { getAliExpressAccessToken } from "@/lib/aliexpress/oauth";
-import type { HandlingProductData } from "@/types/handling";
+import type { HandlingProductData, HandlingProductVariant } from "@/types/handling";
 
 const MTOP_APP_KEY = "12574478";
 const MTOP_HOST = "https://acs.aliexpress.com";
@@ -40,14 +40,24 @@ function signMd5Params(params: Record<string, string>, secret: string): string {
 }
 
 function signHmacSha256Params(params: Record<string, string>, secret: string): string {
-  const method = params.method;
   const sorted = Object.keys(params)
     .filter((key) => key !== "sign")
     .sort()
     .map((key) => `${key}${params[key]}`)
     .join("");
 
-  return crypto.createHmac("sha256", secret).update(`${method}${sorted}`, "utf8").digest("hex").toUpperCase();
+  // AliExpress DS endpoint accepts raw sorted key/value payload without method prefix.
+  return crypto.createHmac("sha256", secret).update(sorted, "utf8").digest("hex").toUpperCase();
+}
+
+function getHmacSha256StringToSign(params: Record<string, string>): string {
+  const sorted = Object.keys(params)
+    .filter((key) => key !== "sign")
+    .sort()
+    .map((key) => `${key}${params[key]}`)
+    .join("");
+
+  return sorted;
 }
 
 function parseNumber(value: unknown): number | null {
@@ -664,7 +674,14 @@ async function callOpenPlatformApi(
     if (options.accessToken) {
       params.session = options.accessToken;
     }
+    const stringToSign = getHmacSha256StringToSign(params);
     params.sign = signHmacSha256Params(params, appSecret);
+
+    if (method === "aliexpress.ds.product.get") {
+      console.log("[AliExpress DS Live] stringToSign(no_method_prefix):", stringToSign);
+      console.log("[AliExpress DS Live] signature:", params.sign);
+      console.log("[AliExpress DS Live] sortedKeys:", Object.keys(params).filter((k) => k !== "sign").sort());
+    }
   }
 
   try {
@@ -678,10 +695,23 @@ async function callOpenPlatformApi(
     });
 
     const payload = (await response.json()) as Record<string, unknown>;
-    if (payload.error_response) return null;
+    if (payload.error_response) {
+      console.log("[AliExpress Fetch Debug] OpenPlatform error", {
+        method,
+        signMethod: options.signMethod,
+        hasAccessToken: Boolean(options.accessToken),
+        error: payload.error_response,
+      });
+      return null;
+    }
 
     return payload;
   } catch {
+    console.log("[AliExpress Fetch Debug] OpenPlatform request failed", {
+      method,
+      signMethod: options.signMethod,
+      hasAccessToken: Boolean(options.accessToken),
+    });
     return null;
   }
 }
@@ -709,7 +739,9 @@ function parseDsProductPayload(
   const response = payload.aliexpress_ds_product_get_response as
     | { result?: Record<string, unknown> }
     | undefined;
-  const result = response?.result;
+  const topLevelResult =
+    (payload.result as Record<string, unknown> | undefined) ?? undefined;
+  const result = response?.result ?? topLevelResult;
   if (!result) return null;
 
   const base = result.ae_item_base_info_dto as Record<string, unknown> | undefined;
@@ -717,24 +749,32 @@ function parseDsProductPayload(
   if (!title) return null;
 
   const skus = normalizeDsSkuList(result.ae_item_sku_info_dtos);
-  let price: number | null = null;
-  let stock: number | null = null;
-  let currency = base?.currency_code ? String(base.currency_code) : "GBP";
+  const variants: HandlingProductVariant[] = skus
+    .map((sku) => {
+      const price = parseNumber(sku.offer_sale_price ?? sku.sku_price);
+      if (price == null) return null;
+      const stock = parseNumber(
+        sku.sku_available_stock ?? sku.s_k_u_available_stock ?? sku.ipm_sku_stock,
+      );
 
-  for (const sku of skus) {
-    const skuPrice = parseNumber(sku.offer_sale_price ?? sku.sku_price);
-    const skuStock = parseNumber(
-      sku.sku_available_stock ?? sku.s_k_u_available_stock ?? sku.ipm_sku_stock,
-    );
+      const properties = sku.ae_sku_property_dtos as
+        | Array<Record<string, unknown>>
+        | undefined;
+      const labelFromProp = properties?.[0]?.property_value_definition_name;
+      const fallbackLabel = sku.sku_attr ?? sku.id ?? sku.sku_id ?? "Variant";
 
-    if (skuPrice != null && (price == null || skuPrice < price)) {
-      price = skuPrice;
-      stock = skuStock;
-      if (sku.currency_code) currency = String(sku.currency_code);
-    }
-  }
+      return {
+        id: String(sku.sku_id ?? sku.id ?? fallbackLabel),
+        label: String(labelFromProp ?? fallbackLabel),
+        price,
+        currency: String(sku.currency_code ?? base?.currency_code ?? "GBP"),
+        stock,
+      } satisfies HandlingProductVariant;
+    })
+    .filter((value): value is HandlingProductVariant => value != null);
 
-  if (price == null) return null;
+  const defaultVariant = variants[0];
+  if (!defaultVariant) return null;
 
   const multimedia = result.ae_multimedia_info_dto as Record<string, unknown> | undefined;
   const imageUrls = multimedia?.image_urls as { string?: string[] } | string[] | undefined;
@@ -742,17 +782,31 @@ function parseDsProductPayload(
     ? imageUrls[0]
     : imageUrls?.string?.[0] ?? null;
 
+  console.log("[AliExpress Fetch Debug] Dropship parsed price", {
+    source: "dropship",
+    productId,
+    selectedPrice: defaultVariant.price,
+    selectedCurrency: defaultVariant.currency,
+    selectedStock: defaultVariant.stock,
+    selectedSkuId: defaultVariant.id,
+    selectedSkuLabel: defaultVariant.label,
+    variantsCount: variants.length,
+    baseCurrencyCode: base?.currency_code ?? null,
+  });
+
   return {
     source: "aliexpress",
     externalId: String(base?.product_id ?? productId),
     productUrl: `https://www.aliexpress.com/item/${productId}.html`,
     title,
     imageUrl: imageUrl ? String(imageUrl) : null,
-    price,
-    currency,
-    stock,
+    price: defaultVariant.price,
+    currency: defaultVariant.currency,
+    stock: defaultVariant.stock,
     orders: base?.evaluation_count ? String(base.evaluation_count) : null,
     rating: parseNumber(base?.avg_evaluation_rating),
+    variants,
+    selectedVariantId: defaultVariant.id,
   };
 }
 
@@ -798,6 +852,17 @@ async function callAffiliateProductApi(productId: string): Promise<HandlingProdu
 
   const imageUrls = item.product_small_image_urls as { string?: string[] } | undefined;
 
+  console.log("[AliExpress Fetch Debug] Affiliate parsed price", {
+    source: "affiliate",
+    productId,
+    selectedPrice: price,
+    selectedCurrency: String(item.target_sale_price_currency ?? "GBP"),
+    rawTargetSalePrice: item.target_sale_price ?? null,
+    rawTargetAppSalePrice: item.target_app_sale_price ?? null,
+    rawSalePrice: item.sale_price ?? null,
+    rawAppSalePrice: item.app_sale_price ?? null,
+  });
+
   return {
     source: "aliexpress",
     externalId: String(item.product_id ?? productId),
@@ -837,11 +902,11 @@ async function callDropshipProductApi(productId: string): Promise<HandlingProduc
 }
 
 async function fetchViaOpenPlatform(productId: string): Promise<HandlingProductData | null> {
-  const affiliateProduct = await callAffiliateProductApi(productId);
-  if (affiliateProduct) return affiliateProduct;
-
   const dropshipProduct = await callDropshipProductApi(productId);
   if (dropshipProduct) return dropshipProduct;
+
+  const affiliateProduct = await callAffiliateProductApi(productId);
+  if (affiliateProduct) return affiliateProduct;
 
   return null;
 }
@@ -885,6 +950,14 @@ async function scrapeAliExpressHtml(url: string, productId: string): Promise<Han
 
     if (!title || price == null) return null;
 
+    console.log("[AliExpress Fetch Debug] HTML parsed price", {
+      source: "html-scrape",
+      productId,
+      selectedPrice: price,
+      selectedCurrency: /£|GBP/i.test(priceRaw ?? "") ? "GBP" : "USD",
+      rawPriceMatch: priceRaw ?? null,
+    });
+
     return {
       source: "aliexpress",
       externalId: productId,
@@ -922,15 +995,19 @@ export async function fetchAliExpressProduct(url: string): Promise<HandlingProdu
       : `https://www.aliexpress.com/item/${productId}.html`;
 
   const openPlatformProduct = await fetchViaOpenPlatform(productId);
-  if (openPlatformProduct) return openPlatformProduct;
-
-  const mtopProduct = await fetchViaMtop(productId, canonicalUrl, trimmedUrl);
-  if (mtopProduct) return mtopProduct;
-
-  const htmlProduct = await scrapeAliExpressHtml(canonicalUrl, productId);
-  if (htmlProduct) return htmlProduct;
+  if (openPlatformProduct) {
+    console.log("[AliExpress Fetch Debug] Final source selected", {
+      source: "open-platform",
+      productId,
+      finalPrice: openPlatformProduct.price,
+      finalCurrency: openPlatformProduct.currency,
+      finalStock: openPlatformProduct.stock,
+      inputUrl: trimmedUrl,
+    });
+    return openPlatformProduct;
+  }
 
   throw new Error(
-    "Could not fetch product details from AliExpress. Check the URL is a live product page and try again.",
+    "Could not fetch product details from official AliExpress APIs (Dropship/Affiliate). Please reconnect AliExpress OAuth and try again.",
   );
 }
