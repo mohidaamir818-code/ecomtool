@@ -63,12 +63,48 @@ function ebayHeaders(token: string): HeadersInit {
   return {
     Authorization: `Bearer ${token}`,
     "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
+    "Accept-Language": "en-GB",
+  };
+}
+
+/**
+ * UK business sellers often return ex-VAT prices in the API while eBay.co.uk
+ * shows VAT-inclusive prices to buyers. Match the buyer-facing listing price.
+ */
+function toBuyerItemPrice(netPrice: number, taxes?: EbayTax[]): {
+  price: number;
+  priceNote: string | null;
+} {
+  const vat = taxes?.find((tax) => tax.taxType === "VAT");
+  if (!vat?.taxPercentage) {
+    return { price: netPrice, priceNote: null };
+  }
+
+  const vatRate = Number.parseFloat(vat.taxPercentage);
+  if (!Number.isFinite(vatRate) || vatRate <= 0) {
+    return { price: netPrice, priceNote: null };
+  }
+
+  if (vat.includedInPrice) {
+    return { price: netPrice, priceNote: null };
+  }
+
+  const grossPrice = Math.round(netPrice * (1 + vatRate / 100) * 100) / 100;
+  return {
+    price: grossPrice,
+    priceNote: `incl. ${vatRate % 1 === 0 ? vatRate.toFixed(0) : vatRate}% VAT`,
   };
 }
 
 interface EbayMoney {
   value?: string;
   currency?: string;
+}
+
+interface EbayTax {
+  taxType?: string;
+  taxPercentage?: string;
+  includedInPrice?: boolean;
 }
 
 interface EbayShippingOption {
@@ -98,6 +134,7 @@ interface EbayItemSummary {
 
 interface EbayItemDetail {
   itemId?: string;
+  legacyItemId?: string;
   title?: string;
   itemWebUrl?: string;
   condition?: string;
@@ -110,6 +147,42 @@ interface EbayItemDetail {
   image?: { imageUrl?: string };
   localizedAspects?: EbayLocalizedAspect[];
   color?: string;
+  taxes?: EbayTax[];
+}
+
+const ACCESSORY_VARIANT_PATTERN =
+  /\b(sim pin|cable only|hook only|charger only|charging cable|replacement|spare|tips only|case only|cover only|strap only|adapter only|earbud only)\b/i;
+
+function normalizeEbayListingUrl(url: string, legacyItemId?: string): string {
+  const fallbackId = legacyItemId?.trim();
+  if (!url && fallbackId) {
+    return `https://www.ebay.co.uk/itm/${fallbackId}`;
+  }
+
+  try {
+    const parsed = new URL(url);
+    const itemId = fallbackId || parsed.pathname.match(/(\d{9,15})/)?.[1];
+    if (!itemId) return url;
+
+    const variantId = parsed.searchParams.get("var");
+    const base = `https://www.ebay.co.uk/itm/${itemId}`;
+    return variantId ? `${base}?var=${variantId}` : base;
+  } catch {
+    return fallbackId ? `https://www.ebay.co.uk/itm/${fallbackId}` : url;
+  }
+}
+
+function isLikelyAccessoryVariant(
+  label: string | null,
+  price: number,
+  siblingPrices: number[],
+): boolean {
+  if (label && ACCESSORY_VARIANT_PATTERN.test(label)) return true;
+  if (siblingPrices.length < 2) return false;
+
+  const sorted = [...siblingPrices].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  return price < 2 && median >= 4 && price < median * 0.35;
 }
 
 function resolveMinShipping(
@@ -192,16 +265,18 @@ function buildListingRow(params: {
   variantLabel: string | null;
   hasVariations: boolean;
   sellerName: string;
-  price: number;
+  netPrice: number;
   currency: string;
+  taxes?: EbayTax[];
   shippingOptions?: EbayShippingOption[];
   condition: string;
   listingUrl: string;
   imageUrl: string | null;
 }): EbayListing {
+  const { price: buyerPrice, priceNote } = toBuyerItemPrice(params.netPrice, params.taxes);
   const shipping = resolveMinShipping(params.shippingOptions, params.currency);
   const minShipping = shipping.minCost ?? 0;
-  const totalPrice = params.price + minShipping;
+  const totalPrice = buyerPrice + minShipping;
 
   let totalPriceLabel = formatPrice(totalPrice, params.currency);
   if (shipping.multipleTiers) {
@@ -214,8 +289,9 @@ function buildListingRow(params: {
     variantLabel: params.variantLabel,
     sellerName: params.sellerName,
     hasVariations: params.hasVariations,
-    price: params.price,
-    priceLabel: formatPrice(params.price, params.currency),
+    price: buyerPrice,
+    priceLabel: formatPrice(buyerPrice, params.currency),
+    priceNote,
     shippingCost: shipping.minCost,
     shippingLabel: shipping.label,
     totalPrice,
@@ -229,20 +305,23 @@ function buildListingRow(params: {
 
 function mapDetailToListing(item: EbayItemDetail, hasVariations: boolean): EbayListing | null {
   const currency = item.price?.currency ?? "GBP";
-  const price = Number.parseFloat(item.price?.value ?? "0");
-  if (!Number.isFinite(price) || price <= 0) return null;
+  const netPrice = Number.parseFloat(item.price?.value ?? "0");
+  if (!Number.isFinite(netPrice) || netPrice <= 0) return null;
+
+  const listingUrl = normalizeEbayListingUrl(item.itemWebUrl ?? "", item.legacyItemId);
 
   return buildListingRow({
-    id: item.itemId ?? crypto.randomUUID(),
+    id: item.itemId ?? item.legacyItemId ?? crypto.randomUUID(),
     title: item.title ?? "Untitled listing",
     variantLabel: hasVariations ? extractVariantLabel(item) : null,
     hasVariations,
     sellerName: item.seller?.username ?? "Unknown seller",
-    price,
+    netPrice,
     currency,
+    taxes: item.taxes,
     shippingOptions: item.shippingOptions,
     condition: item.condition ?? "—",
-    listingUrl: item.itemWebUrl ?? "",
+    listingUrl,
     imageUrl: item.image?.imageUrl ?? null,
   });
 }
@@ -260,6 +339,15 @@ async function fetchItemDetail(token: string, itemId: string): Promise<EbayItemD
   return (await response.json()) as EbayItemDetail;
 }
 
+async function enrichVariantItem(
+  token: string,
+  variant: EbayItemDetail,
+): Promise<EbayItemDetail> {
+  if (!variant.itemId) return variant;
+  const detail = await fetchItemDetail(token, variant.itemId);
+  return detail ?? variant;
+}
+
 async function fetchVariationItems(
   token: string,
   itemGroupHref: string,
@@ -272,7 +360,8 @@ async function fetchVariationItems(
   if (!response.ok) return [];
 
   const data = (await response.json()) as { items?: EbayItemDetail[] };
-  return data.items ?? [];
+  const variants = data.items ?? [];
+  return runBatched(variants, FETCH_BATCH, (variant) => enrichVariantItem(token, variant));
 }
 
 async function runBatched<T, R>(
@@ -298,9 +387,23 @@ async function enrichSearchSummary(
 
   if (isVariationGroup) {
     const variants = await fetchVariationItems(token, summary.itemGroupHref!);
-    const rows = variants
-      .map((variant) => mapDetailToListing(variant, true))
-      .filter((row): row is EbayListing => row !== null);
+    const siblingPrices = variants
+      .map((variant) => Number.parseFloat(variant.price?.value ?? "0"))
+      .filter((value) => value > 0);
+
+    const rows: EbayListing[] = [];
+
+    for (const variant of variants) {
+      const netPrice = Number.parseFloat(variant.price?.value ?? "0");
+      const variantLabel = extractVariantLabel(variant);
+
+      if (isLikelyAccessoryVariant(variantLabel, netPrice, siblingPrices)) {
+        continue;
+      }
+
+      const row = mapDetailToListing(variant, true);
+      if (row) rows.push(row);
+    }
 
     if (rows.length > 0) return rows;
   }
@@ -314,7 +417,7 @@ async function enrichSearchSummary(
   }
 
   const currency = summary.price?.currency ?? "GBP";
-  const price = Number.parseFloat(summary.price?.value ?? "0") || 0;
+  const netPrice = Number.parseFloat(summary.price?.value ?? "0") || 0;
 
   return [
     buildListingRow({
@@ -323,11 +426,11 @@ async function enrichSearchSummary(
       variantLabel: null,
       hasVariations: false,
       sellerName: summary.seller?.username ?? "Unknown seller",
-      price,
+      netPrice,
       currency,
       shippingOptions: summary.shippingOptions,
       condition: summary.condition ?? "—",
-      listingUrl: summary.itemWebUrl ?? "",
+      listingUrl: normalizeEbayListingUrl(summary.itemWebUrl ?? "", summary.legacyItemId),
       imageUrl: summary.image?.imageUrl ?? null,
     }),
   ];

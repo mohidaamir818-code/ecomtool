@@ -55,7 +55,7 @@ export function EbayListingsTable({
             {total.toLocaleString()} listing{total === 1 ? "" : "s"} on eBay UK
           </p>
           <p className="mt-0.5 text-xs text-[#6B7280]">
-            {offerCount} offer{offerCount === 1 ? "" : "s"} on this page (exact variant prices)
+            {offerCount} offer{offerCount === 1 ? "" : "s"} · UK buyer prices (VAT included where applicable)
             {" · "}
             Listings {offset + 1}–{Math.min(offset + limit, total)} of {total.toLocaleString()}
             {alertBelow !== null && alertCount > 0 && (
@@ -97,10 +97,10 @@ export function EbayListingsTable({
                 <th className="px-4 py-3">Listing</th>
                 <th className="px-4 py-3">Variant</th>
                 <th className="px-4 py-3">Condition</th>
-                <th className="px-4 py-3">Price</th>
-                <th className="px-4 py-3">Shipping</th>
+                <th className="px-4 py-3">Buy it now</th>
+                <th className="px-4 py-3">Postage</th>
                 <th className="px-4 py-3">Total</th>
-                <th className="px-4 py-3">Link</th>
+                <th className="px-4 py-3">eBay</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -162,16 +162,35 @@ export function EbayListingsTable({
                               Variations
                             </span>
                           )}
-                          <p className="line-clamp-2 text-[#374151]" title={listing.title}>
-                            {listing.title}
-                          </p>
+                          {listing.listingUrl ? (
+                            <a
+                              href={listing.listingUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="line-clamp-2 font-medium text-[#374151] hover:text-brand hover:underline"
+                              title={listing.title}
+                            >
+                              {listing.title}
+                            </a>
+                          ) : (
+                            <p className="line-clamp-2 text-[#374151]" title={listing.title}>
+                              {listing.title}
+                            </p>
+                          )}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-xs text-[#6B7280]">
                         {listing.variantLabel ?? "—"}
                       </td>
                       <td className="px-4 py-3 text-[#6B7280]">{listing.condition}</td>
-                      <td className="px-4 py-3 font-semibold text-[#111827]">{listing.priceLabel}</td>
+                      <td className="px-4 py-3">
+                        <div>
+                          <span className="font-semibold text-[#111827]">{listing.priceLabel}</span>
+                          {listing.priceNote && (
+                            <p className="mt-0.5 text-[10px] text-[#9CA3AF]">{listing.priceNote}</p>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-4 py-3 text-[#6B7280]">{listing.shippingLabel}</td>
                       <td className="px-4 py-3">
                         <span
@@ -186,9 +205,9 @@ export function EbayListingsTable({
                             href={listing.listingUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-xs font-semibold text-brand hover:underline"
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-[#0064D2]/20 bg-[#0064D2]/5 px-3 py-1.5 text-xs font-semibold text-[#0064D2] transition-colors hover:border-[#0064D2]/40 hover:bg-[#0064D2]/10"
                           >
-                            View
+                            View on eBay
                             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
                               <path
                                 d="M3 9h6V3M9 3L3 9"

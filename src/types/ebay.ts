@@ -6,6 +6,7 @@ export interface EbayListing {
   hasVariations: boolean;
   price: number;
   priceLabel: string;
+  priceNote: string | null;
   shippingCost: number | null;
   shippingLabel: string;
   totalPrice: number;
