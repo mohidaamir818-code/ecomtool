@@ -2,6 +2,7 @@ import "server-only";
 
 import { searchAmazefProducts } from "@/lib/amazef/client";
 import { searchEbayListings } from "@/lib/ebay/browse";
+import { buildEbayCompetitorSearchQueries } from "@/lib/ebay/query";
 import { sendEmail } from "@/lib/email/send-email";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type {
@@ -224,7 +225,45 @@ export async function searchCheaperEbayCompetitors(
   userPriceLabel: string;
 }> {
   const query = productQuery.trim();
-  const result = await searchEbayListings({ query, limit: 50, offset: 0, sort: "asc" });
+  const searchQueries = buildEbayCompetitorSearchQueries(query);
+
+  let bestResult: Awaited<ReturnType<typeof searchEbayListings>> | null = null;
+  let bestCheaperCount = -1;
+
+  for (const candidateQuery of searchQueries) {
+    const result = await searchEbayListings({
+      query: candidateQuery,
+      limit: 50,
+      offset: 0,
+      sort: "asc",
+    });
+
+    const cheaperCount = result.listings.filter(
+      (listing) => listing.totalPrice > 0 && listing.totalPrice < userPrice,
+    ).length;
+
+    if (
+      !bestResult ||
+      cheaperCount > bestCheaperCount ||
+      (cheaperCount === bestCheaperCount && result.offerCount > bestResult.offerCount)
+    ) {
+      bestResult = result;
+      bestCheaperCount = cheaperCount;
+    }
+
+    if (cheaperCount > 0) {
+      break;
+    }
+  }
+
+  const result = bestResult ?? {
+    listings: [],
+    total: 0,
+    offerCount: 0,
+    offset: 0,
+    limit: 50,
+  };
+
   const currency = result.listings[0]?.currency ?? "GBP";
   const userPriceLabel = formatPrice(userPrice, currency);
 
