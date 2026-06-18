@@ -2,16 +2,35 @@ export type CompetitorUpdateMode = "auto_24h" | "custom" | "manual";
 
 export type CompetitorPlatform = "amazef" | "ebay";
 
+export interface CompetitorMatchVariant {
+  id: string;
+  label: string;
+  price: number;
+  priceLabel: string;
+  priceDifference: number;
+  priceDifferenceLabel: string;
+  productUrl: string | null;
+}
+
 export interface CompetitorMatch {
   id: string;
   productName: string;
+  sellerName: string | null;
   price: number;
   priceLabel: string;
+  priceMax?: number;
   currency: string;
   priceDifference: number;
   priceDifferenceLabel: string;
   imageUrl: string | null;
   productUrl: string | null;
+  variants?: CompetitorMatchVariant[];
+}
+
+export interface CompetitorWatchUpgradePayload {
+  userId: string;
+  watchId: string;
+  userPrice: number;
 }
 
 export interface CompetitorCheck {

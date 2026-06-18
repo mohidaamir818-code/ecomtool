@@ -284,6 +284,10 @@ export function CompetitorsShell() {
                   checking={checkingId === watch.id}
                   onCheck={() => handleCheck(watch.id)}
                   onRemove={() => handleRemove(watch.id)}
+                  onUpdated={(message) => {
+                    if (userId) loadWatches(userId);
+                    if (message) setNotice(message);
+                  }}
                 />
               ))}
             </div>

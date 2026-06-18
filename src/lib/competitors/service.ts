@@ -7,11 +7,13 @@ import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type {
   CompetitorCheck,
   CompetitorMatch,
+  CompetitorMatchVariant,
   CompetitorPlatform,
   CompetitorUpdateMode,
   CompetitorWatch,
   CompetitorWatchAddPayload,
 } from "@/types/competitor";
+import type { EbayListing } from "@/types/ebay";
 
 function formatPrice(price: number, currency: string): string {
   if (currency === "GBP") return `£${price.toFixed(2)}`;
@@ -84,6 +86,91 @@ function buildWatchMessage(
   return `No sellers on ${marketplace} found below your ${userPriceLabel} price for "${productQuery}".`;
 }
 
+function getEbayListingGroupKey(listing: EbayListing): string {
+  const titleKey = listing.title.trim().toLowerCase();
+  const sellerKey = listing.sellerName.trim().toLowerCase();
+  return `${sellerKey}::${titleKey}`;
+}
+
+function buildEbayMatchFromGroup(group: EbayListing[], userPrice: number): CompetitorMatch {
+  const sorted = [...group].sort((a, b) => a.totalPrice - b.totalPrice);
+  const primary = sorted[0];
+  const currency = primary.currency;
+  const minPrice = sorted[0].totalPrice;
+  const maxPrice = sorted[sorted.length - 1].totalPrice;
+  const hasMultipleVariants = sorted.length > 1;
+
+  const variants: CompetitorMatchVariant[] = sorted.map((listing, index) => ({
+    id: listing.id,
+    label: listing.variantLabel ?? `Variant ${index + 1}`,
+    price: listing.totalPrice,
+    priceLabel: listing.totalPriceLabel,
+    priceDifference: userPrice - listing.totalPrice,
+    priceDifferenceLabel: formatPrice(userPrice - listing.totalPrice, currency),
+    productUrl: listing.listingUrl,
+  }));
+
+  const priceLabel =
+    hasMultipleVariants && minPrice !== maxPrice
+      ? `${formatPrice(minPrice, currency)} to ${formatPrice(maxPrice, currency)}`
+      : primary.totalPriceLabel;
+
+  return {
+    id: hasMultipleVariants ? getEbayListingGroupKey(primary) : primary.id,
+    productName: primary.title,
+    sellerName: primary.sellerName,
+    price: minPrice,
+    priceLabel,
+    priceMax: hasMultipleVariants && minPrice !== maxPrice ? maxPrice : undefined,
+    currency,
+    priceDifference: userPrice - minPrice,
+    priceDifferenceLabel: formatPrice(userPrice - minPrice, currency),
+    imageUrl: primary.imageUrl,
+    productUrl: primary.listingUrl,
+    variants: hasMultipleVariants ? variants : undefined,
+  };
+}
+
+function groupEbayCheaperMatches(listings: EbayListing[], userPrice: number): CompetitorMatch[] {
+  const groups = new Map<string, EbayListing[]>();
+
+  for (const listing of listings) {
+    const key = getEbayListingGroupKey(listing);
+    const existing = groups.get(key) ?? [];
+    existing.push(listing);
+    groups.set(key, existing);
+  }
+
+  return [...groups.values()]
+    .map((group) => buildEbayMatchFromGroup(group, userPrice))
+    .sort((a, b) => a.price - b.price);
+}
+
+function parseVariantsJson(value: unknown, userPrice: number, currency: string): CompetitorMatchVariant[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+
+  const variants = value
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const row = entry as Record<string, unknown>;
+      const price = Number(row.price);
+      if (!Number.isFinite(price)) return null;
+
+      return {
+        id: String(row.id ?? crypto.randomUUID()),
+        label: String(row.label ?? "Variant"),
+        price,
+        priceLabel: row.priceLabel ? String(row.priceLabel) : formatPrice(price, currency),
+        priceDifference: userPrice - price,
+        priceDifferenceLabel: formatPrice(userPrice - price, currency),
+        productUrl: row.productUrl ? String(row.productUrl) : null,
+      } satisfies CompetitorMatchVariant;
+    })
+    .filter((variant): variant is CompetitorMatchVariant => variant !== null);
+
+  return variants.length > 0 ? variants : undefined;
+}
+
 export async function searchCheaperCompetitors(
   productQuery: string,
   userPrice: number,
@@ -108,6 +195,7 @@ export async function searchCheaperCompetitors(
     return {
       id: product.id,
       productName: product.title,
+      sellerName: product.sellerName,
       price: product.price,
       priceLabel: formatPrice(product.price, product.currency),
       currency: product.currency,
@@ -144,24 +232,7 @@ export async function searchCheaperEbayCompetitors(
     .filter((listing) => listing.totalPrice > 0 && listing.totalPrice < userPrice)
     .sort((a, b) => a.totalPrice - b.totalPrice);
 
-  const matches: CompetitorMatch[] = cheaperListings.map((listing) => {
-    const priceDifference = userPrice - listing.totalPrice;
-    const productName = listing.variantLabel
-      ? `${listing.title} (${listing.variantLabel})`
-      : listing.title;
-
-    return {
-      id: listing.id,
-      productName,
-      price: listing.totalPrice,
-      priceLabel: listing.totalPriceLabel,
-      currency: listing.currency,
-      priceDifference,
-      priceDifferenceLabel: formatPrice(priceDifference, currency),
-      imageUrl: listing.imageUrl,
-      productUrl: listing.listingUrl,
-    };
-  });
+  const matches = groupEbayCheaperMatches(cheaperListings, userPrice);
 
   return {
     matches,
@@ -231,10 +302,12 @@ async function replaceWatchMatches(watchId: string, matches: CompetitorMatch[]):
       watch_id: watchId,
       external_product_id: match.id,
       product_name: match.productName,
+      seller_name: match.sellerName,
       competitor_price: match.price,
       currency: match.currency,
       image_url: match.imageUrl,
       product_url: match.productUrl,
+      variants_json: match.variants?.length ? match.variants : null,
     })),
   );
 
@@ -420,10 +493,10 @@ async function sendCompetitorWatchEmail(
     matches.length > 0
       ? matches
           .slice(0, 10)
-          .map(
-            (match) =>
-              `• ${match.productName} — ${match.priceLabel} (${match.priceDifferenceLabel} below you)`,
-          )
+          .map((match) => {
+            const seller = match.sellerName ? ` (${match.sellerName})` : "";
+            return `• ${match.productName}${seller} — ${match.priceLabel} (${match.priceDifferenceLabel} below you)`;
+          })
           .join("\n")
       : "No competitors below your price right now.";
 
@@ -435,10 +508,12 @@ async function sendCompetitorWatchEmail(
       matches.length > 0
         ? `<ul>${matches
             .slice(0, 10)
-            .map(
-              (match) =>
-                `<li><strong>${match.productName}</strong> — ${match.priceLabel} (${match.priceDifferenceLabel} below you)</li>`,
-            )
+            .map((match) => {
+              const seller = match.sellerName
+                ? ` <span style="color:#6B7280">(${match.sellerName})</span>`
+                : "";
+              return `<li><strong>${match.productName}</strong>${seller} — ${match.priceLabel} (${match.priceDifferenceLabel} below you)</li>`;
+            })
             .join("")}</ul>`
         : "<p>No competitors below your price right now.</p>"
     }`,
@@ -529,6 +604,40 @@ export async function checkCompetitorWatchUpdate(
     message,
     matches: search.matches,
   };
+}
+
+export async function upgradeCompetitorWatchPrice(
+  userId: string,
+  watchId: string,
+  newPrice: number,
+): Promise<{ watch: CompetitorWatch; message: string; matches: CompetitorMatch[] }> {
+  if (!Number.isFinite(newPrice) || newPrice <= 0) {
+    throw new Error("Enter a valid selling price greater than 0.");
+  }
+
+  const supabase = getSupabaseAdmin();
+
+  const { data: existing, error: existingError } = await supabase
+    .from("competitor_watches")
+    .select("id")
+    .eq("id", watchId)
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .single();
+
+  if (existingError || !existing) {
+    throw new Error("Competitor watch not found.");
+  }
+
+  const { error: updateError } = await supabase
+    .from("competitor_watches")
+    .update({ user_price: newPrice })
+    .eq("id", watchId)
+    .eq("user_id", userId);
+
+  if (updateError) throw new Error(updateError.message);
+
+  return checkCompetitorWatchUpdate(userId, watchId);
 }
 
 export async function processDueCompetitorWatchUpdates(userId?: string): Promise<number> {
@@ -624,12 +733,23 @@ function mapRowToMatch(row: Record<string, unknown>, userPrice: number): Competi
   const price = Number(row.competitor_price);
   const priceDifference = userPrice - price;
   const externalId = row.external_product_id ? String(row.external_product_id) : String(row.id);
+  const variants = parseVariantsJson(row.variants_json, userPrice, currency);
+  const maxVariantPrice =
+    variants && variants.length > 1
+      ? Math.max(...variants.map((variant) => variant.price))
+      : undefined;
 
   return {
     id: externalId,
     productName: String(row.product_name),
+    sellerName: row.seller_name ? String(row.seller_name) : null,
     price,
-    priceLabel: formatPrice(price, currency),
+    priceLabel:
+      variants && variants.length > 1 && maxVariantPrice != null && maxVariantPrice !== price
+        ? `${formatPrice(price, currency)} to ${formatPrice(maxVariantPrice, currency)}`
+        : formatPrice(price, currency),
+    priceMax:
+      maxVariantPrice != null && maxVariantPrice !== price ? maxVariantPrice : undefined,
     currency,
     priceDifference,
     priceDifferenceLabel: formatPrice(priceDifference, currency),
@@ -637,6 +757,7 @@ function mapRowToMatch(row: Record<string, unknown>, userPrice: number): Competi
     productUrl: row.product_url
       ? String(row.product_url)
       : `https://amazef.com/products/${externalId}`,
+    variants,
   };
 }
 

@@ -5,9 +5,10 @@ import {
   getCompetitorWatches,
   processDueCompetitorWatchUpdates,
   removeCompetitorWatch,
+  upgradeCompetitorWatchPrice,
 } from "@/lib/competitors/service";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
-import type { CompetitorWatchAddPayload } from "@/types/competitor";
+import type { CompetitorWatchAddPayload, CompetitorWatchUpgradePayload } from "@/types/competitor";
 
 export async function GET(request: NextRequest) {
   try {
@@ -137,6 +138,50 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ success: true, watches });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to remove competitor watch.";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = (await request.json()) as CompetitorWatchUpgradePayload;
+
+    if (!body.userId?.trim() || !body.watchId?.trim()) {
+      return NextResponse.json({ error: "userId and watchId are required." }, { status: 400 });
+    }
+
+    const userPrice = Number(body.userPrice);
+    if (!Number.isFinite(userPrice) || userPrice <= 0) {
+      return NextResponse.json(
+        { error: "Enter a valid selling price greater than 0." },
+        { status: 400 },
+      );
+    }
+
+    const supabase = getSupabaseAdmin();
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("id", body.userId)
+      .single();
+
+    if (!profile) {
+      return NextResponse.json({ error: "User not found." }, { status: 404 });
+    }
+
+    const result = await upgradeCompetitorWatchPrice(body.userId, body.watchId, userPrice);
+    const watches = await getCompetitorWatches(body.userId);
+
+    return NextResponse.json({
+      success: true,
+      message: result.message,
+      watch: result.watch,
+      matches: result.matches,
+      watches,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to upgrade competitor watch price.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

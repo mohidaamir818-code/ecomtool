@@ -16,23 +16,32 @@ export function CompetitorWatchCard({
   watch,
   onCheck,
   onRemove,
+  onUpdated,
   checking,
 }: {
   watch: CompetitorWatch;
   onCheck: () => void;
   onRemove: () => void;
+  onUpdated: (message?: string) => void;
   checking: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [loadingMatches, setLoadingMatches] = useState(false);
   const [matches, setMatches] = useState<CompetitorMatch[]>([]);
   const [message, setMessage] = useState("");
+  const [editingPrice, setEditingPrice] = useState(false);
+  const [priceInput, setPriceInput] = useState(String(watch.userPrice));
+  const [upgrading, setUpgrading] = useState(false);
+  const [upgradeNotice, setUpgradeNotice] = useState("");
 
   useEffect(() => {
     setExpanded(false);
     setMatches([]);
     setMessage("");
-  }, [watch.id, watch.matchesFound, watch.lastCheckedAt]);
+    setEditingPrice(false);
+    setPriceInput(String(watch.userPrice));
+    setUpgradeNotice("");
+  }, [watch.id, watch.matchesFound, watch.lastCheckedAt, watch.userPrice]);
 
   async function loadMatches() {
     const userId = sessionStorage.getItem("ecomtools_user_id");
@@ -61,6 +70,48 @@ export function CompetitorWatchCard({
 
     if (nextExpanded && matches.length === 0 && watch.matchesFound > 0) {
       await loadMatches();
+    }
+  }
+
+  async function handleUpgradePrice() {
+    const userId = sessionStorage.getItem("ecomtools_user_id");
+    if (!userId) return;
+
+    const nextPrice = parseFloat(priceInput);
+    if (!Number.isFinite(nextPrice) || nextPrice <= 0) {
+      setUpgradeNotice("Enter a valid selling price greater than 0.");
+      return;
+    }
+
+    setUpgrading(true);
+    setUpgradeNotice("");
+
+    try {
+      const response = await fetch("/api/competitors/watch", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          watchId: watch.id,
+          userPrice: nextPrice,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setUpgradeNotice(data.error ?? "Failed to upgrade price.");
+        return;
+      }
+
+      setEditingPrice(false);
+      setMatches(data.matches ?? []);
+      setMessage(data.message ?? "");
+      onUpdated(data.message ?? "Price updated and competitors rechecked.");
+    } catch {
+      setUpgradeNotice("Network error while upgrading price.");
+    } finally {
+      setUpgrading(false);
     }
   }
 
@@ -95,9 +146,69 @@ export function CompetitorWatchCard({
               </span>
             </div>
             <h3 className="line-clamp-2 text-base font-bold text-[#111827]">{watch.productQuery}</h3>
-            <p className="mt-2 text-sm text-[#6B7280]">
-              Your price <span className="font-semibold text-[#111827]">{watch.userPriceLabel}</span>
-            </p>
+            <div className="mt-2">
+              {editingPrice ? (
+                <div className="space-y-2" onClick={(event) => event.stopPropagation()}>
+                  <label className="block text-sm font-semibold text-[#374151]">Your selling price</label>
+                  <div className="relative max-w-[180px]">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-[#6B7280]">
+                      £
+                    </span>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={priceInput}
+                      onChange={(event) => setPriceInput(event.target.value)}
+                      className="w-full rounded-xl border border-gray-200 bg-white py-2 pl-7 pr-3 text-sm text-[#111827] outline-none focus:border-brand focus:ring-4 focus:ring-brand/10"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={handleUpgradePrice}
+                      disabled={upgrading}
+                      className="rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
+                    >
+                      {upgrading ? "Upgrading..." : "Upgrade"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingPrice(false);
+                        setPriceInput(String(watch.userPrice));
+                        setUpgradeNotice("");
+                      }}
+                      className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  {upgradeNotice ? (
+                    <p className="text-xs font-medium text-red-600">{upgradeNotice}</p>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm text-[#6B7280]">
+                    Your price{" "}
+                    <span className="font-semibold text-[#111827]">{watch.userPriceLabel}</span>
+                  </p>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setEditingPrice(true);
+                      setPriceInput(String(watch.userPrice));
+                      setUpgradeNotice("");
+                    }}
+                    className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-semibold text-[#374151] hover:border-brand/30 hover:text-brand"
+                  >
+                    Edit
+                  </button>
+                </div>
+              )}
+            </div>
             <p className="mt-1 text-xs text-[#9CA3AF]">
               Last checked {watch.lastCheckedAt ?? "never"}
             </p>

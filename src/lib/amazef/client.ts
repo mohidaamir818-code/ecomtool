@@ -30,7 +30,17 @@ export interface AmazefRawProduct {
   };
   seller_listing_meta?: {
     currency?: string;
+    seller_name?: string;
+    sellerName?: string;
+    store_name?: string;
+    storeName?: string;
+    shop_name?: string;
   };
+  seller_name?: string;
+  sellerName?: string;
+  store_name?: string;
+  storeName?: string;
+  shop_name?: string;
 }
 
 export interface AmazefSearchResult {
@@ -42,6 +52,31 @@ export interface AmazefSearchResult {
   orders: string | null;
   imageUrl: string | null;
   productUrl: string | null;
+  sellerName: string | null;
+}
+
+function extractSellerName(raw: AmazefRawProduct): string | null {
+  const meta = raw.seller_listing_meta;
+  const candidates = [
+    raw.seller_name,
+    raw.sellerName,
+    raw.store_name,
+    raw.storeName,
+    raw.shop_name,
+    meta?.seller_name,
+    meta?.sellerName,
+    meta?.store_name,
+    meta?.storeName,
+    meta?.shop_name,
+  ];
+
+  for (const value of candidates) {
+    if (value != null && String(value).trim()) {
+      return String(value).trim();
+    }
+  }
+
+  return null;
 }
 
 function computeScore(raw: AmazefRawProduct): number | null {
@@ -123,6 +158,7 @@ function normalizeProduct(raw: AmazefRawProduct): AmazefSearchResult | null {
     orders,
     imageUrl,
     productUrl: raw.product_url ?? raw.url ?? buildAmazefProductUrl(raw.id),
+    sellerName: extractSellerName(raw),
   };
 }
 
