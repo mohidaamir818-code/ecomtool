@@ -246,7 +246,7 @@ export function CompetitorsShell() {
             <AddCompetitorWatchFlow
               userId={userId}
               platform={platform}
-              onAdded={() => loadWatches(userId)}
+              onAdded={(watches) => setWatches(watches)}
             />
           </div>
         )}
@@ -284,8 +284,8 @@ export function CompetitorsShell() {
                   checking={checkingId === watch.id}
                   onCheck={() => handleCheck(watch.id)}
                   onRemove={() => handleRemove(watch.id)}
-                  onUpdated={(message) => {
-                    if (userId) loadWatches(userId);
+                  onUpdated={(message, watches) => {
+                    if (watches) setWatches(watches);
                     if (message) setNotice(message);
                   }}
                 />

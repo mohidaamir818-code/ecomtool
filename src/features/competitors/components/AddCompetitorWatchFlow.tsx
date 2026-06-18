@@ -4,13 +4,14 @@ import { useState } from "react";
 import type {
   CompetitorPlatform,
   CompetitorUpdateMode,
+  CompetitorWatch,
   CompetitorWatchDetailResponse,
 } from "@/types/competitor";
 
 interface AddCompetitorWatchFlowProps {
   userId: string;
   platform: CompetitorPlatform;
-  onAdded: () => void;
+  onAdded: (watches: CompetitorWatch[]) => void;
 }
 
 export function AddCompetitorWatchFlow({ userId, platform, onAdded }: AddCompetitorWatchFlowProps) {
@@ -83,7 +84,7 @@ export function AddCompetitorWatchFlow({ userId, platform, onAdded }: AddCompeti
       resetForm();
       setNotice(data.message ?? "Competitor watch added. Check your email for the first report.");
       setIsError(false);
-      onAdded();
+      onAdded(data.watches ?? []);
     } catch {
       setNotice("Network error while adding competitor watch.");
       setIsError(true);

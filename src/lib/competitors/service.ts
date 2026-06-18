@@ -2,7 +2,7 @@ import "server-only";
 
 import { searchAmazefProducts } from "@/lib/amazef/client";
 import { searchEbayListings } from "@/lib/ebay/browse";
-import { buildEbayCompetitorWatchSearchQueries, ebayListingMatchesProductQuery } from "@/lib/ebay/query";
+import { getEbayCompetitorWatchSearchQuery, ebayListingMatchesProductQuery } from "@/lib/ebay/query";
 import { sendEmail } from "@/lib/email/send-email";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type {
@@ -225,45 +225,19 @@ export async function searchCheaperEbayCompetitors(
   userPriceLabel: string;
 }> {
   const query = productQuery.trim();
-  const searchQueries = buildEbayCompetitorWatchSearchQueries(query);
+  const candidateQuery = getEbayCompetitorWatchSearchQuery(query);
 
-  let bestRelevantListings: EbayListing[] = [];
-  let bestCheaperCount = -1;
+  const result = await searchEbayListings({
+    query: candidateQuery,
+    limit: 25,
+    offset: 0,
+    sort: "asc",
+    enrichDetails: false,
+  });
 
-  for (const candidateQuery of searchQueries) {
-    const result = await searchEbayListings({
-      query: candidateQuery,
-      limit: 25,
-      offset: 0,
-      sort: "asc",
-      enrichDetails: false,
-    });
-
-    const relevantListings = result.listings.filter((listing) =>
-      ebayListingMatchesProductQuery(listing.title, query),
-    );
-
-    if (relevantListings.length === 0) {
-      continue;
-    }
-
-    const cheaperCount = relevantListings.filter(
-      (listing) => listing.totalPrice > 0 && listing.totalPrice < userPrice,
-    ).length;
-
-    if (
-      cheaperCount > bestCheaperCount ||
-      (cheaperCount === bestCheaperCount &&
-        relevantListings.length > bestRelevantListings.length)
-    ) {
-      bestRelevantListings = relevantListings;
-      bestCheaperCount = cheaperCount;
-    }
-
-    if (cheaperCount > 0) {
-      break;
-    }
-  }
+  const bestRelevantListings = result.listings.filter((listing) =>
+    ebayListingMatchesProductQuery(listing.title, query),
+  );
 
   const currency = bestRelevantListings[0]?.currency ?? "GBP";
   const userPriceLabel = formatPrice(userPrice, currency);

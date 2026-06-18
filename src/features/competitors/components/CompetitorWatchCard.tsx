@@ -22,7 +22,7 @@ export function CompetitorWatchCard({
   watch: CompetitorWatch;
   onCheck: () => void;
   onRemove: () => void;
-  onUpdated: (message?: string) => void;
+  onUpdated: (message?: string, watches?: CompetitorWatch[]) => void;
   checking: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -112,7 +112,7 @@ export function CompetitorWatchCard({
       setExpanded(true);
       setMatches(data.matches ?? []);
       setMessage(data.message ?? "");
-      onUpdated(data.message ?? "Price updated and competitors rechecked.");
+      onUpdated(data.message ?? "Price updated and competitors rechecked.", data.watches);
     } catch {
       setUpgradeNotice("Network error while upgrading price.");
     } finally {

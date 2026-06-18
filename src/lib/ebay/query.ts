@@ -124,6 +124,12 @@ export function buildEbayCompetitorWatchSearchQueries(raw: string): string[] {
   ]);
 }
 
+/** Single eBay search query used for competitor watches (one API call per check). */
+export function getEbayCompetitorWatchSearchQuery(raw: string): string {
+  const queries = buildEbayCompetitorWatchSearchQueries(raw);
+  return queries[0] ?? raw.trim();
+}
+
 /**
  * Returns true when the eBay listing title contains every significant token
  * from the user's original product query.
