@@ -230,6 +230,58 @@ function extractPriceHintFromUrl(url: string): PriceHint | null {
   }
 }
 
+function extractOrderHintFromUrl(url: string): number | null {
+  try {
+    const raw = new URL(url).searchParams.get("pdp_ext_f");
+    if (!raw) return null;
+
+    const payload = JSON.parse(decodeURIComponent(raw)) as {
+      order?: string | number;
+    };
+    return parseNumber(payload.order);
+  } catch {
+    return null;
+  }
+}
+
+function parseSoldCountDisplay(value: string | null | undefined): number | null {
+  if (!value) return null;
+
+  const normalized = value.trim();
+  if (!normalized) return null;
+
+  const soldMatch = normalized.match(/^([\d,]+)\s*sold\b/i);
+  if (soldMatch) return parseNumber(soldMatch[1]);
+
+  const plusMatch = normalized.match(/^([\d,]+)\+/);
+  if (plusMatch) return parseNumber(plusMatch[1]);
+
+  return parseNumber(normalized);
+}
+
+function formatSoldOrders(count: number): string {
+  return `${count.toLocaleString("en-US")} sold`;
+}
+
+function resolveSoldOrdersDisplay(
+  orders: string | null,
+  sourceUrls: string[],
+): string | null {
+  const candidates: number[] = [];
+
+  const fromOrders = parseSoldCountDisplay(orders);
+  if (fromOrders != null) candidates.push(fromOrders);
+
+  for (const sourceUrl of sourceUrls) {
+    const orderHint = extractOrderHintFromUrl(sourceUrl);
+    if (orderHint != null) candidates.push(orderHint);
+  }
+
+  if (candidates.length === 0) return orders;
+
+  return formatSoldOrders(Math.max(...candidates));
+}
+
 function collectSkuSaleCandidates(entry: MtopSkuPriceEntry): number[] {
   const original = parseNestedPrice(entry.originalPrice);
   const raw = [
@@ -1006,12 +1058,18 @@ export async function fetchAliExpressProduct(url: string): Promise<HandlingProdu
 
   const openPlatformProduct = await fetchViaOpenPlatform(productId);
   if (openPlatformProduct) {
+    openPlatformProduct.orders = resolveSoldOrdersDisplay(openPlatformProduct.orders, [
+      trimmedUrl,
+      resolvedUrl,
+    ]);
+
     console.log("[AliExpress Fetch Debug] Final source selected", {
       source: "open-platform",
       productId,
       finalPrice: openPlatformProduct.price,
       finalCurrency: openPlatformProduct.currency,
       finalStock: openPlatformProduct.stock,
+      finalOrders: openPlatformProduct.orders,
       inputUrl: trimmedUrl,
     });
     return openPlatformProduct;

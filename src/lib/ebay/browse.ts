@@ -7,7 +7,7 @@ const EBAY_API_BASE = "https://api.ebay.com";
 const MARKETPLACE_ID = "EBAY_GB";
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 50;
-const FETCH_BATCH = 8;
+const FETCH_BATCH = 6;
 
 let cachedToken: { token: string; expiresAt: number } | null = null;
 
@@ -64,35 +64,7 @@ function ebayHeaders(token: string): HeadersInit {
     Authorization: `Bearer ${token}`,
     "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
     "Accept-Language": "en-GB",
-  };
-}
-
-/**
- * UK business sellers often return ex-VAT prices in the API while eBay.co.uk
- * shows VAT-inclusive prices to buyers. Match the buyer-facing listing price.
- */
-function toBuyerItemPrice(netPrice: number, taxes?: EbayTax[]): {
-  price: number;
-  priceNote: string | null;
-} {
-  const vat = taxes?.find((tax) => tax.taxType === "VAT");
-  if (!vat?.taxPercentage) {
-    return { price: netPrice, priceNote: null };
-  }
-
-  const vatRate = Number.parseFloat(vat.taxPercentage);
-  if (!Number.isFinite(vatRate) || vatRate <= 0) {
-    return { price: netPrice, priceNote: null };
-  }
-
-  if (vat.includedInPrice) {
-    return { price: netPrice, priceNote: null };
-  }
-
-  const grossPrice = Math.round(netPrice * (1 + vatRate / 100) * 100) / 100;
-  return {
-    price: grossPrice,
-    priceNote: `incl. ${vatRate % 1 === 0 ? vatRate.toFixed(0) : vatRate}% VAT`,
+    "X-EBAY-C-ENDUSERCTX": "contextualLocation=country=GB",
   };
 }
 
@@ -139,9 +111,6 @@ interface EbayItemDetail {
   itemWebUrl?: string;
   condition?: string;
   price?: EbayMoney;
-  marketingPrice?: {
-    originalPrice?: EbayMoney;
-  };
   seller?: { username?: string };
   shippingOptions?: EbayShippingOption[];
   image?: { imageUrl?: string };
@@ -152,6 +121,30 @@ interface EbayItemDetail {
 
 const ACCESSORY_VARIANT_PATTERN =
   /\b(sim pin|cable only|hook only|charger only|charging cable|replacement|spare|tips only|case only|cover only|strap only|adapter only|earbud only)\b/i;
+
+function getVatRate(taxes?: EbayTax[]): number {
+  const vat = taxes?.find((tax) => tax.taxType === "VAT");
+  if (!vat?.taxPercentage || vat.includedInPrice) return 0;
+  const rate = Number.parseFloat(vat.taxPercentage);
+  return Number.isFinite(rate) && rate > 0 ? rate : 0;
+}
+
+/** Convert API net price to the price UK buyers see on eBay.co.uk (VAT added when excluded). */
+function toBuyerPrice(netPrice: number, taxes?: EbayTax[]): {
+  price: number;
+  priceNote: string | null;
+} {
+  const vatRate = getVatRate(taxes);
+  if (vatRate <= 0) {
+    return { price: netPrice, priceNote: null };
+  }
+
+  const grossPrice = Math.round(netPrice * (1 + vatRate / 100) * 100) / 100;
+  return {
+    price: grossPrice,
+    priceNote: `incl. ${vatRate % 1 === 0 ? vatRate.toFixed(0) : vatRate}% VAT`,
+  };
+}
 
 function normalizeEbayListingUrl(url: string, legacyItemId?: string): string {
   const fallbackId = legacyItemId?.trim();
@@ -174,64 +167,57 @@ function normalizeEbayListingUrl(url: string, legacyItemId?: string): string {
 
 function isLikelyAccessoryVariant(
   label: string | null,
-  price: number,
-  siblingPrices: number[],
+  netPrice: number,
+  siblingNetPrices: number[],
 ): boolean {
   if (label && ACCESSORY_VARIANT_PATTERN.test(label)) return true;
-  if (siblingPrices.length < 2) return false;
+  if (siblingNetPrices.length < 2) return false;
 
-  const sorted = [...siblingPrices].sort((a, b) => a - b);
+  const sorted = [...siblingNetPrices].sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)];
-  return price < 2 && median >= 4 && price < median * 0.35;
+  return netPrice < 2 && median >= 4 && netPrice < median * 0.35;
 }
 
-function resolveMinShipping(
+function resolveBuyerShipping(
   shippingOptions: EbayShippingOption[] | undefined,
-  fallbackCurrency: string,
-): { minCost: number | null; currency: string; multipleTiers: boolean; label: string } {
+  currency: string,
+  taxes?: EbayTax[],
+): { cost: number | null; label: string; multipleTiers: boolean } {
   if (!shippingOptions?.length) {
-    return { minCost: null, currency: fallbackCurrency, multipleTiers: false, label: "—" };
+    return { cost: null, label: "—", multipleTiers: false };
   }
 
   const parsed = shippingOptions
     .map((option) => {
       if (option.shippingCost?.value === undefined) return null;
-      const value = Number.parseFloat(option.shippingCost.value);
-      if (!Number.isFinite(value)) return null;
-      return {
-        value,
-        currency: option.shippingCost.currency ?? fallbackCurrency,
-      };
+      const net = Number.parseFloat(option.shippingCost.value);
+      if (!Number.isFinite(net)) return null;
+      const shipCurrency = option.shippingCost.currency ?? currency;
+      const buyer = toBuyerPrice(net, taxes);
+      return { net, buyer: buyer.price, currency: shipCurrency };
     })
-    .filter((entry): entry is { value: number; currency: string } => entry !== null);
+    .filter((entry): entry is { net: number; buyer: number; currency: string } => entry !== null);
 
   if (!parsed.length) {
-    return { minCost: null, currency: fallbackCurrency, multipleTiers: false, label: "—" };
+    return { cost: null, label: "—", multipleTiers: false };
   }
 
-  const minEntry = parsed.reduce((lowest, current) =>
-    current.value < lowest.value ? current : lowest,
-  );
-  const multipleTiers = parsed.length > 1 && new Set(parsed.map((entry) => entry.value)).size > 1;
+  const cheapest = parsed.reduce((low, cur) => (cur.buyer < low.buyer ? cur : low));
+  const multipleTiers = parsed.length > 1 && new Set(parsed.map((entry) => entry.buyer)).size > 1;
 
   let label: string;
   if (multipleTiers) {
     label =
-      minEntry.value === 0
+      cheapest.buyer === 0
         ? "from Free"
-        : `from ${formatPrice(minEntry.value, minEntry.currency)}`;
-  } else if (minEntry.value === 0) {
+        : `from ${formatPrice(cheapest.buyer, cheapest.currency)}`;
+  } else if (cheapest.buyer === 0) {
     label = "Free";
   } else {
-    label = formatPrice(minEntry.value, minEntry.currency);
+    label = formatPrice(cheapest.buyer, cheapest.currency);
   }
 
-  return {
-    minCost: minEntry.value,
-    currency: minEntry.currency,
-    multipleTiers,
-    label,
-  };
+  return { cost: cheapest.buyer, label, multipleTiers };
 }
 
 function extractVariantLabel(item: EbayItemDetail): string | null {
@@ -259,93 +245,67 @@ function extractVariantLabel(item: EbayItemDetail): string | null {
   return fallback?.value ?? null;
 }
 
-function buildListingRow(params: {
-  id: string;
-  title: string;
-  variantLabel: string | null;
-  hasVariations: boolean;
-  sellerName: string;
-  netPrice: number;
-  currency: string;
-  taxes?: EbayTax[];
-  shippingOptions?: EbayShippingOption[];
-  condition: string;
-  listingUrl: string;
-  imageUrl: string | null;
-}): EbayListing {
-  const { price: buyerPrice, priceNote } = toBuyerItemPrice(params.netPrice, params.taxes);
-  const shipping = resolveMinShipping(params.shippingOptions, params.currency);
-  const minShipping = shipping.minCost ?? 0;
-  const totalPrice = buyerPrice + minShipping;
-
-  let totalPriceLabel = formatPrice(totalPrice, params.currency);
-  if (shipping.multipleTiers) {
-    totalPriceLabel = `from ${totalPriceLabel}`;
-  }
-
-  return {
-    id: params.id,
-    title: params.title,
-    variantLabel: params.variantLabel,
-    sellerName: params.sellerName,
-    hasVariations: params.hasVariations,
-    price: buyerPrice,
-    priceLabel: formatPrice(buyerPrice, params.currency),
-    priceNote,
-    shippingCost: shipping.minCost,
-    shippingLabel: shipping.label,
-    totalPrice,
-    totalPriceLabel,
-    currency: params.currency,
-    condition: params.condition,
-    listingUrl: params.listingUrl,
-    imageUrl: params.imageUrl,
-  };
-}
-
 function mapDetailToListing(item: EbayItemDetail, hasVariations: boolean): EbayListing | null {
   const currency = item.price?.currency ?? "GBP";
   const netPrice = Number.parseFloat(item.price?.value ?? "0");
   if (!Number.isFinite(netPrice) || netPrice <= 0) return null;
 
-  const listingUrl = normalizeEbayListingUrl(item.itemWebUrl ?? "", item.legacyItemId);
+  const { price: buyerPrice, priceNote } = toBuyerPrice(netPrice, item.taxes);
+  const shipping = resolveBuyerShipping(item.shippingOptions, currency, item.taxes);
+  const postage = shipping.cost ?? 0;
+  const totalPrice = buyerPrice + postage;
 
-  return buildListingRow({
+  let totalPriceLabel = formatPrice(totalPrice, currency);
+  if (shipping.multipleTiers) {
+    totalPriceLabel = `from ${totalPriceLabel}`;
+  }
+
+  const listingUrl = normalizeEbayListingUrl(item.itemWebUrl ?? "", item.legacyItemId);
+  if (!listingUrl) return null;
+
+  return {
     id: item.itemId ?? item.legacyItemId ?? crypto.randomUUID(),
     title: item.title ?? "Untitled listing",
     variantLabel: hasVariations ? extractVariantLabel(item) : null,
-    hasVariations,
     sellerName: item.seller?.username ?? "Unknown seller",
-    netPrice,
+    hasVariations,
+    price: buyerPrice,
+    priceLabel: formatPrice(buyerPrice, currency),
+    priceNote,
+    shippingCost: shipping.cost,
+    shippingLabel: shipping.label,
+    totalPrice,
+    totalPriceLabel,
     currency,
-    taxes: item.taxes,
-    shippingOptions: item.shippingOptions,
     condition: item.condition ?? "—",
     listingUrl,
     imageUrl: item.image?.imageUrl ?? null,
-  });
+  };
 }
 
 async function fetchItemDetail(token: string, itemId: string): Promise<EbayItemDetail | null> {
-  const response = await fetch(
-    `${EBAY_API_BASE}/buy/browse/v1/item/${encodeURIComponent(itemId)}`,
-    {
-      headers: ebayHeaders(token),
-      next: { revalidate: 0 },
-    },
-  );
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await fetch(
+      `${EBAY_API_BASE}/buy/browse/v1/item/${encodeURIComponent(itemId)}`,
+      {
+        headers: ebayHeaders(token),
+        next: { revalidate: 0 },
+      },
+    );
 
-  if (!response.ok) return null;
-  return (await response.json()) as EbayItemDetail;
-}
+    if (response.ok) {
+      return (await response.json()) as EbayItemDetail;
+    }
 
-async function enrichVariantItem(
-  token: string,
-  variant: EbayItemDetail,
-): Promise<EbayItemDetail> {
-  if (!variant.itemId) return variant;
-  const detail = await fetchItemDetail(token, variant.itemId);
-  return detail ?? variant;
+    if (response.status === 429 && attempt === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      continue;
+    }
+
+    return null;
+  }
+
+  return null;
 }
 
 async function fetchVariationItems(
@@ -361,7 +321,13 @@ async function fetchVariationItems(
 
   const data = (await response.json()) as { items?: EbayItemDetail[] };
   const variants = data.items ?? [];
-  return runBatched(variants, FETCH_BATCH, (variant) => enrichVariantItem(token, variant));
+
+  const detailed = await runBatched(variants, FETCH_BATCH, async (variant) => {
+    if (!variant.itemId) return null;
+    return fetchItemDetail(token, variant.itemId);
+  });
+
+  return detailed.filter((item): item is EbayItemDetail => item !== null);
 }
 
 async function runBatched<T, R>(
@@ -387,7 +353,7 @@ async function enrichSearchSummary(
 
   if (isVariationGroup) {
     const variants = await fetchVariationItems(token, summary.itemGroupHref!);
-    const siblingPrices = variants
+    const siblingNetPrices = variants
       .map((variant) => Number.parseFloat(variant.price?.value ?? "0"))
       .filter((value) => value > 0);
 
@@ -397,7 +363,7 @@ async function enrichSearchSummary(
       const netPrice = Number.parseFloat(variant.price?.value ?? "0");
       const variantLabel = extractVariantLabel(variant);
 
-      if (isLikelyAccessoryVariant(variantLabel, netPrice, siblingPrices)) {
+      if (isLikelyAccessoryVariant(variantLabel, netPrice, siblingNetPrices)) {
         continue;
       }
 
@@ -405,35 +371,16 @@ async function enrichSearchSummary(
       if (row) rows.push(row);
     }
 
-    if (rows.length > 0) return rows;
+    return rows;
   }
 
-  if (summary.itemId) {
-    const detail = await fetchItemDetail(token, summary.itemId);
-    if (detail) {
-      const row = mapDetailToListing(detail, false);
-      if (row) return [row];
-    }
-  }
+  if (!summary.itemId) return [];
 
-  const currency = summary.price?.currency ?? "GBP";
-  const netPrice = Number.parseFloat(summary.price?.value ?? "0") || 0;
+  const detail = await fetchItemDetail(token, summary.itemId);
+  if (!detail) return [];
 
-  return [
-    buildListingRow({
-      id: summary.itemId ?? summary.legacyItemId ?? crypto.randomUUID(),
-      title: summary.title ?? "Untitled listing",
-      variantLabel: null,
-      hasVariations: false,
-      sellerName: summary.seller?.username ?? "Unknown seller",
-      netPrice,
-      currency,
-      shippingOptions: summary.shippingOptions,
-      condition: summary.condition ?? "—",
-      listingUrl: normalizeEbayListingUrl(summary.itemWebUrl ?? "", summary.legacyItemId),
-      imageUrl: summary.image?.imageUrl ?? null,
-    }),
-  ];
+  const row = mapDetailToListing(detail, false);
+  return row ? [row] : [];
 }
 
 function sortListings(listings: EbayListing[], sort: "asc" | "desc"): EbayListing[] {

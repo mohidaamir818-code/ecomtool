@@ -55,7 +55,7 @@ export function EbayListingsTable({
             {total.toLocaleString()} listing{total === 1 ? "" : "s"} on eBay UK
           </p>
           <p className="mt-0.5 text-xs text-[#6B7280]">
-            {offerCount} offer{offerCount === 1 ? "" : "s"} · UK buyer prices (VAT included where applicable)
+            {offerCount} offer{offerCount === 1 ? "" : "s"} · &quot;eBay price&quot; matches the listing page for that variant (VAT included)
             {" · "}
             Listings {offset + 1}–{Math.min(offset + limit, total)} of {total.toLocaleString()}
             {alertBelow !== null && alertCount > 0 && (
@@ -97,9 +97,9 @@ export function EbayListingsTable({
                 <th className="px-4 py-3">Listing</th>
                 <th className="px-4 py-3">Variant</th>
                 <th className="px-4 py-3">Condition</th>
-                <th className="px-4 py-3">Buy it now</th>
+                <th className="px-4 py-3">eBay price</th>
                 <th className="px-4 py-3">Postage</th>
-                <th className="px-4 py-3">Total</th>
+                <th className="px-4 py-3">+ Postage</th>
                 <th className="px-4 py-3">eBay</th>
               </tr>
             </thead>

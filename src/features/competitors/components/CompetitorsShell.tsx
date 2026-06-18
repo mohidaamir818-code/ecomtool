@@ -356,14 +356,15 @@ export function CompetitorsShell() {
               <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
                 <h3 className="text-sm font-semibold text-[#111827]">eBay Browse API</h3>
                 <p className="mt-2 text-sm leading-relaxed text-[#6B7280]">
-                  Prices come from eBay UK sellers — they will not match AliExpress source prices.
-                  Click any title or &quot;View on eBay&quot; to open the live listing and verify.
+                  Each row is priced from eBay&apos;s item API for that exact variant. The
+                  &quot;eBay price&quot; column matches what you see on the listing page (including
+                  VAT). Pick the variant row, then click through to verify.
                 </p>
                 <ul className="mt-4 space-y-2 text-xs text-[#6B7280]">
-                  <li>· Click listing title → opens on eBay</li>
-                  <li>· &quot;View on eBay&quot; → direct link with variant selected</li>
-                  <li>· Buy it now matches eBay.co.uk (incl. VAT when charged)</li>
-                  <li>· Add-on accessories (sim pins, cables) are filtered out</li>
+                  <li>· One row per variant (colour/size) with its own price</li>
+                  <li>· eBay price = listing page Buy it now (VAT included)</li>
+                  <li>· + Postage = eBay price + cheapest delivery</li>
+                  <li>· Click title or View on eBay — opens that variant</li>
                 </ul>
               </div>
             )}
