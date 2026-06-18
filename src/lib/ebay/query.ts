@@ -106,3 +106,19 @@ export function buildEbayCompetitorSearchQueries(raw: string): string[] {
 
   return candidates.length > 0 ? candidates : [cleaned];
 }
+
+/**
+ * Returns true when the eBay listing title contains every significant token
+ * from the user's original product query.
+ */
+export function ebayListingMatchesProductQuery(
+  listingTitle: string,
+  productQuery: string,
+): boolean {
+  const requiredTokens = extractSignificantTokens(productQuery);
+  if (requiredTokens.length === 0) return true;
+
+  const listingNorm = listingTitle.toLowerCase();
+
+  return requiredTokens.every((token) => listingNorm.includes(token.toLowerCase()));
+}

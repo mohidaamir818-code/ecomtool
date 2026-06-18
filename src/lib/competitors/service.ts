@@ -2,7 +2,7 @@ import "server-only";
 
 import { searchAmazefProducts } from "@/lib/amazef/client";
 import { searchEbayListings } from "@/lib/ebay/browse";
-import { buildEbayCompetitorSearchQueries } from "@/lib/ebay/query";
+import { buildEbayCompetitorSearchQueries, ebayListingMatchesProductQuery } from "@/lib/ebay/query";
 import { sendEmail } from "@/lib/email/send-email";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type {
@@ -227,7 +227,7 @@ export async function searchCheaperEbayCompetitors(
   const query = productQuery.trim();
   const searchQueries = buildEbayCompetitorSearchQueries(query);
 
-  let bestResult: Awaited<ReturnType<typeof searchEbayListings>> | null = null;
+  let bestRelevantListings: EbayListing[] = [];
   let bestCheaperCount = -1;
 
   for (const candidateQuery of searchQueries) {
@@ -238,16 +238,20 @@ export async function searchCheaperEbayCompetitors(
       sort: "asc",
     });
 
-    const cheaperCount = result.listings.filter(
+    const relevantListings = result.listings.filter((listing) =>
+      ebayListingMatchesProductQuery(listing.title, query),
+    );
+
+    const cheaperCount = relevantListings.filter(
       (listing) => listing.totalPrice > 0 && listing.totalPrice < userPrice,
     ).length;
 
     if (
-      !bestResult ||
       cheaperCount > bestCheaperCount ||
-      (cheaperCount === bestCheaperCount && result.offerCount > bestResult.offerCount)
+      (cheaperCount === bestCheaperCount &&
+        relevantListings.length > bestRelevantListings.length)
     ) {
-      bestResult = result;
+      bestRelevantListings = relevantListings;
       bestCheaperCount = cheaperCount;
     }
 
@@ -256,18 +260,10 @@ export async function searchCheaperEbayCompetitors(
     }
   }
 
-  const result = bestResult ?? {
-    listings: [],
-    total: 0,
-    offerCount: 0,
-    offset: 0,
-    limit: 50,
-  };
-
-  const currency = result.listings[0]?.currency ?? "GBP";
+  const currency = bestRelevantListings[0]?.currency ?? "GBP";
   const userPriceLabel = formatPrice(userPrice, currency);
 
-  const cheaperListings = result.listings
+  const cheaperListings = bestRelevantListings
     .filter((listing) => listing.totalPrice > 0 && listing.totalPrice < userPrice)
     .sort((a, b) => a.totalPrice - b.totalPrice);
 
@@ -275,7 +271,7 @@ export async function searchCheaperEbayCompetitors(
 
   return {
     matches,
-    totalSearched: result.offerCount,
+    totalSearched: bestRelevantListings.length,
     currency,
     userPriceLabel,
   };
