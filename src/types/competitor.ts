@@ -1,5 +1,7 @@
 export type CompetitorUpdateMode = "auto_24h" | "custom" | "manual";
 
+export type CompetitorPlatform = "amazef" | "ebay";
+
 export interface CompetitorMatch {
   id: string;
   productName: string;
@@ -31,6 +33,7 @@ export interface CompetitorCheckPayload {
 
 export interface CompetitorWatch {
   id: string;
+  platform: CompetitorPlatform;
   productQuery: string;
   userPrice: number;
   userPriceLabel: string;
@@ -47,6 +50,7 @@ export interface CompetitorWatch {
 
 export interface CompetitorWatchAddPayload {
   userId: string;
+  platform?: CompetitorPlatform;
   productQuery: string;
   userPrice: number;
   updateMode: CompetitorUpdateMode;

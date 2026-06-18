@@ -1,11 +1,13 @@
 import "server-only";
 
 import { searchAmazefProducts } from "@/lib/amazef/client";
+import { searchEbayListings } from "@/lib/ebay/browse";
 import { sendEmail } from "@/lib/email/send-email";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type {
   CompetitorCheck,
   CompetitorMatch,
+  CompetitorPlatform,
   CompetitorUpdateMode,
   CompetitorWatch,
   CompetitorWatchAddPayload,
@@ -58,21 +60,28 @@ async function getUserEmail(userId: string): Promise<string | null> {
   return data?.email ? String(data.email) : null;
 }
 
+function marketplaceLabel(platform: CompetitorPlatform): string {
+  return platform === "ebay" ? "eBay" : "Amazef";
+}
+
 function buildWatchMessage(
   productQuery: string,
   userPriceLabel: string,
   matchesFound: number,
   totalSearched: number,
+  platform: CompetitorPlatform = "amazef",
 ): string {
+  const marketplace = marketplaceLabel(platform);
+
   if (totalSearched === 0) {
-    return `No products found matching "${productQuery}". Try a shorter keyword or product name.`;
+    return `No listings found on ${marketplace} matching "${productQuery}". Try a shorter keyword or product name.`;
   }
 
   if (matchesFound > 0) {
-    return `${matchesFound} listing${matchesFound === 1 ? "" : "s"} below your "${productQuery}" price (${userPriceLabel}).`;
+    return `${matchesFound} listing${matchesFound === 1 ? "" : "s"} below your "${productQuery}" price on ${marketplace} (${userPriceLabel}).`;
   }
 
-  return `No sellers found below your ${userPriceLabel} price for "${productQuery}".`;
+  return `No sellers on ${marketplace} found below your ${userPriceLabel} price for "${productQuery}".`;
 }
 
 export async function searchCheaperCompetitors(
@@ -117,6 +126,68 @@ export async function searchCheaperCompetitors(
   };
 }
 
+export async function searchCheaperEbayCompetitors(
+  productQuery: string,
+  userPrice: number,
+): Promise<{
+  matches: CompetitorMatch[];
+  totalSearched: number;
+  currency: string;
+  userPriceLabel: string;
+}> {
+  const query = productQuery.trim();
+  const result = await searchEbayListings({ query, limit: 50, offset: 0, sort: "asc" });
+  const currency = result.listings[0]?.currency ?? "GBP";
+  const userPriceLabel = formatPrice(userPrice, currency);
+
+  const cheaperListings = result.listings
+    .filter((listing) => listing.totalPrice > 0 && listing.totalPrice < userPrice)
+    .sort((a, b) => a.totalPrice - b.totalPrice);
+
+  const matches: CompetitorMatch[] = cheaperListings.map((listing) => {
+    const priceDifference = userPrice - listing.totalPrice;
+    const productName = listing.variantLabel
+      ? `${listing.title} (${listing.variantLabel})`
+      : listing.title;
+
+    return {
+      id: listing.id,
+      productName,
+      price: listing.totalPrice,
+      priceLabel: listing.totalPriceLabel,
+      currency: listing.currency,
+      priceDifference,
+      priceDifferenceLabel: formatPrice(priceDifference, currency),
+      imageUrl: listing.imageUrl,
+      productUrl: listing.listingUrl,
+    };
+  });
+
+  return {
+    matches,
+    totalSearched: result.offerCount,
+    currency,
+    userPriceLabel,
+  };
+}
+
+export async function searchCheaperCompetitorsByPlatform(
+  platform: CompetitorPlatform,
+  productQuery: string,
+  userPrice: number,
+): Promise<{
+  matches: CompetitorMatch[];
+  totalSearched: number;
+  currency: string;
+  userPriceLabel: string;
+}> {
+  if (platform === "ebay") {
+    return searchCheaperEbayCompetitors(productQuery, userPrice);
+  }
+
+  return searchCheaperCompetitors(productQuery, userPrice);
+}
+
 function mapRowToWatch(row: Record<string, unknown>): CompetitorWatch {
   const currency = String(row.currency ?? "GBP");
   const userPrice = Number(row.user_price);
@@ -124,6 +195,7 @@ function mapRowToWatch(row: Record<string, unknown>): CompetitorWatch {
 
   return {
     id: String(row.id),
+    platform: (row.platform === "ebay" ? "ebay" : "amazef") as CompetitorPlatform,
     productQuery: String(row.product_query),
     userPrice,
     userPriceLabel: formatPrice(userPrice, currency),
@@ -244,7 +316,13 @@ export async function getCompetitorWatchDetails(
   return {
     watch,
     matches,
-    message: buildWatchMessage(watch.productQuery, watch.userPriceLabel, watch.matchesFound, totalSearched),
+    message: buildWatchMessage(
+      watch.productQuery,
+      watch.userPriceLabel,
+      watch.matchesFound,
+      totalSearched,
+      watch.platform,
+    ),
     userPriceLabel: watch.userPriceLabel,
     totalSearched,
   };
@@ -255,15 +333,17 @@ export async function addCompetitorWatch(
 ): Promise<{ watch: CompetitorWatch; message: string; matches: CompetitorMatch[] }> {
   const supabase = getSupabaseAdmin();
   const query = payload.productQuery.trim();
+  const platform = payload.platform === "ebay" ? "ebay" : "amazef";
   const intervalHours = getIntervalHours(payload.updateMode, payload.customHours);
   const nextUpdateAt = computeNextUpdateAt(payload.updateMode, payload.customHours);
-  const search = await searchCheaperCompetitors(query, payload.userPrice);
+  const search = await searchCheaperCompetitorsByPlatform(platform, query, payload.userPrice);
   const now = new Date().toISOString();
 
   const { data: watchRow, error: watchError } = await supabase
     .from("competitor_watches")
     .insert({
       user_id: payload.userId,
+      platform,
       product_query: query,
       user_price: payload.userPrice,
       currency: search.currency,
@@ -287,6 +367,7 @@ export async function addCompetitorWatch(
     search.userPriceLabel,
     search.matches.length,
     search.totalSearched,
+    platform,
   );
 
   await supabase.from("competitor_watch_logs").insert({
@@ -297,7 +378,14 @@ export async function addCompetitorWatch(
 
   const email = await getUserEmail(payload.userId);
   if (email) {
-    await sendCompetitorWatchEmail(email, query, message, search.matches, search.userPriceLabel);
+    await sendCompetitorWatchEmail(
+      email,
+      query,
+      message,
+      search.matches,
+      search.userPriceLabel,
+      platform,
+    );
   }
 
   return {
@@ -325,7 +413,9 @@ async function sendCompetitorWatchEmail(
   message: string,
   matches: CompetitorMatch[],
   userPriceLabel: string,
+  platform: CompetitorPlatform = "amazef",
 ): Promise<void> {
+  const marketplace = marketplaceLabel(platform);
   const matchLines =
     matches.length > 0
       ? matches
@@ -339,7 +429,7 @@ async function sendCompetitorWatchEmail(
 
   await sendEmail({
     to: email,
-    subject: `Competitor update: ${productQuery}`,
+    subject: `Competitor update (${marketplace}): ${productQuery}`,
     text: `${message}\n\nYour price: ${userPriceLabel}\n\n${matchLines}`,
     html: `<p>${message}</p><p><strong>Your price:</strong> ${userPriceLabel}</p>${
       matches.length > 0
@@ -376,7 +466,8 @@ export async function checkCompetitorWatchUpdate(
 
   const query = String(existing.product_query);
   const userPrice = Number(existing.user_price);
-  const search = await searchCheaperCompetitors(query, userPrice);
+  const platform = (existing.platform === "ebay" ? "ebay" : "amazef") as CompetitorPlatform;
+  const search = await searchCheaperCompetitorsByPlatform(platform, query, userPrice);
   const now = new Date().toISOString();
   const intervalHours =
     existing.update_interval_hours != null ? Number(existing.update_interval_hours) : null;
@@ -393,6 +484,7 @@ export async function checkCompetitorWatchUpdate(
     search.userPriceLabel,
     search.matches.length,
     search.totalSearched,
+    platform,
   );
 
   const { data: updated, error: updateError } = await supabase
@@ -421,7 +513,14 @@ export async function checkCompetitorWatchUpdate(
   if (options?.sendEmail !== false) {
     const email = await getUserEmail(userId);
     if (email) {
-      await sendCompetitorWatchEmail(email, query, message, search.matches, search.userPriceLabel);
+      await sendCompetitorWatchEmail(
+        email,
+        query,
+        message,
+        search.matches,
+        search.userPriceLabel,
+        platform,
+      );
     }
   }
 
@@ -669,6 +768,7 @@ export async function runCompetitorCheck(
     search.userPriceLabel,
     search.matches.length,
     search.totalSearched,
+    "amazef",
   );
 
   return {

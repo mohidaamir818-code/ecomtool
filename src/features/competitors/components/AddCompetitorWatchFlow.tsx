@@ -1,14 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import type { CompetitorUpdateMode, CompetitorWatchDetailResponse } from "@/types/competitor";
+import type {
+  CompetitorPlatform,
+  CompetitorUpdateMode,
+  CompetitorWatchDetailResponse,
+} from "@/types/competitor";
 
 interface AddCompetitorWatchFlowProps {
   userId: string;
+  platform: CompetitorPlatform;
   onAdded: () => void;
 }
 
-export function AddCompetitorWatchFlow({ userId, onAdded }: AddCompetitorWatchFlowProps) {
+export function AddCompetitorWatchFlow({ userId, platform, onAdded }: AddCompetitorWatchFlowProps) {
   const [productQuery, setProductQuery] = useState("");
   const [userPrice, setUserPrice] = useState("");
   const [showSchedule, setShowSchedule] = useState(false);
@@ -57,6 +62,7 @@ export function AddCompetitorWatchFlow({ userId, onAdded }: AddCompetitorWatchFl
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId,
+          platform,
           productQuery: productQuery.trim(),
           userPrice: price,
           updateMode,
@@ -86,13 +92,16 @@ export function AddCompetitorWatchFlow({ userId, onAdded }: AddCompetitorWatchFl
     }
   }
 
+  const marketplace = platform === "ebay" ? "eBay" : "Amazef";
+
   return (
     <div className="overflow-hidden rounded-2xl border border-brand/20 bg-gradient-to-br from-brand-light/60 via-white to-white shadow-sm">
       <div className="border-b border-brand/10 bg-white/70 px-6 py-5">
         <h2 className="text-lg font-bold text-[#111827]">Add competitor watch</h2>
         <p className="mt-1 text-sm text-[#6B7280]">
-          Enter your product title and price. We check Amazef on your schedule and email you when
-          sellers list below your price.
+          Enter your product title and price. We check {marketplace} on your schedule and email you
+          when sellers list below your price
+          {platform === "ebay" ? " (item + postage total)" : ""}.
         </p>
       </div>
 

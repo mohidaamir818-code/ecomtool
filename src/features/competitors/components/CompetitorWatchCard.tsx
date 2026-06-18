@@ -68,6 +68,9 @@ export function CompetitorWatchCard({
     ? "border-red-200 bg-red-50/40 hover:border-red-300"
     : "border-gray-100 bg-white hover:border-brand/20";
 
+  const marketplace = watch.platform === "ebay" ? "eBay" : "Amazef";
+  const viewLabel = watch.platform === "ebay" ? "View on eBay" : "View on Amazef";
+
   return (
     <article className={`flex h-full flex-col rounded-2xl border p-5 shadow-sm transition-all ${alertClasses}`}>
       <button
@@ -129,13 +132,13 @@ export function CompetitorWatchCard({
                   key={match.id}
                   match={match}
                   userPriceLabel={watch.userPriceLabel}
-                  viewLabel="View on Amazef"
+                  viewLabel={viewLabel}
                 />
               ))}
             </div>
           ) : (
             <p className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-              No sellers on Amazef are listing below {watch.userPriceLabel}.
+              No sellers on {marketplace} are listing below {watch.userPriceLabel}.
             </p>
           )}
         </div>

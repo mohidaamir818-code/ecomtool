@@ -88,6 +88,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (body.platform && body.platform !== "amazef" && body.platform !== "ebay") {
+      return NextResponse.json({ error: "Invalid platform." }, { status: 400 });
+    }
+
     const supabase = getSupabaseAdmin();
     const { data: profile } = await supabase
       .from("profiles")

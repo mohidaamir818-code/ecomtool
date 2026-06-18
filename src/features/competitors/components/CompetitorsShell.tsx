@@ -197,6 +197,8 @@ export function CompetitorsShell() {
     });
   }
 
+  const platformWatches = watches.filter((watch) => watch.platform === platform);
+
   return (
     <DashboardLayout>
       <div className="mx-auto max-w-[1200px] p-6 lg:p-8">
@@ -208,7 +210,7 @@ export function CompetitorsShell() {
           <p className="mt-1 max-w-2xl text-sm leading-relaxed text-[#6B7280]">
             {platform === "amazef"
               ? "Track your product title and price on Amazef. We check on your schedule and email you when sellers list below your price."
-              : "Compare prices across marketplaces. Search all eBay sellers for a product keyword."}
+              : "Track your product title and price on eBay (item + postage). We check on your schedule and email you when sellers list below your price."}
           </p>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
@@ -239,52 +241,56 @@ export function CompetitorsShell() {
           </div>
         )}
 
-        {platform === "amazef" ? (
-          <>
-            {userId && (
-              <div className="mb-8">
-                <AddCompetitorWatchFlow userId={userId} onAdded={() => loadWatches(userId)} />
-              </div>
-            )}
+        {userId && (
+          <div className="mb-8">
+            <AddCompetitorWatchFlow
+              userId={userId}
+              platform={platform}
+              onAdded={() => loadWatches(userId)}
+            />
+          </div>
+        )}
 
-            <div>
-              <div className="mb-5">
-                <h2 className="text-lg font-bold text-[#111827]">Your competitor watches</h2>
-                <p className="text-sm text-[#6B7280]">
-                  {watches.length} watch{watches.length === 1 ? "" : "es"} · alerts shown in red on top
-                </p>
-              </div>
+        <div className={platform === "ebay" ? "mb-8" : ""}>
+          <div className="mb-5">
+            <h2 className="text-lg font-bold text-[#111827]">Your competitor watches</h2>
+            <p className="text-sm text-[#6B7280]">
+              {platformWatches.length} watch{platformWatches.length === 1 ? "" : "es"} · alerts shown
+              in red on top
+            </p>
+          </div>
 
-              {loading ? (
-                <div className="flex items-center justify-center py-20">
-                  <svg className="h-8 w-8 animate-spin text-brand" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                </div>
-              ) : watches.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-gray-200 bg-[#FAFAFA] px-6 py-12 text-center">
-                  <p className="text-sm font-semibold text-[#374151]">No competitor watches yet</p>
-                  <p className="mt-1 text-xs text-[#9CA3AF]">
-                    Add your product title and price above to start tracking Amazef sellers.
-                  </p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-                  {watches.map((watch) => (
-                    <CompetitorWatchCard
-                      key={watch.id}
-                      watch={watch}
-                      checking={checkingId === watch.id}
-                      onCheck={() => handleCheck(watch.id)}
-                      onRemove={() => handleRemove(watch.id)}
-                    />
-                  ))}
-                </div>
-              )}
+          {loading ? (
+            <div className="flex items-center justify-center py-20">
+              <svg className="h-8 w-8 animate-spin text-brand" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
             </div>
-          </>
-        ) : (
+          ) : platformWatches.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-gray-200 bg-[#FAFAFA] px-6 py-12 text-center">
+              <p className="text-sm font-semibold text-[#374151]">No competitor watches yet</p>
+              <p className="mt-1 text-xs text-[#9CA3AF]">
+                Add your product title and price above to start tracking{" "}
+                {platform === "ebay" ? "eBay" : "Amazef"} sellers.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+              {platformWatches.map((watch) => (
+                <CompetitorWatchCard
+                  key={watch.id}
+                  watch={watch}
+                  checking={checkingId === watch.id}
+                  onCheck={() => handleCheck(watch.id)}
+                  onRemove={() => handleRemove(watch.id)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        {platform === "ebay" && (
           <div className="space-y-6">
             <EbaySearchForm onSearch={handleEbaySearch} isSearching={ebayLoading && !ebaySearch} />
 
