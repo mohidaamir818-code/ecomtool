@@ -283,6 +283,45 @@ function mapDetailToListing(item: EbayItemDetail, hasVariations: boolean): EbayL
   };
 }
 
+function mapSummaryToListing(summary: EbayItemSummary): EbayListing | null {
+  const currency = summary.price?.currency ?? "GBP";
+  const netPrice = Number.parseFloat(summary.price?.value ?? "0");
+  if (!Number.isFinite(netPrice) || netPrice <= 0) return null;
+
+  const hasVariations = summary.itemGroupType === "SELLER_DEFINED_VARIATIONS";
+  const { price: buyerPrice, priceNote } = toBuyerPrice(netPrice);
+  const shipping = resolveBuyerShipping(summary.shippingOptions, currency);
+  const postage = shipping.cost ?? 0;
+  const totalPrice = buyerPrice + postage;
+
+  let totalPriceLabel = formatPrice(totalPrice, currency);
+  if (shipping.multipleTiers) {
+    totalPriceLabel = `from ${totalPriceLabel}`;
+  }
+
+  const listingUrl = normalizeEbayListingUrl(summary.itemWebUrl ?? "", summary.legacyItemId);
+  if (!listingUrl) return null;
+
+  return {
+    id: summary.itemId ?? summary.legacyItemId ?? crypto.randomUUID(),
+    title: summary.title ?? "Untitled listing",
+    variantLabel: null,
+    sellerName: summary.seller?.username ?? "Unknown seller",
+    hasVariations,
+    price: buyerPrice,
+    priceLabel: formatPrice(buyerPrice, currency),
+    priceNote,
+    shippingCost: shipping.cost,
+    shippingLabel: shipping.label,
+    totalPrice,
+    totalPriceLabel,
+    currency,
+    condition: summary.condition ?? "—",
+    listingUrl,
+    imageUrl: summary.image?.imageUrl ?? null,
+  };
+}
+
 async function fetchItemDetail(token: string, itemId: string): Promise<EbayItemDetail | null> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await fetch(
@@ -394,6 +433,7 @@ export async function searchEbayListings(params: {
   limit?: number;
   offset?: number;
   sort?: "asc" | "desc";
+  enrichDetails?: boolean;
 }): Promise<{
   listings: EbayListing[];
   total: number;
@@ -409,6 +449,7 @@ export async function searchEbayListings(params: {
   const limit = Math.min(Math.max(params.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
   const offset = Math.max(params.offset ?? 0, 0);
   const sort = params.sort === "desc" ? "desc" : "asc";
+  const enrichDetails = params.enrichDetails !== false;
 
   const token = await getAccessToken();
   const url = new URL(`${EBAY_API_BASE}/buy/browse/v1/item_summary/search`);
@@ -434,10 +475,21 @@ export async function searchEbayListings(params: {
   }
 
   const summaries = data.itemSummaries ?? [];
-  const enriched = await runBatched(summaries, FETCH_BATCH, (summary) =>
-    enrichSearchSummary(token, summary),
-  );
-  const listings = sortListings(enriched.flat(), sort);
+  const listings = enrichDetails
+    ? sortListings(
+        (
+          await runBatched(summaries, FETCH_BATCH, (summary) =>
+            enrichSearchSummary(token, summary),
+          )
+        ).flat(),
+        sort,
+      )
+    : sortListings(
+        summaries
+          .map((summary) => mapSummaryToListing(summary))
+          .filter((listing): listing is EbayListing => listing !== null),
+        sort,
+      );
 
   return {
     listings,

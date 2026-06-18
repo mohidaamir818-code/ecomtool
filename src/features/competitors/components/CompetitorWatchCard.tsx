@@ -39,9 +39,13 @@ export function CompetitorWatchCard({
     setMatches([]);
     setMessage("");
     setEditingPrice(false);
-    setPriceInput(String(watch.userPrice));
     setUpgradeNotice("");
-  }, [watch.id, watch.matchesFound, watch.lastCheckedAt, watch.userPrice]);
+    setPriceInput(String(watch.userPrice));
+  }, [watch.id]);
+
+  useEffect(() => {
+    setPriceInput(String(watch.userPrice));
+  }, [watch.userPrice]);
 
   async function loadMatches() {
     const userId = sessionStorage.getItem("ecomtools_user_id");
@@ -105,6 +109,7 @@ export function CompetitorWatchCard({
       }
 
       setEditingPrice(false);
+      setExpanded(true);
       setMatches(data.matches ?? []);
       setMessage(data.message ?? "");
       onUpdated(data.message ?? "Price updated and competitors rechecked.");

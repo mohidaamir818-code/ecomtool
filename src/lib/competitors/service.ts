@@ -2,7 +2,7 @@ import "server-only";
 
 import { searchAmazefProducts } from "@/lib/amazef/client";
 import { searchEbayListings } from "@/lib/ebay/browse";
-import { buildEbayCompetitorSearchQueries, ebayListingMatchesProductQuery } from "@/lib/ebay/query";
+import { buildEbayCompetitorWatchSearchQueries, ebayListingMatchesProductQuery } from "@/lib/ebay/query";
 import { sendEmail } from "@/lib/email/send-email";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type {
@@ -225,7 +225,7 @@ export async function searchCheaperEbayCompetitors(
   userPriceLabel: string;
 }> {
   const query = productQuery.trim();
-  const searchQueries = buildEbayCompetitorSearchQueries(query);
+  const searchQueries = buildEbayCompetitorWatchSearchQueries(query);
 
   let bestRelevantListings: EbayListing[] = [];
   let bestCheaperCount = -1;
@@ -233,14 +233,19 @@ export async function searchCheaperEbayCompetitors(
   for (const candidateQuery of searchQueries) {
     const result = await searchEbayListings({
       query: candidateQuery,
-      limit: 50,
+      limit: 25,
       offset: 0,
       sort: "asc",
+      enrichDetails: false,
     });
 
     const relevantListings = result.listings.filter((listing) =>
       ebayListingMatchesProductQuery(listing.title, query),
     );
+
+    if (relevantListings.length === 0) {
+      continue;
+    }
 
     const cheaperCount = relevantListings.filter(
       (listing) => listing.totalPrice > 0 && listing.totalPrice < userPrice,
@@ -672,7 +677,7 @@ export async function upgradeCompetitorWatchPrice(
 
   if (updateError) throw new Error(updateError.message);
 
-  return checkCompetitorWatchUpdate(userId, watchId);
+  return checkCompetitorWatchUpdate(userId, watchId, { sendEmail: false });
 }
 
 export async function processDueCompetitorWatchUpdates(userId?: string): Promise<number> {

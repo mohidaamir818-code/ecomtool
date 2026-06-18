@@ -108,6 +108,23 @@ export function buildEbayCompetitorSearchQueries(raw: string): string[] {
 }
 
 /**
+ * Optimized query order for competitor watches: skip full pasted title, try 6 keywords first.
+ */
+export function buildEbayCompetitorWatchSearchQueries(raw: string): string[] {
+  const cleaned = raw.trim().replace(/\s+/g, " ");
+  if (!cleaned) return [];
+
+  const significant = extractSignificantTokens(cleaned);
+  const sixWord = significant.slice(0, 6).join(" ");
+  const all = buildEbayCompetitorSearchQueries(raw);
+
+  return dedupeQueries([
+    sixWord,
+    ...all.filter((query) => query !== cleaned && query !== sixWord),
+  ]);
+}
+
+/**
  * Returns true when the eBay listing title contains every significant token
  * from the user's original product query.
  */
