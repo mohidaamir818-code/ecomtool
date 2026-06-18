@@ -35,6 +35,8 @@ export interface HandlingProduct {
   stock: number | null;
   orders: string | null;
   rating: number | null;
+  variants?: HandlingProductVariant[];
+  selectedVariantId?: string | null;
   updateMode: HandlingUpdateMode;
   updateIntervalHours: number | null;
   nextUpdateAt: string | null;

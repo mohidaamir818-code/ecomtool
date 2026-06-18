@@ -8,6 +8,7 @@ import type {
   HandlingProduct,
   HandlingProductData,
   HandlingProductLog,
+  HandlingProductVariant,
   HandlingUpdateMode,
 } from "@/types/handling";
 
@@ -54,9 +55,47 @@ function getIntervalHours(mode: HandlingUpdateMode, customHours?: number): numbe
   return customHours ?? null;
 }
 
+function parseStoredVariants(raw: unknown): HandlingProductVariant[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+
+  const variants = raw
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const variant = entry as Record<string, unknown>;
+      const price = variant.price != null ? Number(variant.price) : null;
+      if (price == null || !Number.isFinite(price)) return null;
+
+      return {
+        id: String(variant.id ?? ""),
+        label: String(variant.label ?? "Variant"),
+        price,
+        currency: String(variant.currency ?? "GBP"),
+        stock: variant.stock != null ? Number(variant.stock) : null,
+      } satisfies HandlingProductVariant;
+    })
+    .filter((variant): variant is HandlingProductVariant => Boolean(variant?.id));
+
+  return variants.length > 0 ? variants : undefined;
+}
+
+function resolveSelectedVariant(
+  variants: HandlingProductVariant[] | undefined,
+  selectedVariantId: string | null | undefined,
+): HandlingProductVariant | null {
+  if (!variants?.length) return null;
+  if (selectedVariantId) {
+    const selected = variants.find((variant) => variant.id === selectedVariantId);
+    if (selected) return selected;
+  }
+  return variants[0];
+}
+
 function mapRowToProduct(row: Record<string, unknown>): HandlingProduct {
   const currency = String(row.currency ?? "GBP");
   const price = row.price != null ? Number(row.price) : null;
+  const variants = parseStoredVariants(row.variants_json);
+  const selectedVariantId = row.selected_variant_id ? String(row.selected_variant_id) : null;
+  const selectedVariant = resolveSelectedVariant(variants, selectedVariantId);
 
   return {
     id: String(row.id),
@@ -65,11 +104,13 @@ function mapRowToProduct(row: Record<string, unknown>): HandlingProduct {
     productUrl: String(row.product_url),
     title: String(row.title),
     imageUrl: row.image_url ? String(row.image_url) : null,
-    price: formatPrice(price, currency),
-    currency,
-    stock: row.stock != null ? Number(row.stock) : null,
+    price: formatPrice(selectedVariant?.price ?? price, selectedVariant?.currency ?? currency),
+    currency: selectedVariant?.currency ?? currency,
+    stock: selectedVariant?.stock ?? (row.stock != null ? Number(row.stock) : null),
     orders: row.orders_count ? String(row.orders_count) : null,
     rating: row.rating != null ? Number(row.rating) : null,
+    variants,
+    selectedVariantId,
     updateMode: String(row.update_mode) as HandlingUpdateMode,
     updateIntervalHours:
       row.update_interval_hours != null ? Number(row.update_interval_hours) : null,
@@ -127,6 +168,13 @@ export async function addHandlingProduct(payload: HandlingAddPayload): Promise<H
   const supabase = getSupabaseAdmin();
   const intervalHours = getIntervalHours(payload.updateMode, payload.customHours);
   const nextUpdateAt = computeNextUpdateAt(payload.updateMode, payload.customHours);
+  const variants = payload.product.variants;
+  const selectedVariantId =
+    payload.product.selectedVariantId ?? variants?.[0]?.id ?? null;
+  const selectedVariant = resolveSelectedVariant(variants, selectedVariantId);
+  const displayPrice = selectedVariant?.price ?? payload.product.price;
+  const displayCurrency = selectedVariant?.currency ?? payload.product.currency;
+  const displayStock = selectedVariant?.stock ?? payload.product.stock;
 
   const { data, error } = await supabase
     .from("handling_products")
@@ -137,11 +185,13 @@ export async function addHandlingProduct(payload: HandlingAddPayload): Promise<H
       product_url: payload.product.productUrl,
       title: payload.product.title,
       image_url: payload.product.imageUrl,
-      price: payload.product.price,
-      currency: payload.product.currency,
-      stock: payload.product.stock,
+      price: displayPrice,
+      currency: displayCurrency,
+      stock: displayStock,
       orders_count: payload.product.orders,
       rating: payload.product.rating,
+      variants_json: variants ?? null,
+      selected_variant_id: selectedVariantId,
       update_mode: payload.updateMode,
       update_interval_hours: intervalHours,
       next_update_at: nextUpdateAt,
@@ -155,8 +205,8 @@ export async function addHandlingProduct(payload: HandlingAddPayload): Promise<H
 
   await supabase.from("handling_product_logs").insert({
     product_id: data.id,
-    price: payload.product.price,
-    stock: payload.product.stock,
+    price: displayPrice,
+    stock: displayStock,
     change_summary: "Product added for handling.",
   });
 
@@ -181,24 +231,75 @@ async function getUserEmail(userId: string): Promise<string | null> {
   return data?.email ? String(data.email) : null;
 }
 
+function buildVariantChangeSummary(
+  previousVariants: HandlingProductVariant[],
+  currentVariants: HandlingProductVariant[],
+): string[] {
+  const changes: string[] = [];
+  const currentById = new Map(currentVariants.map((variant) => [variant.id, variant]));
+  const previousById = new Map(previousVariants.map((variant) => [variant.id, variant]));
+
+  for (const previous of previousVariants) {
+    const current = currentById.get(previous.id);
+    if (!current) continue;
+
+    const priceChanged = previous.price !== current.price;
+    const stockChanged =
+      previous.stock != null && current.stock != null && previous.stock !== current.stock;
+    const parts: string[] = [];
+
+    if (priceChanged) {
+      parts.push(
+        `price changed from ${formatPrice(previous.price, previous.currency)} to ${formatPrice(current.price, current.currency)}`,
+      );
+    }
+
+    if (stockChanged) {
+      parts.push(`max qty changed from ${previous.stock} to ${current.stock}`);
+    }
+
+    if (parts.length > 0) {
+      changes.push(`${previous.label}: ${parts.join("; ")}.`);
+    }
+  }
+
+  for (const current of currentVariants) {
+    if (!previousById.has(current.id)) {
+      changes.push(
+        `New variant "${current.label}" at ${formatPrice(current.price, current.currency)}.`,
+      );
+    }
+  }
+
+  return changes;
+}
+
 function buildChangeSummary(
   previous: Record<string, unknown>,
   current: HandlingProductData,
 ): string[] {
   const changes: string[] = [];
-  const previousPrice = previous.price != null ? Number(previous.price) : null;
-  const previousStock = previous.stock != null ? Number(previous.stock) : null;
+  const previousVariants = parseStoredVariants(previous.variants_json);
+  const currentVariants = current.variants;
+
+  if (previousVariants?.length && currentVariants?.length) {
+    changes.push(...buildVariantChangeSummary(previousVariants, currentVariants));
+  } else {
+    const previousPrice = previous.price != null ? Number(previous.price) : null;
+    const previousStock = previous.stock != null ? Number(previous.stock) : null;
+
+    if (previousPrice != null && previousPrice !== current.price) {
+      changes.push(
+        `Price changed from ${formatPrice(previousPrice, current.currency)} to ${formatPrice(current.price, current.currency)}.`,
+      );
+    }
+
+    if (previousStock != null && current.stock != null && previousStock !== current.stock) {
+      changes.push(`Max qty changed from ${previousStock} to ${current.stock}.`);
+    }
+  }
+
   const previousOrders = previous.orders_count ? String(previous.orders_count) : null;
-
-  if (previousPrice != null && previousPrice !== current.price) {
-    changes.push(
-      `Price changed from ${formatPrice(previousPrice, current.currency)} to ${formatPrice(current.price, current.currency)}.`,
-    );
-  }
-
-  if (previousStock != null && current.stock != null && previousStock !== current.stock) {
-    changes.push(`Max qty changed from ${previousStock} to ${current.stock}.`);
-  }
 
   if (previousOrders !== current.orders && current.orders != null) {
     changes.push(`Orders updated to ${current.orders}.`);
@@ -235,6 +336,13 @@ export async function checkHandlingProductUpdate(
   const now = new Date().toISOString();
   const intervalHours =
     existing.update_interval_hours != null ? Number(existing.update_interval_hours) : null;
+  const selectedVariantId = existing.selected_variant_id
+    ? String(existing.selected_variant_id)
+    : null;
+  const selectedVariant = resolveSelectedVariant(latest.variants, selectedVariantId);
+  const displayPrice = selectedVariant?.price ?? latest.price;
+  const displayCurrency = selectedVariant?.currency ?? latest.currency;
+  const displayStock = selectedVariant?.stock ?? latest.stock;
 
   let nextUpdateAt: string | null = null;
   if (existing.update_mode !== "manual" && intervalHours) {
@@ -248,11 +356,12 @@ export async function checkHandlingProductUpdate(
     .update({
       title: latest.title,
       image_url: latest.imageUrl,
-      price: latest.price,
-      currency: latest.currency,
-      stock: latest.stock,
+      price: displayPrice,
+      currency: displayCurrency,
+      stock: displayStock,
       orders_count: latest.orders,
       rating: latest.rating,
+      variants_json: latest.variants ?? null,
       last_checked_at: now,
       next_update_at: nextUpdateAt,
     })
@@ -263,12 +372,14 @@ export async function checkHandlingProductUpdate(
   if (updateError) throw new Error(updateError.message);
 
   const summary =
-    changes.length > 0 ? changes.join(" ") : "No price, stock, or order changes detected.";
+    changes.length > 0
+      ? changes.join(" ")
+      : "No price, stock, or order changes detected.";
 
   await supabase.from("handling_product_logs").insert({
     product_id: productId,
-    price: latest.price,
-    stock: latest.stock,
+    price: displayPrice,
+    stock: displayStock,
     change_summary: summary,
   });
 

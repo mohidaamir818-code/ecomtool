@@ -1,4 +1,7 @@
-import type { HandlingProduct } from "@/types/handling";
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import type { HandlingProduct, HandlingProductVariant } from "@/types/handling";
 
 function scheduleLabel(product: HandlingProduct): string {
   if (product.updateMode === "auto_24h") return "Updates every 24 hours";
@@ -6,6 +9,13 @@ function scheduleLabel(product: HandlingProduct): string {
     return `Updates every ${product.updateIntervalHours ?? "—"} hours`;
   }
   return "Manual updates";
+}
+
+function formatVariantPrice(variant: HandlingProductVariant): string {
+  if (variant.currency === "GBP") return `£${variant.price.toFixed(2)}`;
+  if (variant.currency === "USD") return `$${variant.price.toFixed(2)}`;
+  if (variant.currency === "EUR") return `€${variant.price.toFixed(2)}`;
+  return `${variant.currency} ${variant.price.toFixed(2)}`;
 }
 
 export function HandlingProductCard({
@@ -19,6 +29,27 @@ export function HandlingProductCard({
   onRemove: () => void;
   checking: boolean;
 }) {
+  const defaultVariantId =
+    product.selectedVariantId ?? product.variants?.[0]?.id ?? "";
+  const [selectedVariantId, setSelectedVariantId] = useState(defaultVariantId);
+
+  useEffect(() => {
+    setSelectedVariantId(product.selectedVariantId ?? product.variants?.[0]?.id ?? "");
+  }, [product.id, product.selectedVariantId, product.variants]);
+
+  const selectedVariant = useMemo(() => {
+    if (!product.variants?.length) return null;
+    return (
+      product.variants.find((variant) => variant.id === selectedVariantId) ??
+      product.variants[0]
+    );
+  }, [product.variants, selectedVariantId]);
+
+  const displayPrice = selectedVariant
+    ? formatVariantPrice(selectedVariant)
+    : product.price;
+  const displayStock = selectedVariant?.stock ?? product.stock;
+
   return (
     <article className="flex h-full flex-col rounded-2xl border border-gray-100 bg-white p-5 shadow-sm transition-all hover:border-brand/20 hover:shadow-md">
       <div className="mb-4 flex items-start gap-3">
@@ -30,7 +61,7 @@ export function HandlingProductCard({
             className="h-16 w-16 shrink-0 rounded-xl object-cover"
           />
         ) : (
-          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-brand-light text-brand text-xs">
+          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-brand-light text-xs text-brand">
             No image
           </div>
         )}
@@ -50,14 +81,33 @@ export function HandlingProductCard({
         </a>
       </h3>
 
+      {product.variants && product.variants.length > 0 ? (
+        <div className="mb-4">
+          <label className="mb-1 block text-[10px] font-medium uppercase text-[#9CA3AF]">
+            Variant
+          </label>
+          <select
+            value={selectedVariant?.id ?? ""}
+            onChange={(event) => setSelectedVariantId(event.target.value)}
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-[#111827] outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+          >
+            {product.variants.map((variant) => (
+              <option key={variant.id} value={variant.id}>
+                {variant.label} - {formatVariantPrice(variant)}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
+
       <div className="mb-4 grid grid-cols-3 gap-2 border-t border-gray-50 pt-4">
         <div>
           <p className="text-[10px] font-medium uppercase text-[#9CA3AF]">Price</p>
-          <p className="text-sm font-bold text-[#111827]">{product.price}</p>
+          <p className="text-sm font-bold text-[#111827]">{displayPrice}</p>
         </div>
         <div>
           <p className="text-[10px] font-medium uppercase text-[#9CA3AF]">Max qty</p>
-          <p className="text-sm font-bold text-[#111827]">{product.stock ?? "—"}</p>
+          <p className="text-sm font-bold text-[#111827]">{displayStock ?? "—"}</p>
         </div>
         <div>
           <p className="text-[10px] font-medium uppercase text-[#9CA3AF]">Orders</p>
