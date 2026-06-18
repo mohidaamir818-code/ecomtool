@@ -3,7 +3,6 @@ import {
   addCompetitorWatch,
   getCompetitorWatchDetails,
   getCompetitorWatches,
-  processDueCompetitorWatchUpdates,
   removeCompetitorWatch,
   upgradeCompetitorWatchPrice,
 } from "@/lib/competitors/service";
@@ -45,7 +44,6 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    await processDueCompetitorWatchUpdates(userId);
     const watches = await getCompetitorWatches(userId);
 
     return NextResponse.json({ success: true, watches });
