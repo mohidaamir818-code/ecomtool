@@ -1,8 +1,13 @@
 import type { CompetitorMatch } from "@/types/competitor";
 
-export function CompetitorMatchCard({ match, userPriceLabel }: {
+export function CompetitorMatchCard({
+  match,
+  userPriceLabel,
+  viewLabel = "View listing",
+}: {
   match: CompetitorMatch;
   userPriceLabel: string;
+  viewLabel?: string;
 }) {
   return (
     <article className="group overflow-hidden rounded-2xl border border-amber-100 bg-white shadow-sm transition-all hover:border-amber-200 hover:shadow-md">
@@ -52,6 +57,17 @@ export function CompetitorMatchCard({ match, userPriceLabel }: {
               <p className="text-sm font-semibold text-[#6B7280] line-through">{userPriceLabel}</p>
             </div>
           </div>
+
+          {match.productUrl ? (
+            <a
+              href={match.productUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-4 inline-flex items-center justify-center rounded-xl border border-brand/20 bg-brand-light px-4 py-2.5 text-sm font-semibold text-brand hover:bg-brand/10"
+            >
+              {viewLabel}
+            </a>
+          ) : null}
         </div>
       </div>
     </article>

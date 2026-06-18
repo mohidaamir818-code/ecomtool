@@ -2,23 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { DashboardLayout } from "@/features/dashboard/components/DashboardLayout";
-import type { CompetitorCheck, CompetitorCheckResponse, CompetitorMatch } from "@/types/competitor";
+import type { CompetitorWatch, CompetitorWatchListResponse } from "@/types/competitor";
 import type { EbayListing, EbaySearchResponse } from "@/types/ebay";
-import { CompetitorCheckForm } from "./CompetitorCheckForm";
-import { CompetitorMatchCard } from "./CompetitorMatchCard";
-import { CompetitorResultBanner } from "./CompetitorResultBanner";
+import { AddCompetitorWatchFlow } from "./AddCompetitorWatchFlow";
+import { CompetitorWatchCard } from "./CompetitorWatchCard";
 import { EbayListingsTable } from "./EbayListingsTable";
 import { EbaySearchForm } from "./EbaySearchForm";
-import { RecentCompetitorChecks } from "./RecentCompetitorChecks";
 
 type Platform = "amazef" | "ebay";
-
-type CheckResult = {
-  message: string;
-  userPriceLabel: string;
-  matches: CompetitorMatch[];
-  totalSearched: number;
-};
 
 type EbaySearchState = {
   query: string;
@@ -38,62 +29,31 @@ export function CompetitorsShell() {
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [recentChecks, setRecentChecks] = useState<CompetitorCheck[]>([]);
-  const [selectedCheckId, setSelectedCheckId] = useState<string | null>(null);
-  const [loadingCheckId, setLoadingCheckId] = useState<string | null>(null);
-  const [result, setResult] = useState<CheckResult | null>(null);
+  const [notice, setNotice] = useState("");
+  const [watches, setWatches] = useState<CompetitorWatch[]>([]);
+  const [checkingId, setCheckingId] = useState<string | null>(null);
 
   const [ebaySearch, setEbaySearch] = useState<EbaySearchState | null>(null);
   const [ebayLoading, setEbayLoading] = useState(false);
 
-  const loadRecentChecks = useCallback(async (id: string) => {
+  const loadWatches = useCallback(async (id: string) => {
     setLoading(true);
     setError("");
 
     try {
-      const response = await fetch(`/api/competitors/check?userId=${encodeURIComponent(id)}`);
-      const data = (await response.json()) as CompetitorCheckResponse;
+      const response = await fetch(`/api/competitors/watch?userId=${encodeURIComponent(id)}`);
+      const data = (await response.json()) as CompetitorWatchListResponse;
 
       if (!response.ok) {
-        setError(data.error ?? "Failed to load competitor checks.");
+        setError(data.error ?? "Failed to load competitor watches.");
         return;
       }
 
-      setRecentChecks(data.recentChecks ?? []);
+      setWatches(data.watches ?? []);
     } catch {
-      setError("Network error while loading competitor checks.");
+      setError("Network error while loading competitor watches.");
     } finally {
       setLoading(false);
-    }
-  }, []);
-
-  const loadCheckDetails = useCallback(async (id: string, checkId: string) => {
-    setLoadingCheckId(checkId);
-    setError("");
-
-    try {
-      const response = await fetch(
-        `/api/competitors/check?userId=${encodeURIComponent(id)}&checkId=${encodeURIComponent(checkId)}`,
-      );
-      const data = (await response.json()) as CompetitorCheckResponse;
-
-      if (!response.ok) {
-        setError(data.error ?? "Failed to load competitor check.");
-        setSelectedCheckId(null);
-        return;
-      }
-
-      setResult({
-        message: data.message ?? "",
-        userPriceLabel: data.userPriceLabel ?? "",
-        matches: data.matches ?? [],
-        totalSearched: data.totalSearched ?? 0,
-      });
-    } catch {
-      setError("Network error while loading competitor check.");
-      setSelectedCheckId(null);
-    } finally {
-      setLoadingCheckId(null);
     }
   }, []);
 
@@ -148,42 +108,69 @@ export function CompetitorsShell() {
     const id = sessionStorage.getItem("ecomtools_user_id");
     if (id) {
       setUserId(id);
-      loadRecentChecks(id);
+      loadWatches(id);
     } else {
       setLoading(false);
     }
-  }, [loadRecentChecks]);
+  }, [loadWatches]);
 
   function handlePlatformChange(next: Platform) {
     setPlatform(next);
     setError("");
-    setResult(null);
-    setSelectedCheckId(null);
+    setNotice("");
     setEbaySearch(null);
   }
 
-  function handleSelectCheck(checkId: string | null) {
-    setSelectedCheckId(checkId);
+  async function handleCheck(watchId: string) {
+    if (!userId) return;
 
-    if (!checkId) {
-      setResult(null);
-      return;
-    }
+    setCheckingId(watchId);
+    setNotice("");
 
-    if (userId) {
-      loadCheckDetails(userId, checkId);
+    try {
+      const response = await fetch("/api/competitors/watch/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, watchId }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setNotice(data.error ?? "Update check failed.");
+        return;
+      }
+
+      setWatches(data.watches ?? []);
+      setNotice(data.message ?? "Update check completed. Email sent with results.");
+    } catch {
+      setNotice("Network error while checking update.");
+    } finally {
+      setCheckingId(null);
     }
   }
 
-  function handleAmazefSuccess(data: CompetitorCheckResponse) {
-    setResult({
-      message: data.message ?? "",
-      userPriceLabel: data.userPriceLabel ?? "",
-      matches: data.matches ?? [],
-      totalSearched: data.totalSearched ?? 0,
-    });
-    setRecentChecks(data.recentChecks ?? []);
-    setSelectedCheckId(data.check?.id ?? null);
+  async function handleRemove(watchId: string) {
+    if (!userId) return;
+
+    try {
+      const response = await fetch(
+        `/api/competitors/watch?userId=${encodeURIComponent(userId)}&watchId=${encodeURIComponent(watchId)}`,
+        { method: "DELETE" },
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setNotice(data.error ?? "Failed to remove watch.");
+        return;
+      }
+
+      setWatches(data.watches ?? []);
+      setNotice("Competitor watch removed.");
+    } catch {
+      setNotice("Network error while removing watch.");
+    }
   }
 
   function handleEbaySearch(params: { query: string; alertBelow: number | null }) {
@@ -219,8 +206,9 @@ export function CompetitorsShell() {
           </span>
           <h1 className="mt-3 text-2xl font-bold text-[#111827] lg:text-3xl">Check Competitors</h1>
           <p className="mt-1 max-w-2xl text-sm leading-relaxed text-[#6B7280]">
-            Compare prices across marketplaces. Search Amazef for undercuts on your price, or browse
-            all eBay sellers for a product keyword.
+            {platform === "amazef"
+              ? "Track your product title and price on Amazef. We check on your schedule and email you when sellers list below your price."
+              : "Compare prices across marketplaces. Search all eBay sellers for a product keyword."}
           </p>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
@@ -245,131 +233,93 @@ export function CompetitorsShell() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          <div className="space-y-6 lg:col-span-2">
-            {platform === "amazef" ? (
-              <>
-                {userId && (
-                  <CompetitorCheckForm userId={userId} onSuccess={handleAmazefSuccess} />
-                )}
-
-                {loadingCheckId && !result && (
-                  <div className="flex items-center justify-center rounded-2xl border border-gray-100 bg-white py-16 shadow-sm">
-                    <svg className="h-7 w-7 animate-spin text-brand" viewBox="0 0 24 24" fill="none" aria-hidden>
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                  </div>
-                )}
-
-                {result && (
-                  <div className="space-y-5">
-                    {selectedCheckId && (
-                      <p className="text-sm font-medium text-brand">Viewing selected check only</p>
-                    )}
-
-                    <CompetitorResultBanner
-                      message={result.message}
-                      userPriceLabel={result.userPriceLabel}
-                      matches={result.matches}
-                      totalSearched={result.totalSearched}
-                    />
-
-                    {result.matches.length > 0 ? (
-                      <div>
-                        <h3 className="mb-4 text-base font-semibold text-[#111827]">
-                          Sellers under your price
-                        </h3>
-                        <div className="space-y-4">
-                          {result.matches.map((match) => (
-                            <CompetitorMatchCard
-                              key={match.id}
-                              match={match}
-                              userPriceLabel={result.userPriceLabel}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    ) : result.totalSearched > 0 ? (
-                      <div className="rounded-2xl border border-emerald-100 bg-white p-8 text-center shadow-sm">
-                        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50 text-emerald-500">
-                          <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden>
-                            <path
-                              d="M8 14l4 4 8-8"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                        </div>
-                        <p className="text-lg font-bold text-[#111827]">You&apos;re competitively priced</p>
-                        <p className="mt-2 text-sm text-[#6B7280]">
-                          No sellers on Amazef are listing this product below {result.userPriceLabel}.
-                        </p>
-                      </div>
-                    ) : null}
-                  </div>
-                )}
-              </>
-            ) : (
-              <>
-                <EbaySearchForm onSearch={handleEbaySearch} isSearching={ebayLoading && !ebaySearch} />
-
-                {ebaySearch && (
-                  <EbayListingsTable
-                    listings={ebaySearch.listings}
-                    total={ebaySearch.total}
-                    offerCount={ebaySearch.offerCount}
-                    offset={ebaySearch.offset}
-                    limit={ebaySearch.limit}
-                    sort={ebaySearch.sort}
-                    alertBelow={ebaySearch.alertBelow}
-                    query={ebaySearch.query}
-                    isLoading={ebayLoading}
-                    onSortChange={handleEbaySortChange}
-                    onPageChange={handleEbayPageChange}
-                  />
-                )}
-              </>
-            )}
+        {notice && (
+          <div className="mb-6 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+            {notice}
           </div>
+        )}
 
-          <div>
-            {platform === "amazef" ? (
-              loading ? (
-                <div className="flex items-center justify-center rounded-2xl border border-gray-100 bg-white py-16 shadow-sm">
-                  <svg className="h-7 w-7 animate-spin text-brand" viewBox="0 0 24 24" fill="none" aria-hidden>
+        {platform === "amazef" ? (
+          <>
+            {userId && (
+              <div className="mb-8">
+                <AddCompetitorWatchFlow userId={userId} onAdded={() => loadWatches(userId)} />
+              </div>
+            )}
+
+            <div>
+              <div className="mb-5">
+                <h2 className="text-lg font-bold text-[#111827]">Your competitor watches</h2>
+                <p className="text-sm text-[#6B7280]">
+                  {watches.length} watch{watches.length === 1 ? "" : "es"} · alerts shown in red on top
+                </p>
+              </div>
+
+              {loading ? (
+                <div className="flex items-center justify-center py-20">
+                  <svg className="h-8 w-8 animate-spin text-brand" viewBox="0 0 24 24" fill="none" aria-hidden>
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
                 </div>
+              ) : watches.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-gray-200 bg-[#FAFAFA] px-6 py-12 text-center">
+                  <p className="text-sm font-semibold text-[#374151]">No competitor watches yet</p>
+                  <p className="mt-1 text-xs text-[#9CA3AF]">
+                    Add your product title and price above to start tracking Amazef sellers.
+                  </p>
+                </div>
               ) : (
-                <RecentCompetitorChecks
-                  checks={recentChecks}
-                  selectedCheckId={selectedCheckId}
-                  onSelectCheck={handleSelectCheck}
-                  loadingCheckId={loadingCheckId}
-                />
-              )
-            ) : (
-              <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-                <h3 className="text-sm font-semibold text-[#111827]">eBay Browse API</h3>
-                <p className="mt-2 text-sm leading-relaxed text-[#6B7280]">
-                  Each row is priced from eBay&apos;s item API for that exact variant. The
-                  &quot;eBay price&quot; column matches what you see on the listing page (including
-                  VAT). Pick the variant row, then click through to verify.
-                </p>
-                <ul className="mt-4 space-y-2 text-xs text-[#6B7280]">
-                  <li>· One row per variant (colour/size) with its own price</li>
-                  <li>· eBay price = listing page Buy it now (VAT included)</li>
-                  <li>· + Postage = eBay price + cheapest delivery</li>
-                  <li>· Click title or View on eBay — opens that variant</li>
-                </ul>
-              </div>
+                <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+                  {watches.map((watch) => (
+                    <CompetitorWatchCard
+                      key={watch.id}
+                      watch={watch}
+                      checking={checkingId === watch.id}
+                      onCheck={() => handleCheck(watch.id)}
+                      onRemove={() => handleRemove(watch.id)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="space-y-6">
+            <EbaySearchForm onSearch={handleEbaySearch} isSearching={ebayLoading && !ebaySearch} />
+
+            {ebaySearch && (
+              <EbayListingsTable
+                listings={ebaySearch.listings}
+                total={ebaySearch.total}
+                offerCount={ebaySearch.offerCount}
+                offset={ebaySearch.offset}
+                limit={ebaySearch.limit}
+                sort={ebaySearch.sort}
+                alertBelow={ebaySearch.alertBelow}
+                query={ebaySearch.query}
+                isLoading={ebayLoading}
+                onSortChange={handleEbaySortChange}
+                onPageChange={handleEbayPageChange}
+              />
             )}
+
+            <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
+              <h3 className="text-sm font-semibold text-[#111827]">eBay Browse API</h3>
+              <p className="mt-2 text-sm leading-relaxed text-[#6B7280]">
+                Each row is priced from eBay&apos;s item API for that exact variant. The
+                &quot;eBay price&quot; column matches what you see on the listing page (including
+                VAT). Pick the variant row, then click through to verify.
+              </p>
+              <ul className="mt-4 space-y-2 text-xs text-[#6B7280]">
+                <li>· One row per variant (colour/size) with its own price</li>
+                <li>· eBay price = listing page Buy it now (VAT included)</li>
+                <li>· + Postage = eBay price + cheapest delivery</li>
+                <li>· Click title or View on eBay — opens that variant</li>
+              </ul>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </DashboardLayout>
   );

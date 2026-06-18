@@ -1,0 +1,165 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import type { CompetitorMatch, CompetitorWatch } from "@/types/competitor";
+import { CompetitorMatchCard } from "./CompetitorMatchCard";
+
+function scheduleLabel(watch: CompetitorWatch): string {
+  if (watch.updateMode === "auto_24h") return "Checks every 24 hours";
+  if (watch.updateMode === "custom") {
+    return `Checks every ${watch.updateIntervalHours ?? "—"} hours`;
+  }
+  return "Manual checks";
+}
+
+export function CompetitorWatchCard({
+  watch,
+  onCheck,
+  onRemove,
+  checking,
+}: {
+  watch: CompetitorWatch;
+  onCheck: () => void;
+  onRemove: () => void;
+  checking: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [loadingMatches, setLoadingMatches] = useState(false);
+  const [matches, setMatches] = useState<CompetitorMatch[]>([]);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    setExpanded(false);
+    setMatches([]);
+    setMessage("");
+  }, [watch.id, watch.matchesFound, watch.lastCheckedAt]);
+
+  async function loadMatches() {
+    const userId = sessionStorage.getItem("ecomtools_user_id");
+    if (!userId) return;
+
+    setLoadingMatches(true);
+
+    try {
+      const response = await fetch(
+        `/api/competitors/watch?userId=${encodeURIComponent(userId)}&watchId=${encodeURIComponent(watch.id)}`,
+      );
+      const data = await response.json();
+
+      if (response.ok) {
+        setMatches(data.matches ?? []);
+        setMessage(data.message ?? "");
+      }
+    } finally {
+      setLoadingMatches(false);
+    }
+  }
+
+  async function handleToggle() {
+    const nextExpanded = !expanded;
+    setExpanded(nextExpanded);
+
+    if (nextExpanded && matches.length === 0 && watch.matchesFound > 0) {
+      await loadMatches();
+    }
+  }
+
+  const alertClasses = watch.hasAlert
+    ? "border-red-200 bg-red-50/40 hover:border-red-300"
+    : "border-gray-100 bg-white hover:border-brand/20";
+
+  return (
+    <article className={`flex h-full flex-col rounded-2xl border p-5 shadow-sm transition-all ${alertClasses}`}>
+      <button
+        type="button"
+        onClick={handleToggle}
+        className="w-full text-left"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span
+                className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                  watch.hasAlert ? "bg-red-100 text-red-700" : "bg-emerald-50 text-emerald-700"
+                }`}
+              >
+                {watch.hasAlert
+                  ? `${watch.matchesFound} below your price`
+                  : "No undercuts"}
+              </span>
+              <span className="rounded-full bg-brand-light px-2.5 py-0.5 text-xs font-semibold text-brand">
+                {scheduleLabel(watch)}
+              </span>
+            </div>
+            <h3 className="line-clamp-2 text-base font-bold text-[#111827]">{watch.productQuery}</h3>
+            <p className="mt-2 text-sm text-[#6B7280]">
+              Your price <span className="font-semibold text-[#111827]">{watch.userPriceLabel}</span>
+            </p>
+            <p className="mt-1 text-xs text-[#9CA3AF]">
+              Last checked {watch.lastCheckedAt ?? "never"}
+            </p>
+          </div>
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 18 18"
+            fill="none"
+            className={`mt-1 shrink-0 text-[#6B7280] transition-transform ${expanded ? "rotate-180" : ""}`}
+            aria-hidden
+          >
+            <path d="M4.5 7.5 9 12l4.5-4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="mt-4 border-t border-gray-100 pt-4">
+          {loadingMatches ? (
+            <div className="flex justify-center py-8">
+              <svg className="h-6 w-6 animate-spin text-brand" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            </div>
+          ) : watch.matchesFound > 0 ? (
+            <div className="space-y-4">
+              {message && <p className="text-sm font-medium text-red-700">{message}</p>}
+              {matches.map((match) => (
+                <CompetitorMatchCard
+                  key={match.id}
+                  match={match}
+                  userPriceLabel={watch.userPriceLabel}
+                  viewLabel="View on Amazef"
+                />
+              ))}
+            </div>
+          ) : (
+            <p className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+              No sellers on Amazef are listing below {watch.userPriceLabel}.
+            </p>
+          )}
+        </div>
+      )}
+
+      <div className="mt-auto flex flex-wrap gap-2 pt-4">
+        {watch.updateMode === "manual" && (
+          <button
+            type="button"
+            onClick={onCheck}
+            disabled={checking}
+            className="inline-flex flex-1 items-center justify-center rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
+          >
+            {checking ? "Checking..." : "Check now"}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onRemove}
+          className="rounded-xl border border-red-100 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-100"
+        >
+          Remove
+        </button>
+      </div>
+    </article>
+  );
+}

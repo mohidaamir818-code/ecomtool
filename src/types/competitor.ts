@@ -1,3 +1,5 @@
+export type CompetitorUpdateMode = "auto_24h" | "custom" | "manual";
+
 export interface CompetitorMatch {
   id: string;
   productName: string;
@@ -25,6 +27,48 @@ export interface CompetitorCheckPayload {
   userId: string;
   productQuery: string;
   userPrice: number;
+}
+
+export interface CompetitorWatch {
+  id: string;
+  productQuery: string;
+  userPrice: number;
+  userPriceLabel: string;
+  currency: string;
+  matchesFound: number;
+  productsSearched: number;
+  updateMode: CompetitorUpdateMode;
+  updateIntervalHours: number | null;
+  nextUpdateAt: string | null;
+  lastCheckedAt: string | null;
+  addedAt: string;
+  hasAlert: boolean;
+}
+
+export interface CompetitorWatchAddPayload {
+  userId: string;
+  productQuery: string;
+  userPrice: number;
+  updateMode: CompetitorUpdateMode;
+  customHours?: number;
+}
+
+export interface CompetitorWatchListResponse {
+  success: boolean;
+  error?: string;
+  watches?: CompetitorWatch[];
+  message?: string;
+}
+
+export interface CompetitorWatchDetailResponse {
+  success: boolean;
+  error?: string;
+  watch?: CompetitorWatch;
+  matches?: CompetitorMatch[];
+  message?: string;
+  userPriceLabel?: string;
+  totalSearched?: number;
+  watches?: CompetitorWatch[];
 }
 
 export interface CompetitorCheckResponse {
