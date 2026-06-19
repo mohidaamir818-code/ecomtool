@@ -5,6 +5,7 @@ import {
   runCompetitorCheck,
 } from "@/lib/competitors/service";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
+import { logUserApiRequest } from "@/lib/requests/tracker";
 import type { CompetitorCheckPayload } from "@/types/competitor";
 
 export async function GET(request: NextRequest) {
@@ -42,6 +43,13 @@ export async function GET(request: NextRequest) {
 
     const recentChecks = await getRecentCompetitorChecks(userId);
 
+    void logUserApiRequest({
+      userId,
+      endpoint: "/api/competitors/check",
+      method: "GET",
+      status: "success",
+    });
+
     return NextResponse.json({ success: true, recentChecks });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load competitor checks.";
@@ -50,8 +58,11 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  let trackedUserId: string | null = null;
+
   try {
     const body = (await request.json()) as CompetitorCheckPayload;
+    trackedUserId = body.userId?.trim() ?? null;
 
     if (!body.userId?.trim()) {
       return NextResponse.json({ error: "userId is required." }, { status: 400 });
@@ -86,6 +97,13 @@ export async function POST(request: NextRequest) {
     const result = await runCompetitorCheck(body.userId, body.productQuery, userPrice);
     const recentChecks = await getRecentCompetitorChecks(body.userId);
 
+    void logUserApiRequest({
+      userId: body.userId,
+      endpoint: "/api/competitors/check",
+      method: "POST",
+      status: "success",
+    });
+
     return NextResponse.json(
       {
         success: true,
@@ -102,6 +120,14 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Competitor check failed.";
+    if (trackedUserId) {
+      void logUserApiRequest({
+        userId: trackedUserId,
+        endpoint: "/api/competitors/check",
+        method: "POST",
+        status: "failed",
+      });
+    }
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

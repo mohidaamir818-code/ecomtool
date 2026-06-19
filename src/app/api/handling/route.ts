@@ -6,6 +6,7 @@ import {
   removeHandlingProduct,
 } from "@/lib/handling/service";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
+import { logUserApiRequest } from "@/lib/requests/tracker";
 import type { HandlingAddPayload } from "@/types/handling";
 
 export async function GET(request: NextRequest) {
@@ -29,6 +30,13 @@ export async function GET(request: NextRequest) {
 
     await processDueHandlingUpdates(userId);
     const products = await getHandlingProducts(userId);
+
+    void logUserApiRequest({
+      userId,
+      endpoint: "/api/handling",
+      method: "GET",
+      status: "success",
+    });
 
     return NextResponse.json({ success: true, products });
   } catch (error) {
@@ -73,6 +81,13 @@ export async function POST(request: NextRequest) {
 
     const product = await addHandlingProduct(body);
     const products = await getHandlingProducts(body.userId);
+
+    void logUserApiRequest({
+      userId: body.userId,
+      endpoint: "/api/handling",
+      method: "POST",
+      status: "success",
+    });
 
     return NextResponse.json({ success: true, product, products }, { status: 201 });
   } catch (error) {

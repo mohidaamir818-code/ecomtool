@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkHandlingProductUpdate, getHandlingProducts } from "@/lib/handling/service";
+import { logUserApiRequest } from "@/lib/requests/tracker";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 
 export async function POST(request: NextRequest) {
+  let trackedUserId: string | null = null;
+
   try {
     const body = (await request.json()) as { userId?: string; productId?: string };
+    trackedUserId = body.userId?.trim() ?? null;
 
     if (!body.userId?.trim() || !body.productId?.trim()) {
       return NextResponse.json({ error: "userId and productId are required." }, { status: 400 });
@@ -24,6 +28,13 @@ export async function POST(request: NextRequest) {
     const result = await checkHandlingProductUpdate(body.userId, body.productId);
     const products = await getHandlingProducts(body.userId);
 
+    void logUserApiRequest({
+      userId: body.userId,
+      endpoint: "/api/handling/check",
+      method: "POST",
+      status: "success",
+    });
+
     return NextResponse.json({
       success: true,
       message: result.message,
@@ -33,6 +44,14 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to check product update.";
+    if (trackedUserId) {
+      void logUserApiRequest({
+        userId: trackedUserId,
+        endpoint: "/api/handling/check",
+        method: "POST",
+        status: "failed",
+      });
+    }
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

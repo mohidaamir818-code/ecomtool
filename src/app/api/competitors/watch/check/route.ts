@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkCompetitorWatchUpdate, getCompetitorWatches } from "@/lib/competitors/service";
+import { logUserApiRequest } from "@/lib/requests/tracker";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 
 export async function POST(request: NextRequest) {
@@ -23,6 +24,13 @@ export async function POST(request: NextRequest) {
 
     const result = await checkCompetitorWatchUpdate(body.userId, body.watchId);
     const watches = await getCompetitorWatches(body.userId);
+
+    void logUserApiRequest({
+      userId: body.userId,
+      endpoint: "/api/competitors/watch/check",
+      method: "POST",
+      status: "success",
+    });
 
     return NextResponse.json({
       success: true,

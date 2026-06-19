@@ -7,6 +7,7 @@ import {
   upgradeCompetitorWatchPrice,
 } from "@/lib/competitors/service";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
+import { logUserApiRequest } from "@/lib/requests/tracker";
 import type { CompetitorWatchAddPayload, CompetitorWatchUpgradePayload } from "@/types/competitor";
 
 export async function GET(request: NextRequest) {
@@ -33,6 +34,13 @@ export async function GET(request: NextRequest) {
       const details = await getCompetitorWatchDetails(userId, watchId);
       const watches = await getCompetitorWatches(userId);
 
+      void logUserApiRequest({
+        userId,
+        endpoint: "/api/competitors/watch",
+        method: "GET",
+        status: "success",
+      });
+
       return NextResponse.json({
         success: true,
         watch: details.watch,
@@ -45,6 +53,13 @@ export async function GET(request: NextRequest) {
     }
 
     const watches = await getCompetitorWatches(userId);
+
+    void logUserApiRequest({
+      userId,
+      endpoint: "/api/competitors/watch",
+      method: "GET",
+      status: "success",
+    });
 
     return NextResponse.json({ success: true, watches });
   } catch (error) {
@@ -104,6 +119,13 @@ export async function POST(request: NextRequest) {
 
     const result = await addCompetitorWatch(body);
     const watches = await getCompetitorWatches(body.userId);
+
+    void logUserApiRequest({
+      userId: body.userId,
+      endpoint: "/api/competitors/watch",
+      method: "POST",
+      status: "success",
+    });
 
     return NextResponse.json(
       {
@@ -169,6 +191,13 @@ export async function PATCH(request: NextRequest) {
 
     const result = await upgradeCompetitorWatchPrice(body.userId, body.watchId, userPrice);
     const watches = await getCompetitorWatches(body.userId);
+
+    void logUserApiRequest({
+      userId: body.userId,
+      endpoint: "/api/competitors/watch",
+      method: "PATCH",
+      status: "success",
+    });
 
     return NextResponse.json({
       success: true,

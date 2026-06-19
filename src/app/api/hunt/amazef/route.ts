@@ -10,6 +10,7 @@ import {
   selectMostSoldProducts,
 } from "@/lib/hunting/service";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
+import { logUserApiRequest } from "@/lib/requests/tracker";
 import type { HuntAmazefPayload } from "@/types/hunting";
 
 export async function GET(request: NextRequest) {
@@ -36,6 +37,13 @@ export async function GET(request: NextRequest) {
 
     const data = await getHuntData(userId, lookbackDays);
 
+    void logUserApiRequest({
+      userId,
+      endpoint: "/api/hunt/amazef",
+      method: "GET",
+      status: "success",
+    });
+
     return NextResponse.json({ success: true, ...data });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load hunt data.";
@@ -45,9 +53,11 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   let requestId: string | null = null;
+  let trackedUserId: string | null = null;
 
   try {
     const body = (await request.json()) as HuntAmazefPayload;
+    trackedUserId = body.userId?.trim() ?? null;
 
     if (!body.userId?.trim()) {
       return NextResponse.json({ error: "userId is required." }, { status: 400 });
@@ -102,6 +112,13 @@ export async function POST(request: NextRequest) {
 
     const topOrders = topProducts[0] ? parseOrdersCount(topProducts[0].orders) : 0;
 
+    void logUserApiRequest({
+      userId: body.userId,
+      endpoint: "/api/hunt/amazef",
+      method: "POST",
+      status: "success",
+    });
+
     return NextResponse.json(
       {
         success: true,
@@ -122,6 +139,15 @@ export async function POST(request: NextRequest) {
       } catch {
         // ignore cleanup errors
       }
+    }
+
+    if (trackedUserId) {
+      void logUserApiRequest({
+        userId: trackedUserId,
+        endpoint: "/api/hunt/amazef",
+        method: "POST",
+        status: "failed",
+      });
     }
 
     return NextResponse.json({ error: message }, { status: 500 });

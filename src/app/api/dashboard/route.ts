@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDashboardData } from "@/lib/dashboard/service";
+import { logUserApiRequest } from "@/lib/requests/tracker";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 
 export async function GET(request: NextRequest) {
@@ -23,9 +24,25 @@ export async function GET(request: NextRequest) {
 
     const data = await getDashboardData(userId);
 
+    void logUserApiRequest({
+      userId,
+      endpoint: "/api/dashboard",
+      method: "GET",
+      status: "success",
+    });
+
     return NextResponse.json({ success: true, data });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load dashboard data.";
+    const userId = request.nextUrl.searchParams.get("userId");
+    if (userId) {
+      void logUserApiRequest({
+        userId,
+        endpoint: "/api/dashboard",
+        method: "GET",
+        status: "failed",
+      });
+    }
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
