@@ -31,6 +31,7 @@ export const serverEnv = {
   ebayAppId: () => process.env.EBAY_APP_ID ?? "",
   ebayCertId: () => process.env.EBAY_CERT_ID ?? "",
   ebayDevId: () => process.env.EBAY_DEV_ID ?? "",
+  ebayRuName: () => process.env.EBAY_RUNAME?.trim() ?? "",
   ebayOAuthRedirectUrl: (origin: string) =>
     process.env.EBAY_OAUTH_REDIRECT_URL?.trim() ||
     `${origin.replace(/\/$/, "")}/api/ebay/callback`,

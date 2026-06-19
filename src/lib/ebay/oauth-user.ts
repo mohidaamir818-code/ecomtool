@@ -86,21 +86,32 @@ async function fetchEbayUsername(accessToken: string): Promise<string | null> {
   }
 }
 
-export function buildEbayAuthorizeUrl(origin: string, state: string): string {
-  const redirectUri = serverEnv.ebayOAuthRedirectUrl(origin);
-  const params = new URLSearchParams({
+function getEbayOAuthRedirectUri(): string {
+  const ruName = serverEnv.ebayRuName();
+  if (!ruName) {
+    throw new Error("Set EBAY_RUNAME in env (eBay Developer Portal RuName).");
+  }
+  return ruName;
+}
+
+export function buildEbayAuthorizeUrl(_origin: string, state: string): string {
+  const redirectUri = getEbayOAuthRedirectUri();
+  const baseParams = new URLSearchParams({
     client_id: serverEnv.ebayAppId(),
     response_type: "code",
     redirect_uri: redirectUri,
-    scope: EBAY_SCOPES,
     state,
   });
 
-  return `${EBAY_AUTH_BASE}/oauth2/authorize?${params.toString()}`;
+  const scopeEncoded = EBAY_SCOPES.split(" ")
+    .map((s) => encodeURIComponent(s))
+    .join("%20");
+
+  return `${EBAY_AUTH_BASE}/oauth2/authorize?${baseParams.toString()}&scope=${scopeEncoded}`;
 }
 
-export async function exchangeEbayCode(userId: string, code: string, origin: string): Promise<void> {
-  const redirectUri = serverEnv.ebayOAuthRedirectUrl(origin);
+export async function exchangeEbayCode(userId: string, code: string, _origin: string): Promise<void> {
+  const redirectUri = getEbayOAuthRedirectUri();
 
   const response = await fetch(`${EBAY_API_BASE}/identity/v1/oauth2/token`, {
     method: "POST",
