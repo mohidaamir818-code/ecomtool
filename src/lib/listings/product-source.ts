@@ -1,0 +1,81 @@
+import "server-only";
+
+import { fetchAliExpressProduct } from "@/lib/aliexpress/client";
+import type { ListingProductSource } from "@/types/listing-generator";
+
+const BROWSER_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "Accept-Language": "en-GB,en;q=0.9",
+};
+
+function stripHtml(value: string): string {
+  return value
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function fetchDescriptionFromHtml(url: string): Promise<string | null> {
+  try {
+    const response = await fetch(url, {
+      headers: BROWSER_HEADERS,
+      cache: "no-store",
+    });
+
+    if (!response.ok) return null;
+
+    const html = await response.text();
+
+    const patterns = [
+      /"description"\s*:\s*"((?:\\.|[^"\\])*)"/,
+      /"productDesc"\s*:\s*"((?:\\.|[^"\\])*)"/,
+      /property="og:description"\s+content="([^"]+)"/i,
+      /<meta\s+name="description"\s+content="([^"]+)"/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = html.match(pattern);
+      if (!match?.[1]) continue;
+
+      const decoded = match[1]
+        .replace(/\\n/g, "\n")
+        .replace(/\\"/g, '"')
+        .replace(/\\u0026/g, "&");
+
+      const text = stripHtml(decoded);
+      if (text.length >= 20) return text.slice(0, 4000);
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchListingProductSource(url: string): Promise<ListingProductSource> {
+  const product = await fetchAliExpressProduct(url);
+  const description =
+    product.description?.trim() ||
+    (await fetchDescriptionFromHtml(product.productUrl)) ||
+    product.title;
+
+  const images =
+    product.images?.filter(Boolean) ??
+    (product.imageUrl ? [product.imageUrl] : []);
+
+  return {
+    source: "aliexpress",
+    externalId: product.externalId,
+    productUrl: product.productUrl,
+    title: product.title,
+    imageUrl: product.imageUrl,
+    images,
+    price: product.price,
+    currency: product.currency,
+    description,
+    stock: product.stock,
+  };
+}

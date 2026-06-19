@@ -21,6 +21,8 @@ export interface HandlingProductData {
   rating: number | null;
   variants?: HandlingProductVariant[];
   selectedVariantId?: string;
+  description?: string | null;
+  images?: string[];
 }
 
 export interface HandlingProduct {

@@ -1,7 +1,7 @@
 "use client";
 
 type IconName =
-  | "grid" | "search" | "box" | "users" | "key" | "truck"
+  | "grid" | "search" | "box" | "users" | "key" | "truck" | "spark"
   | "list" | "code" | "chart" | "settings" | "help"
   | "send" | "clock" | "bell" | "calendar" | "crown";
 
@@ -118,6 +118,12 @@ export function DashboardIcon({ name, className = iconClass }: { name: IconName;
       return (
         <svg className={className} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
           <path d="M3 13h12v2H3zM3 13l2-8 4 4 4-4 2 8" strokeLinejoin="round" />
+        </svg>
+      );
+    case "spark":
+      return (
+        <svg className={className} viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+          <path d="M9 2l1.2 4.2L14 7.5l-3.8 1.3L9 13l-1.2-4.2L4 7.5l3.8-1.3L9 2z" strokeLinejoin="round" />
         </svg>
       );
     default:

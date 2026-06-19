@@ -30,6 +30,11 @@ export const serverEnv = {
   aliexpressApiKey: () => process.env.ALIEXPRESS_API_KEY ?? "",
   ebayAppId: () => process.env.EBAY_APP_ID ?? "",
   ebayCertId: () => process.env.EBAY_CERT_ID ?? "",
+  ebayDevId: () => process.env.EBAY_DEV_ID ?? "",
+  ebayOAuthRedirectUrl: (origin: string) =>
+    process.env.EBAY_OAUTH_REDIRECT_URL?.trim() ||
+    `${origin.replace(/\/$/, "")}/api/ebay/callback`,
+  geminiApiKey: () => process.env.GEMINI_API_KEY ?? "",
   smtpHost: () => process.env.SMTP_HOST ?? "smtp.gmail.com",
   smtpPort: () => Number(process.env.SMTP_PORT ?? 587),
   smtpUser: () => requireServerEnv("SMTP_USER"),

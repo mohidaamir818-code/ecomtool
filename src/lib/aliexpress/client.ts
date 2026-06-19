@@ -654,6 +654,15 @@ function parseMtopProduct(
     modules.HEADER_IMAGE_PC?.imagePathList?.[0] ??
     null;
 
+  const images = [
+    ...(modules.HEADER_IMAGE_PC?.mainImages
+      ?.map((entry) => entry.imageUrl?.trim())
+      .filter((url): url is string => Boolean(url)) ?? []),
+    ...(modules.HEADER_IMAGE_PC?.imagePathList?.filter(Boolean) ?? []),
+  ].filter((url, index, list) => list.indexOf(url) === index);
+
+  const resolvedImages = images.length > 0 ? images : imageUrl ? [imageUrl] : [];
+
   const { stock } = extractPurchaseLimit(modules, modules.PRICE?.selectedSkuId);
   const orders =
     modules.PC_RATING?.otherText ??
@@ -668,6 +677,7 @@ function parseMtopProduct(
     productUrl,
     title,
     imageUrl,
+    images: resolvedImages,
     price,
     currency,
     stock,
@@ -1026,6 +1036,7 @@ async function scrapeAliExpressHtml(url: string, productId: string): Promise<Han
       productUrl: url,
       title,
       imageUrl: imageMatch?.[1] || null,
+      images: imageMatch?.[1] ? [imageMatch[1]] : [],
       price,
       currency: /£|GBP/i.test(priceRaw ?? "") ? "GBP" : "USD",
       stock: stockMatch ? Number(stockMatch[1]) : null,

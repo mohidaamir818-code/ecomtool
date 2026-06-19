@@ -11,6 +11,7 @@ export const dashboardNavItems: NavItem[] = [
   { label: "Hunting", href: "/dashboard/hunting", icon: "search" },
   { label: "Handling Products", href: "/dashboard/products", icon: "box" },
   { label: "Check Competitors", href: "/dashboard/competitors", icon: "users" },
+  { label: "AI Listing", href: "/dashboard/listings", icon: "spark" },
   { label: "Keywords Research", href: "/dashboard/keywords", icon: "key" },
   { label: "Suppliers Finder", href: "/dashboard/suppliers", icon: "truck" },
   { label: "Track Requests", href: "/dashboard/requests", icon: "list" },
