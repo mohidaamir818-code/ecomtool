@@ -5,9 +5,10 @@ import type { EbayConnectionStatus } from "@/types/listing-generator";
 
 interface EbayConnectProps {
   userId: string;
+  refreshKey?: string;
 }
 
-export function EbayConnect({ userId }: EbayConnectProps) {
+export function EbayConnect({ userId, refreshKey }: EbayConnectProps) {
   const [status, setStatus] = useState<EbayConnectionStatus>({
     connected: false,
     ebayUsername: null,
@@ -34,7 +35,7 @@ export function EbayConnect({ userId }: EbayConnectProps) {
 
   useEffect(() => {
     void loadStatus();
-  }, [loadStatus]);
+  }, [loadStatus, refreshKey]);
 
   function handleConnect() {
     window.location.href = `/api/ebay/auth?userId=${encodeURIComponent(userId)}`;
@@ -61,7 +62,7 @@ export function EbayConnect({ userId }: EbayConnectProps) {
             onClick={handleConnect}
             className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:bg-brand-dark disabled:opacity-50"
           >
-            Connect eBay
+            Connect eBay Account
           </button>
         ) : (
           <span className="inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">

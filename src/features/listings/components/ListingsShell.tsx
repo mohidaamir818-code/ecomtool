@@ -234,6 +234,12 @@ export function ListingsShell() {
           ) : null}
         </div>
 
+        {userId ? (
+          <div className="mb-6">
+            <EbayConnect userId={userId} refreshKey={searchParams.get("ebay") ?? undefined} />
+          </div>
+        ) : null}
+
         {wizardStarted ? <ListingWizardProgress currentStep={currentStep} /> : null}
 
         {currentStep === 0 ? (
@@ -299,10 +305,6 @@ export function ListingsShell() {
               disabled={isBlocked}
               onListed={setListedUrl}
             />
-          ) : null}
-
-          {userId && currentStep > 0 && currentStep < 5 ? (
-            <EbayConnect userId={userId} />
           ) : null}
 
           {notice ? (
