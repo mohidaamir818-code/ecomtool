@@ -1,10 +1,10 @@
 import "server-only";
 
-import { generateGeminiJson } from "@/lib/gemini/client";
+import { generateAiJson } from "@/lib/gemini/client";
 import { buildListingPrompt } from "@/lib/gemini/prompts";
 import type { GeneratedListing, ListingProductSource } from "@/types/listing-generator";
 
-interface GeminiListingResponse {
+interface AiListingResponse {
   seoTitle?: string;
   descriptionHtml?: string;
   suggestedPrice?: number;
@@ -23,7 +23,7 @@ export async function generateEbayListing(product: ListingProductSource): Promis
   const fallbackPrice = Number((product.price * 2.5).toFixed(2));
   const currency = product.currency === "USD" ? "GBP" : product.currency;
 
-  const raw = await generateGeminiJson<GeminiListingResponse>(buildListingPrompt(product));
+  const raw = await generateAiJson<AiListingResponse>(buildListingPrompt(product));
 
   const itemSpecifics = (raw.itemSpecifics ?? [])
     .map((entry) => ({

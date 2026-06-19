@@ -19,7 +19,7 @@ export function AiListingGenerator({ product, listing, loading = false }: AiList
   if (loading) {
     return (
       <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
-        <p className="text-sm text-[#6B7280]">Generating eBay listing with Gemini AI...</p>
+        <p className="text-sm text-[#6B7280]">Generating eBay listing with AI...</p>
       </div>
     );
   }

@@ -1,10 +1,10 @@
 import "server-only";
 
-import { generateGeminiJson } from "@/lib/gemini/client";
+import { generateAiJson } from "@/lib/gemini/client";
 import { buildVeroCheckPrompt } from "@/lib/gemini/prompts";
 import type { ListingProductSource, VeroCheckResult } from "@/types/listing-generator";
 
-interface GeminiVeroResponse {
+interface AiVeroResponse {
   safe?: boolean;
   isCounterfeitOrBranded?: boolean;
   isBannedCategory?: boolean;
@@ -59,7 +59,7 @@ export async function checkVeroSafety(
   const local = localHeuristicCheck(product, title);
   if (local) return local;
 
-  const raw = await generateGeminiJson<GeminiVeroResponse>(buildVeroCheckPrompt(product, title));
+  const raw = await generateAiJson<AiVeroResponse>(buildVeroCheckPrompt(product, title));
 
   const warnings = (raw.warnings ?? []).map((entry) => String(entry).trim()).filter(Boolean);
   const isCounterfeitOrBranded = Boolean(raw.isCounterfeitOrBranded);

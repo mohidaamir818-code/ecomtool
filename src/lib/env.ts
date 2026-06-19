@@ -35,7 +35,7 @@ export const serverEnv = {
   ebayOAuthRedirectUrl: (origin: string) =>
     process.env.EBAY_OAUTH_REDIRECT_URL?.trim() ||
     `${origin.replace(/\/$/, "")}/api/ebay/callback`,
-  geminiApiKey: () => process.env.GEMINI_API_KEY ?? "",
+  openRouterApiKey: () => process.env.OPENROUTER_API_KEY ?? "",
   smtpHost: () => process.env.SMTP_HOST ?? "smtp.gmail.com",
   smtpPort: () => Number(process.env.SMTP_PORT ?? 587),
   smtpUser: () => requireServerEnv("SMTP_USER"),
