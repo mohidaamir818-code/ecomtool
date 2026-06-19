@@ -20,7 +20,7 @@ function isPublicAdminApi(pathname: string, method: string): boolean {
   );
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const adminPath = getAdminPath();
   const { pathname } = request.nextUrl;
 
