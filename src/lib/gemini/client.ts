@@ -2,7 +2,7 @@ import "server-only";
 
 import { serverEnv } from "@/lib/env";
 
-const GEMINI_MODEL = "gemini-1.5-flash";
+const GEMINI_MODEL = "gemini-2.0-flash";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
 export class GeminiError extends Error {
