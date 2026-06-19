@@ -18,12 +18,14 @@ export function CompetitorWatchCard({
   onRemove,
   onUpdated,
   checking,
+  checkDisabled = false,
 }: {
   watch: CompetitorWatch;
   onCheck: () => void;
   onRemove: () => void;
   onUpdated: (message?: string, watches?: CompetitorWatch[]) => void;
   checking: boolean;
+  checkDisabled?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [loadingMatches, setLoadingMatches] = useState(false);
@@ -265,7 +267,7 @@ export function CompetitorWatchCard({
           <button
             type="button"
             onClick={onCheck}
-            disabled={checking}
+            disabled={checking || checkDisabled}
             className="inline-flex flex-1 items-center justify-center rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
           >
             {checking ? "Checking..." : "Check now"}

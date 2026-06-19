@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkCompetitorWatchUpdate, getCompetitorWatches } from "@/lib/competitors/service";
 import { logUserApiRequest } from "@/lib/requests/tracker";
+import { quotaErrorResponse } from "@/lib/quota/api-helpers";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 
 export async function POST(request: NextRequest) {
@@ -40,6 +41,9 @@ export async function POST(request: NextRequest) {
       watches,
     });
   } catch (error) {
+    const quotaResponse = quotaErrorResponse(error);
+    if (quotaResponse) return quotaResponse;
+
     const message = error instanceof Error ? error.message : "Failed to check competitor watch.";
     return NextResponse.json({ error: message }, { status: 500 });
   }

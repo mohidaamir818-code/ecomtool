@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/quota-reset",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/queue-process",
+      "schedule": "10 0 * * *"
+    }
+  ]
+}

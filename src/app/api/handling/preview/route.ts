@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { previewHandlingProduct } from "@/lib/handling/service";
+import { consumeQuota } from "@/lib/quota/service";
+import { quotaErrorResponse } from "@/lib/quota/api-helpers";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 
 export async function POST(request: NextRequest) {
@@ -25,10 +27,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "User not found." }, { status: 404 });
     }
 
+    await consumeQuota(body.userId, "aliexpress", 1);
+
     const product = await previewHandlingProduct(body.url.trim());
 
     return NextResponse.json({ success: true, product });
   } catch (error) {
+    const quotaResponse = quotaErrorResponse(error);
+    if (quotaResponse) return quotaResponse;
+
     const message = error instanceof Error ? error.message : "Failed to preview product.";
     return NextResponse.json({ error: message }, { status: 500 });
   }

@@ -5,6 +5,11 @@ import { DashboardLayout } from "@/features/dashboard/components/DashboardLayout
 import type { HandlingProduct } from "@/types/handling";
 import { AddProductFlow } from "./AddProductFlow";
 import { HandlingProductCard } from "./HandlingProductCard";
+import {
+  PlatformQuotaWidget,
+  usePlatformQuota,
+  useUserQueue,
+} from "@/features/quota/components/PlatformQuotaWidget";
 
 export function ProductsHandlingShell() {
   const [userId, setUserId] = useState<string | null>(null);
@@ -13,6 +18,9 @@ export function ProductsHandlingShell() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [checkingId, setCheckingId] = useState<string | null>(null);
+
+  const aliexpressQuota = usePlatformQuota(userId, "aliexpress");
+  const { messages: queueMessages } = useUserQueue(userId);
 
   const loadProducts = useCallback(async (id: string) => {
     setLoading(true);
@@ -61,12 +69,16 @@ export function ProductsHandlingShell() {
       const data = await response.json();
 
       if (!response.ok) {
-        setNotice(data.error ?? "Update check failed.");
+        setNotice(data.message ?? data.error ?? "Update check failed.");
+        if (response.status === 429) {
+          void aliexpressQuota.reload();
+        }
         return;
       }
 
       setProducts(data.products ?? []);
       setNotice(data.message ?? "Update check completed.");
+      void aliexpressQuota.reload();
     } catch {
       setNotice("Network error while checking update.");
     } finally {
@@ -125,7 +137,33 @@ export function ProductsHandlingShell() {
 
         {userId && (
           <div className="mb-8">
-            <AddProductFlow userId={userId} onAdded={() => loadProducts(userId)} />
+            <PlatformQuotaWidget userId={userId} platform="aliexpress" variant="light" />
+          </div>
+        )}
+
+        {queueMessages.length > 0 && (
+          <div className="mb-6 space-y-2">
+            {queueMessages.map((message) => (
+              <div
+                key={message}
+                className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700"
+              >
+                {message}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {userId && (
+          <div className="mb-8">
+            <AddProductFlow
+              userId={userId}
+              disabled={aliexpressQuota.limitReached}
+              onAdded={() => {
+                loadProducts(userId);
+                void aliexpressQuota.reload();
+              }}
+            />
           </div>
         )}
 
@@ -160,6 +198,7 @@ export function ProductsHandlingShell() {
                   key={product.id}
                   product={product}
                   checking={checkingId === product.id}
+                  checkDisabled={aliexpressQuota.limitReached}
                   onCheck={() => handleCheck(product.id)}
                   onRemove={() => handleRemove(product.id)}
                 />

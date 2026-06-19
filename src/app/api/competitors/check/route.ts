@@ -6,6 +6,7 @@ import {
 } from "@/lib/competitors/service";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import { logUserApiRequest } from "@/lib/requests/tracker";
+import { quotaErrorResponse } from "@/lib/quota/api-helpers";
 import type { CompetitorCheckPayload } from "@/types/competitor";
 
 export async function GET(request: NextRequest) {
@@ -119,6 +120,9 @@ export async function POST(request: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
+    const quotaResponse = quotaErrorResponse(error);
+    if (quotaResponse) return quotaResponse;
+
     const message = error instanceof Error ? error.message : "Competitor check failed.";
     if (trackedUserId) {
       void logUserApiRequest({

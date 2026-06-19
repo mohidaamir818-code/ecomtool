@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { AdminUserDetail, AdminUserRequestRow } from "@/types/admin-users";
 import { UserDetailSkeleton } from "@/features/admin/components/AdminSkeletons";
 import { RequestsChart } from "@/features/admin/components/RequestsChart";
+import { AdminQuotaEditor } from "@/features/quota/components/AdminQuotaEditor";
 
 function getInitials(name: string): string {
   return name
@@ -156,6 +157,8 @@ export function UserDetailView({ userId, basePath }: UserDetailViewProps) {
         <h2 className="text-lg font-semibold text-white">Requests per day (last 30 days)</h2>
         <RequestsChart data={user.dailyRequests} />
       </section>
+
+      <AdminQuotaEditor userId={userId} userEmail={user.email} />
 
       <section className="space-y-4">
         <div className="flex items-center justify-between gap-4">

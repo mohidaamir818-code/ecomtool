@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkHandlingProductUpdate, getHandlingProducts } from "@/lib/handling/service";
 import { logUserApiRequest } from "@/lib/requests/tracker";
+import { consumeQuota } from "@/lib/quota/service";
+import { quotaErrorResponse } from "@/lib/quota/api-helpers";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 
 export async function POST(request: NextRequest) {
@@ -43,6 +45,9 @@ export async function POST(request: NextRequest) {
       products,
     });
   } catch (error) {
+    const quotaResponse = quotaErrorResponse(error);
+    if (quotaResponse) return quotaResponse;
+
     const message = error instanceof Error ? error.message : "Failed to check product update.";
     if (trackedUserId) {
       void logUserApiRequest({

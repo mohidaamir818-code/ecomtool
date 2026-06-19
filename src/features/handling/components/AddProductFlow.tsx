@@ -5,6 +5,7 @@ import type { HandlingProductData, HandlingUpdateMode } from "@/types/handling";
 
 interface AddProductFlowProps {
   userId: string;
+  disabled?: boolean;
   onAdded: () => void;
 }
 
@@ -14,7 +15,7 @@ function formatPreviewPrice(price: number, currency: string): string {
   return `${currency} ${price.toFixed(2)}`;
 }
 
-export function AddProductFlow({ userId, onAdded }: AddProductFlowProps) {
+export function AddProductFlow({ userId, disabled = false, onAdded }: AddProductFlowProps) {
   const [url, setUrl] = useState("");
   const [preview, setPreview] = useState<HandlingProductData | null>(null);
   const [showSchedule, setShowSchedule] = useState(false);
@@ -56,7 +57,7 @@ export function AddProductFlow({ userId, onAdded }: AddProductFlowProps) {
       const data = await response.json();
 
       if (!response.ok) {
-        setNotice(data.error ?? "Failed to fetch product.");
+        setNotice(data.message ?? data.error ?? "Failed to fetch product.");
         setIsError(true);
         return;
       }
@@ -165,7 +166,7 @@ export function AddProductFlow({ userId, onAdded }: AddProductFlowProps) {
           <button
             type="button"
             onClick={handleFetch}
-            disabled={loadingPreview}
+            disabled={loadingPreview || disabled}
             className="inline-flex items-center gap-2 rounded-xl bg-brand px-6 py-3 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(88,66,244,0.35)] transition-all hover:bg-brand-dark disabled:opacity-60"
           >
             {loadingPreview ? "Fetching..." : "Fetch product"}
@@ -291,7 +292,7 @@ export function AddProductFlow({ userId, onAdded }: AddProductFlowProps) {
                   <button
                     type="button"
                     onClick={handleAdd}
-                    disabled={saving}
+                    disabled={saving || disabled}
                     className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
                   >
                     {saving ? "Adding..." : "Confirm add"}

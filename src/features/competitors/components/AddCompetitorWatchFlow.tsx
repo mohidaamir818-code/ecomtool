@@ -11,10 +11,16 @@ import type {
 interface AddCompetitorWatchFlowProps {
   userId: string;
   platform: CompetitorPlatform;
+  disabled?: boolean;
   onAdded: (watches: CompetitorWatch[]) => void;
 }
 
-export function AddCompetitorWatchFlow({ userId, platform, onAdded }: AddCompetitorWatchFlowProps) {
+export function AddCompetitorWatchFlow({
+  userId,
+  platform,
+  disabled = false,
+  onAdded,
+}: AddCompetitorWatchFlowProps) {
   const [productQuery, setProductQuery] = useState("");
   const [userPrice, setUserPrice] = useState("");
   const [showSchedule, setShowSchedule] = useState(false);
@@ -74,7 +80,7 @@ export function AddCompetitorWatchFlow({ userId, platform, onAdded }: AddCompeti
       const data = (await response.json()) as CompetitorWatchDetailResponse;
 
       if (!response.ok) {
-        setNotice(data.error ?? "Failed to add competitor watch.");
+        setNotice(data.message ?? data.error ?? "Failed to add competitor watch.");
         setIsError(true);
         return;
       }
@@ -146,7 +152,7 @@ export function AddCompetitorWatchFlow({ userId, platform, onAdded }: AddCompeti
           <button
             type="button"
             onClick={() => setShowSchedule(true)}
-            disabled={!productQuery.trim() || !userPrice}
+            disabled={!productQuery.trim() || !userPrice || disabled}
             className="inline-flex items-center gap-2 rounded-xl bg-brand px-6 py-3 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(88,66,244,0.35)] transition-all hover:bg-brand-dark disabled:opacity-60"
           >
             Add for tracking
@@ -197,7 +203,7 @@ export function AddCompetitorWatchFlow({ userId, platform, onAdded }: AddCompeti
               <button
                 type="button"
                 onClick={handleAdd}
-                disabled={isSubmitting}
+                disabled={isSubmitting || disabled}
                 className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
               >
                 {isSubmitting ? "Adding..." : "Confirm add"}

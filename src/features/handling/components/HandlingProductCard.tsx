@@ -23,11 +23,13 @@ export function HandlingProductCard({
   onCheck,
   onRemove,
   checking,
+  checkDisabled = false,
 }: {
   product: HandlingProduct;
   onCheck: () => void;
   onRemove: () => void;
   checking: boolean;
+  checkDisabled?: boolean;
 }) {
   const defaultVariantId =
     product.selectedVariantId ?? product.variants?.[0]?.id ?? "";
@@ -124,7 +126,7 @@ export function HandlingProductCard({
           <button
             type="button"
             onClick={onCheck}
-            disabled={checking}
+            disabled={checking || checkDisabled}
             className="inline-flex flex-1 items-center justify-center rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
           >
             {checking ? "Checking..." : "Check update"}

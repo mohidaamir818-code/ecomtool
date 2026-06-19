@@ -8,6 +8,12 @@ import { AddCompetitorWatchFlow } from "./AddCompetitorWatchFlow";
 import { CompetitorWatchCard } from "./CompetitorWatchCard";
 import { EbayListingsTable } from "./EbayListingsTable";
 import { EbaySearchForm } from "./EbaySearchForm";
+import {
+  PlatformQuotaWidget,
+  usePlatformQuota,
+  useUserQueue,
+} from "@/features/quota/components/PlatformQuotaWidget";
+import { QUOTA_EXCEEDED_MESSAGE } from "@/lib/quota/constants";
 
 type Platform = "amazef" | "ebay";
 
@@ -35,6 +41,11 @@ export function CompetitorsShell() {
 
   const [ebaySearch, setEbaySearch] = useState<EbaySearchState | null>(null);
   const [ebayLoading, setEbayLoading] = useState(false);
+
+  const ebayQuota = usePlatformQuota(userId, "ebay");
+  const amazefQuota = usePlatformQuota(userId, "amazef");
+  const { messages: queueMessages } = useUserQueue(userId);
+  const activeQuota = platform === "ebay" ? ebayQuota : amazefQuota;
 
   const loadWatches = useCallback(async (id: string) => {
     setLoading(true);
@@ -76,9 +87,18 @@ export function CompetitorsShell() {
         url.searchParams.set("offset", String(offset));
         url.searchParams.set("limit", String(PAGE_SIZE));
         url.searchParams.set("sort", sort);
+        if (userId) {
+          url.searchParams.set("userId", userId);
+        }
 
         const response = await fetch(url.toString());
-        const data = (await response.json()) as EbaySearchResponse;
+        const data = (await response.json()) as EbaySearchResponse & { message?: string };
+
+        if (response.status === 429) {
+          setError(data.message ?? QUOTA_EXCEEDED_MESSAGE);
+          void ebayQuota.reload();
+          return;
+        }
 
         if (!response.ok) {
           setError(data.error ?? "eBay search failed.");
@@ -101,7 +121,7 @@ export function CompetitorsShell() {
         setEbayLoading(false);
       }
     },
-    [],
+    [userId],
   );
 
   useEffect(() => {
@@ -137,12 +157,16 @@ export function CompetitorsShell() {
       const data = await response.json();
 
       if (!response.ok) {
-        setNotice(data.error ?? "Update check failed.");
+        setNotice(data.message ?? data.error ?? "Update check failed.");
+        if (response.status === 429) {
+          void activeQuota.reload();
+        }
         return;
       }
 
       setWatches(data.watches ?? []);
       setNotice(data.message ?? "Update check completed. Email sent with results.");
+      void activeQuota.reload();
     } catch {
       setNotice("Network error while checking update.");
     } finally {
@@ -243,10 +267,37 @@ export function CompetitorsShell() {
 
         {userId && (
           <div className="mb-8">
+            <PlatformQuotaWidget
+              userId={userId}
+              platform={platform === "ebay" ? "ebay" : "amazef"}
+              variant="light"
+            />
+          </div>
+        )}
+
+        {queueMessages.length > 0 && (
+          <div className="mb-6 space-y-2">
+            {queueMessages.map((message) => (
+              <div
+                key={message}
+                className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700"
+              >
+                {message}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {userId && (
+          <div className="mb-8">
             <AddCompetitorWatchFlow
               userId={userId}
               platform={platform}
-              onAdded={(watches) => setWatches(watches)}
+              disabled={activeQuota.limitReached}
+              onAdded={(watches) => {
+                setWatches(watches);
+                void activeQuota.reload();
+              }}
             />
           </div>
         )}
@@ -282,6 +333,7 @@ export function CompetitorsShell() {
                   key={watch.id}
                   watch={watch}
                   checking={checkingId === watch.id}
+                  checkDisabled={activeQuota.limitReached}
                   onCheck={() => handleCheck(watch.id)}
                   onRemove={() => handleRemove(watch.id)}
                   onUpdated={(message, watches) => {
@@ -296,7 +348,11 @@ export function CompetitorsShell() {
 
         {platform === "ebay" && (
           <div className="space-y-6">
-            <EbaySearchForm onSearch={handleEbaySearch} isSearching={ebayLoading && !ebaySearch} />
+            <EbaySearchForm
+              onSearch={handleEbaySearch}
+              isSearching={ebayLoading && !ebaySearch}
+              disabled={ebayQuota.limitReached}
+            />
 
             {ebaySearch && (
               <EbayListingsTable

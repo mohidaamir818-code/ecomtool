@@ -11,6 +11,8 @@ import {
 } from "@/lib/hunting/service";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import { logUserApiRequest } from "@/lib/requests/tracker";
+import { consumeQuota } from "@/lib/quota/service";
+import { quotaErrorResponse } from "@/lib/quota/api-helpers";
 import type { HuntAmazefPayload } from "@/types/hunting";
 
 export async function GET(request: NextRequest) {
@@ -84,6 +86,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "User not found." }, { status: 404 });
     }
 
+    await consumeQuota(body.userId, "amazef", 1);
+
     const huntRequest = await createHuntRequest(body.userId, keyword, lookbackDays);
     requestId = huntRequest.id as string;
 
@@ -131,6 +135,9 @@ export async function POST(request: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
+    const quotaResponse = quotaErrorResponse(error);
+    if (quotaResponse) return quotaResponse;
+
     const message = error instanceof Error ? error.message : "Hunt failed.";
 
     if (requestId) {

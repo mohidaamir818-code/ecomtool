@@ -9,10 +9,12 @@ import { QuickActionsCard } from "@/features/dashboard/components/QuickActionsCa
 import { RecentRequestsCard } from "@/features/dashboard/components/RecentRequestsCard";
 import { RequestUsageCard } from "@/features/dashboard/components/RequestUsageCard";
 import { StatCardsRow } from "@/features/dashboard/components/StatCardsRow";
+import { DashboardQuotaRow } from "@/features/quota/components/DashboardQuotaRow";
 import type { DashboardData } from "@/types/dashboard";
 
 export function DashboardShell() {
   const [data, setData] = useState<DashboardData | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -42,9 +44,10 @@ export function DashboardShell() {
   }, []);
 
   useEffect(() => {
-    const userId = sessionStorage.getItem("ecomtools_user_id");
-    if (userId) {
-      loadDashboard(userId);
+    const id = sessionStorage.getItem("ecomtools_user_id");
+    if (id) {
+      setUserId(id);
+      loadDashboard(id);
     } else {
       setLoading(false);
     }
@@ -72,6 +75,7 @@ export function DashboardShell() {
           </div>
         ) : data ? (
           <div className="space-y-6">
+            <DashboardQuotaRow userId={userId} />
             <StatCardsRow cards={data.statCards} />
 
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

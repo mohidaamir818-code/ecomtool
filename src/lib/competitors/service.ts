@@ -4,6 +4,9 @@ import { searchAmazefProducts } from "@/lib/amazef/client";
 import { searchEbayListings } from "@/lib/ebay/browse";
 import { getEbayCompetitorWatchSearchQuery, ebayListingMatchesProductQuery } from "@/lib/ebay/query";
 import { sendEmail } from "@/lib/email/send-email";
+import { QuotaExceededError } from "@/lib/quota/errors";
+import { enqueueOverflow } from "@/lib/quota/queue-service";
+import { consumeQuota } from "@/lib/quota/service";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type {
   CompetitorCheck,
@@ -423,6 +426,10 @@ export async function addCompetitorWatch(
   const platform = payload.platform === "ebay" ? "ebay" : "amazef";
   const intervalHours = getIntervalHours(payload.updateMode, payload.customHours);
   const nextUpdateAt = computeNextUpdateAt(payload.updateMode, payload.customHours);
+
+  const quotaPlatform = platform === "ebay" ? "ebay" : "amazef";
+  await consumeQuota(payload.userId, quotaPlatform, 1);
+
   const search = await searchCheaperCompetitorsByPlatform(platform, query, payload.userPrice);
   const now = new Date().toISOString();
 
@@ -537,7 +544,7 @@ async function sendCompetitorWatchEmail(
 export async function checkCompetitorWatchUpdate(
   userId: string,
   watchId: string,
-  options?: { sendEmail?: boolean },
+  options?: { sendEmail?: boolean; skipQuota?: boolean },
 ): Promise<{ watch: CompetitorWatch; message: string; matches: CompetitorMatch[] }> {
   const supabase = getSupabaseAdmin();
 
@@ -556,6 +563,12 @@ export async function checkCompetitorWatchUpdate(
   const query = String(existing.product_query);
   const userPrice = Number(existing.user_price);
   const platform = (existing.platform === "ebay" ? "ebay" : "amazef") as CompetitorPlatform;
+
+  if (!options?.skipQuota) {
+    const quotaPlatform = platform === "ebay" ? "ebay" : "amazef";
+    await consumeQuota(userId, quotaPlatform, 1);
+  }
+
   const search = await searchCheaperCompetitorsByPlatform(platform, query, userPrice);
   const now = new Date().toISOString();
   const intervalHours =
@@ -660,7 +673,7 @@ export async function processDueCompetitorWatchUpdates(userId?: string): Promise
 
   let query = supabase
     .from("competitor_watches")
-    .select("id, user_id")
+    .select("id, user_id, platform")
     .eq("status", "active")
     .neq("update_mode", "manual")
     .lte("next_update_at", now);
@@ -669,21 +682,60 @@ export async function processDueCompetitorWatchUpdates(userId?: string): Promise
     query = query.eq("user_id", userId);
   }
 
-  const { data, error } = await query.limit(20);
+  const { data, error } = await query.limit(500);
 
   if (error) {
     if (error.message.includes("does not exist")) return 0;
     throw new Error(error.message);
   }
 
-  let processed = 0;
+  const byUser = new Map<string, Array<{ id: string; platform: string }>>();
 
   for (const row of data ?? []) {
-    try {
-      await checkCompetitorWatchUpdate(String(row.user_id), String(row.id));
-      processed += 1;
-    } catch {
-      // continue with next watch
+    const uid = String(row.user_id);
+    const list = byUser.get(uid) ?? [];
+    list.push({ id: String(row.id), platform: String(row.platform ?? "amazef") });
+    byUser.set(uid, list);
+  }
+
+  let processed = 0;
+
+  for (const [uid, watches] of byUser) {
+    const overflow: string[] = [];
+    let quotaBlocked = false;
+
+    for (const watch of watches) {
+      if (quotaBlocked && watch.platform === "ebay") {
+        overflow.push(watch.id);
+        continue;
+      }
+
+      try {
+        if (!quotaBlocked) {
+          const quotaPlatform = watch.platform === "ebay" ? "ebay" : "amazef";
+          await consumeQuota(uid, quotaPlatform, 1);
+        }
+        await checkCompetitorWatchUpdate(uid, watch.id, {
+          skipQuota: true,
+          sendEmail: true,
+        });
+        processed += 1;
+      } catch (error) {
+        if (error instanceof QuotaExceededError && watch.platform === "ebay") {
+          quotaBlocked = true;
+          overflow.push(watch.id);
+        }
+      }
+    }
+
+    if (overflow.length > 0) {
+      await enqueueOverflow(
+        uid,
+        "ebay",
+        overflow,
+        undefined,
+        `Day 1 complete — ${overflow.length} remaining for tomorrow`,
+      );
     }
   }
 

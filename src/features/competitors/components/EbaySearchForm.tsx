@@ -10,9 +10,10 @@ export type EbaySearchParams = {
 interface EbaySearchFormProps {
   onSearch: (params: EbaySearchParams) => void;
   isSearching: boolean;
+  disabled?: boolean;
 }
 
-export function EbaySearchForm({ onSearch, isSearching }: EbaySearchFormProps) {
+export function EbaySearchForm({ onSearch, isSearching, disabled = false }: EbaySearchFormProps) {
   const [productQuery, setProductQuery] = useState("");
   const [alertBelow, setAlertBelow] = useState("");
   const [notice, setNotice] = useState("");
@@ -133,7 +134,7 @@ export function EbaySearchForm({ onSearch, isSearching }: EbaySearchFormProps) {
 
         <button
           type="submit"
-          disabled={isSearching}
+          disabled={isSearching || disabled}
           className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-6 py-3.5 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(88,66,244,0.35)] transition-all hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
         >
           {isSearching ? (

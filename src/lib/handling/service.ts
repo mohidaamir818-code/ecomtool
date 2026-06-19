@@ -2,6 +2,9 @@ import "server-only";
 
 import { fetchAliExpressProduct } from "@/lib/aliexpress/client";
 import { sendEmail } from "@/lib/email/send-email";
+import { QuotaExceededError } from "@/lib/quota/errors";
+import { enqueueOverflow } from "@/lib/quota/queue-service";
+import { consumeQuota } from "@/lib/quota/service";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type {
   HandlingAddPayload,
@@ -315,7 +318,7 @@ function buildChangeSummary(
 export async function checkHandlingProductUpdate(
   userId: string,
   productId: string,
-  options?: { sendEmail?: boolean },
+  options?: { sendEmail?: boolean; skipQuota?: boolean },
 ): Promise<{ product: HandlingProduct; changes: string[]; message: string }> {
   const supabase = getSupabaseAdmin();
 
@@ -329,6 +332,10 @@ export async function checkHandlingProductUpdate(
 
   if (existingError || !existing) {
     throw new Error("Handling product not found.");
+  }
+
+  if (!options?.skipQuota) {
+    await consumeQuota(userId, "aliexpress", 1);
   }
 
   const latest = await fetchAliExpressProduct(String(existing.product_url));
@@ -417,21 +424,54 @@ export async function processDueHandlingUpdates(userId?: string): Promise<number
     query = query.eq("user_id", userId);
   }
 
-  const { data, error } = await query.limit(20);
+  const { data, error } = await query.limit(500);
 
   if (error) {
     if (error.message.includes("does not exist")) return 0;
     throw new Error(error.message);
   }
 
-  let processed = 0;
+  const byUser = new Map<string, string[]>();
 
   for (const row of data ?? []) {
-    try {
-      await checkHandlingProductUpdate(String(row.user_id), String(row.id));
-      processed += 1;
-    } catch {
-      // continue with next product
+    const uid = String(row.user_id);
+    const list = byUser.get(uid) ?? [];
+    list.push(String(row.id));
+    byUser.set(uid, list);
+  }
+
+  let processed = 0;
+
+  for (const [uid, productIds] of byUser) {
+    const overflow: string[] = [];
+    let quotaBlocked = false;
+
+    for (const productId of productIds) {
+      if (quotaBlocked) {
+        overflow.push(productId);
+        continue;
+      }
+
+      try {
+        await consumeQuota(uid, "aliexpress", 1);
+        await checkHandlingProductUpdate(uid, productId, { skipQuota: true });
+        processed += 1;
+      } catch (error) {
+        if (error instanceof QuotaExceededError) {
+          quotaBlocked = true;
+          overflow.push(productId);
+        }
+      }
+    }
+
+    if (overflow.length > 0) {
+      await enqueueOverflow(
+        uid,
+        "aliexpress",
+        overflow,
+        undefined,
+        `Day 1 complete — ${overflow.length} remaining for tomorrow`,
+      );
     }
   }
 
