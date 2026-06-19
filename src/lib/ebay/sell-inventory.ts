@@ -2,14 +2,18 @@ import "server-only";
 
 import { getEbayUserAccessToken } from "@/lib/ebay/oauth-user";
 import type {
+  EbayCategorySuggestion,
   GeneratedListing,
+  ListingDraft,
   ListOnEbayResult,
-  ListingProductSource,
+  VolumePromotionTier,
 } from "@/types/listing-generator";
+import { DEFAULT_PROMOTIONS } from "@/types/listing-generator";
 
 const EBAY_API_BASE = "https://api.ebay.com";
 const MARKETPLACE_ID = "EBAY_GB";
 const CATEGORY_TREE_ID = "3";
+const MAX_PHOTOS = 24;
 
 function sellHeaders(token: string): HeadersInit {
   return {
@@ -27,25 +31,49 @@ function mapCondition(condition: string): string {
   return "NEW";
 }
 
-function buildSku(externalId: string): string {
-  return `ae-${externalId}`.replace(/[^a-zA-Z0-9-_]/g, "-").slice(0, 50);
+function buildSku(externalId: string, suffix?: string): string {
+  const base = `ae-${externalId}${suffix ? `-${suffix}` : ""}`;
+  return base.replace(/[^a-zA-Z0-9-_]/g, "-").slice(0, 50);
+}
+
+function normalizeImageUrls(urls: string[]): string[] {
+  return urls
+    .slice(0, MAX_PHOTOS)
+    .map((url) => url.replace(/^\/\//, "https://"))
+    .filter(Boolean);
 }
 
 function aspectsFromListing(listing: GeneratedListing): Record<string, string[]> {
   const aspects: Record<string, string[]> = {};
 
   for (const specific of listing.itemSpecifics) {
+    if (specific.name.toLowerCase() === "brand") {
+      aspects.Brand = ["Unbranded"];
+      continue;
+    }
     aspects[specific.name] = [specific.value];
   }
 
   if (!aspects.Brand) {
-    aspects.Brand = [listing.brand || "Unbranded"];
+    aspects.Brand = ["Unbranded"];
   }
 
   return aspects;
 }
 
-async function resolveCategoryId(token: string, query: string): Promise<string | null> {
+function buildVolumePricing(promotions: VolumePromotionTier[]) {
+  return promotions
+    .filter((tier) => tier.enabled && tier.discountPercent > 0)
+    .map((tier) => ({
+      quantity: tier.quantity,
+      discountPercentage: tier.discountPercent.toFixed(2),
+    }));
+}
+
+export async function getCategorySuggestions(
+  token: string,
+  query: string,
+): Promise<EbayCategorySuggestion[]> {
   const url = new URL(
     `${EBAY_API_BASE}/commerce/taxonomy/v1/category_tree/${CATEGORY_TREE_ID}/get_category_suggestions`,
   );
@@ -56,13 +84,49 @@ async function resolveCategoryId(token: string, query: string): Promise<string |
     cache: "no-store",
   });
 
-  if (!response.ok) return null;
+  if (!response.ok) return [];
 
   const data = (await response.json()) as {
-    categorySuggestions?: Array<{ category?: { categoryId?: string } }>;
+    categorySuggestions?: Array<{
+      category?: { categoryId?: string; categoryName?: string };
+      categoryTreeNodeAncestors?: Array<{ categoryName?: string }>;
+    }>;
   };
 
-  return data.categorySuggestions?.[0]?.category?.categoryId ?? null;
+  return (data.categorySuggestions ?? [])
+    .map((entry) => {
+      const categoryId = entry.category?.categoryId;
+      const categoryName = entry.category?.categoryName;
+      if (!categoryId || !categoryName) return null;
+
+      const ancestors = (entry.categoryTreeNodeAncestors ?? [])
+        .map((node) => node.categoryName)
+        .filter(Boolean)
+        .reverse();
+
+      return {
+        categoryId,
+        categoryName,
+        categoryPath: [...ancestors, categoryName].join(" > "),
+      } satisfies EbayCategorySuggestion;
+    })
+    .filter((entry): entry is EbayCategorySuggestion => entry !== null);
+}
+
+async function resolveCategoryId(token: string, listing: GeneratedListing): Promise<string> {
+  if (listing.categoryId) return listing.categoryId;
+
+  const suggestions = await getCategorySuggestions(
+    token,
+    listing.categorySuggestion || listing.seoTitle,
+  );
+
+  const categoryId = suggestions[0]?.categoryId;
+  if (!categoryId) {
+    throw new Error("Could not resolve an eBay category for this product.");
+  }
+
+  return categoryId;
 }
 
 async function getFirstPolicyId(
@@ -87,27 +151,28 @@ async function getFirstPolicyId(
         ? "paymentPolicies"
         : "returnPolicies";
 
-  const policies = data[key];
-  return policies?.[0]?.policyId ?? null;
+  return data[key]?.[0]?.policyId ?? null;
 }
 
 async function upsertInventoryItem(
   token: string,
   sku: string,
   listing: GeneratedListing,
-  product: ListingProductSource,
+  imageUrls: string[],
   quantity: number,
+  variantLabel?: string,
 ): Promise<void> {
-  const imageUrls = (product.images.length > 0 ? product.images : product.imageUrl ? [product.imageUrl] : [])
-    .slice(0, 12)
-    .map((url) => url.replace(/^\/\//, "https://"));
+  const aspects = aspectsFromListing(listing);
+  if (variantLabel) {
+    aspects.Variant = [variantLabel];
+  }
 
   const body = {
     product: {
       title: listing.seoTitle,
       description: listing.descriptionHtml,
-      imageUrls,
-      aspects: aspectsFromListing(listing),
+      imageUrls: normalizeImageUrls(imageUrls),
+      aspects,
     },
     condition: mapCondition(listing.condition),
     availability: {
@@ -130,12 +195,54 @@ async function upsertInventoryItem(
   }
 }
 
+async function upsertInventoryItemGroup(
+  token: string,
+  groupKey: string,
+  listing: GeneratedListing,
+  imageUrls: string[],
+  variantSkus: string[],
+  variantLabels: string[],
+): Promise<void> {
+  const body = {
+    inventoryItemGroupKey: groupKey,
+    variantSKUs: variantSkus,
+    title: listing.seoTitle,
+    description: listing.descriptionHtml,
+    imageUrls: normalizeImageUrls(imageUrls),
+    variesBy: {
+      specifications: [
+        {
+          name: "Variant",
+          values: variantLabels,
+        },
+      ],
+    },
+    aspects: aspectsFromListing(listing),
+  };
+
+  const response = await fetch(
+    `${EBAY_API_BASE}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupKey)}`,
+    {
+      method: "PUT",
+      headers: sellHeaders(token),
+      body: JSON.stringify(body),
+      cache: "no-store",
+    },
+  );
+
+  if (!response.ok) {
+    const error = (await response.json()) as { errors?: Array<{ message?: string }> };
+    throw new Error(error.errors?.[0]?.message ?? "Failed to create eBay inventory item group.");
+  }
+}
+
 async function createOffer(
   token: string,
-  sku: string,
   listing: GeneratedListing,
   categoryId: string,
   quantity: number,
+  promotions: VolumePromotionTier[],
+  options: { sku?: string; inventoryItemGroupKey?: string },
 ): Promise<string> {
   const fulfillmentPolicyId = await getFirstPolicyId(token, "fulfillment_policy");
   const paymentPolicyId = await getFirstPolicyId(token, "payment_policy");
@@ -147,8 +254,19 @@ async function createOffer(
     );
   }
 
-  const body = {
-    sku,
+  const volumePricing = buildVolumePricing(promotions);
+  const pricingSummary: Record<string, unknown> = {
+    price: {
+      value: listing.suggestedPrice.toFixed(2),
+      currency: listing.currency === "USD" ? "GBP" : listing.currency,
+    },
+  };
+
+  if (volumePricing.length > 0) {
+    pricingSummary.volumePricing = volumePricing;
+  }
+
+  const body: Record<string, unknown> = {
     marketplaceId: MARKETPLACE_ID,
     format: "FIXED_PRICE",
     listingDescription: listing.descriptionHtml,
@@ -159,13 +277,14 @@ async function createOffer(
       paymentPolicyId,
       returnPolicyId,
     },
-    pricingSummary: {
-      price: {
-        value: listing.suggestedPrice.toFixed(2),
-        currency: listing.currency === "USD" ? "GBP" : listing.currency,
-      },
-    },
+    pricingSummary,
   };
+
+  if (options.inventoryItemGroupKey) {
+    body.inventoryItemGroupKey = options.inventoryItemGroupKey;
+  } else if (options.sku) {
+    body.sku = options.sku;
+  }
 
   const response = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/offer`, {
     method: "POST",
@@ -205,38 +324,111 @@ async function publishOffer(token: string, offerId: string): Promise<{ listingId
   return { listingId: data.listingId ?? null };
 }
 
-export async function listProductOnEbay(
-  userId: string,
-  listing: GeneratedListing,
-  product: ListingProductSource,
-  quantity = 1,
-): Promise<ListOnEbayResult> {
+export async function listDraftOnEbay(userId: string, draft: ListingDraft): Promise<ListOnEbayResult> {
   const token = await getEbayUserAccessToken(userId);
   if (!token) {
     throw new Error("eBay account is not connected. Connect your eBay account first.");
   }
 
-  const sku = buildSku(product.externalId);
-  const categoryId =
-    listing.categoryId ??
-    (await resolveCategoryId(token, listing.categorySuggestion || listing.seoTitle));
-
-  if (!categoryId) {
-    throw new Error("Could not resolve an eBay category for this product.");
+  if (draft.listing.brand !== "Unbranded") {
+    throw new Error("Brand must remain Unbranded for this listing.");
   }
 
-  await upsertInventoryItem(token, sku, listing, product, quantity);
-  const offerId = await createOffer(token, sku, listing, categoryId, quantity);
+  const selectedPhotos = draft.photos.filter((photo) => photo.selected).map((photo) => photo.url);
+  if (selectedPhotos.length === 0) {
+    throw new Error("Select at least one photo for the listing.");
+  }
+
+  const categoryId = await resolveCategoryId(token, draft.listing);
+  const listing = { ...draft.listing, categoryId, brand: "Unbranded" as const };
+
+  const activeVariants = draft.variants.length > 0 ? draft.variants : [];
+  const isMultiVariant = activeVariants.length > 1;
+
+  if (!isMultiVariant) {
+    const variant = activeVariants[0];
+    const sku = buildSku(draft.product.externalId);
+    const images = variant?.imageUrl ? [variant.imageUrl, ...selectedPhotos] : selectedPhotos;
+    const quantity = variant?.stock ?? 1;
+
+    if (variant && variant.price > 0) {
+      listing.suggestedPrice = variant.price;
+    }
+
+    await upsertInventoryItem(token, sku, listing, images, quantity, variant?.label);
+    const offerId = await createOffer(token, listing, categoryId, quantity, draft.promotions, { sku });
+    const published = await publishOffer(token, offerId);
+
+    return {
+      sku,
+      offerId,
+      listingId: published.listingId,
+      listingUrl: published.listingId ? `https://www.ebay.co.uk/itm/${published.listingId}` : null,
+    };
+  }
+
+  const groupKey = buildSku(draft.product.externalId, "group");
+  const variantSkus: string[] = [];
+  const variantLabels: string[] = [];
+
+  for (const variant of activeVariants) {
+    const sku = buildSku(draft.product.externalId, variant.id);
+    variantSkus.push(sku);
+    variantLabels.push(variant.label);
+
+    const images = variant.imageUrl ? [variant.imageUrl, ...selectedPhotos] : selectedPhotos;
+    const variantListing = { ...listing, suggestedPrice: variant.price };
+
+    await upsertInventoryItem(token, sku, variantListing, images, variant.stock, variant.label);
+  }
+
+  await upsertInventoryItemGroup(
+    token,
+    groupKey,
+    listing,
+    selectedPhotos,
+    variantSkus,
+    variantLabels,
+  );
+
+  const totalQuantity = activeVariants.reduce((sum, variant) => sum + variant.stock, 0);
+  const offerId = await createOffer(token, listing, categoryId, totalQuantity, draft.promotions, {
+    inventoryItemGroupKey: groupKey,
+  });
   const published = await publishOffer(token, offerId);
 
-  const listingUrl = published.listingId
-    ? `https://www.ebay.co.uk/itm/${published.listingId}`
-    : null;
-
   return {
-    sku,
+    sku: groupKey,
     offerId,
     listingId: published.listingId,
-    listingUrl,
+    listingUrl: published.listingId ? `https://www.ebay.co.uk/itm/${published.listingId}` : null,
   };
+}
+
+// Backward-compatible helper
+export async function listProductOnEbay(
+  userId: string,
+  listing: GeneratedListing,
+  product: ListingDraft["product"],
+  quantity = 1,
+): Promise<ListOnEbayResult> {
+  const draft: ListingDraft = {
+    product,
+    listing: { ...listing, brand: "Unbranded" },
+    photos: (product.images.length > 0 ? product.images : product.imageUrl ? [product.imageUrl] : []).map(
+      (url) => ({ url, selected: true }),
+    ),
+    variants: [
+      {
+        id: "default",
+        label: "Default",
+        imageUrl: product.imageUrl ?? product.images[0] ?? "",
+        price: listing.suggestedPrice,
+        stock: quantity,
+      },
+    ],
+    promotions: DEFAULT_PROMOTIONS.map((tier) => ({ ...tier })),
+  };
+
+  return listDraftOnEbay(userId, draft);
 }

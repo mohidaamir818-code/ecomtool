@@ -3,26 +3,37 @@ import { generateEbayListing } from "@/lib/gemini/generate-listing";
 import { fetchListingProductSource } from "@/lib/listings/product-source";
 import { logUserApiRequest } from "@/lib/requests/tracker";
 import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
+import type { ListingProductSource } from "@/types/listing-generator";
 
 export async function POST(request: NextRequest) {
   let userId: string | null = null;
 
   try {
-    const body = (await request.json()) as { userId?: string; url?: string };
+    const body = (await request.json()) as {
+      userId?: string;
+      url?: string;
+      product?: ListingProductSource;
+    };
     userId = body.userId?.trim() ?? null;
 
     if (!userId) {
       return NextResponse.json({ error: "userId is required." }, { status: 400 });
     }
 
-    if (!body.url?.trim()) {
-      return NextResponse.json({ error: "AliExpress product URL is required." }, { status: 400 });
-    }
-
     const accessDenied = await requireActiveUser(userId);
     if (accessDenied) return accessDenied;
 
-    const product = await fetchListingProductSource(body.url.trim());
+    const product =
+      body.product ??
+      (body.url?.trim() ? await fetchListingProductSource(body.url.trim()) : null);
+
+    if (!product) {
+      return NextResponse.json(
+        { error: "AliExpress product URL or product data is required." },
+        { status: 400 },
+      );
+    }
+
     const listing = await generateEbayListing(product);
 
     void logUserApiRequest({

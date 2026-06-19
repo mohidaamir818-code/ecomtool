@@ -66,6 +66,14 @@ export async function fetchListingProductSource(url: string): Promise<ListingPro
     product.images?.filter(Boolean) ??
     (product.imageUrl ? [product.imageUrl] : []);
 
+  const variants = product.variants?.map((variant) => ({
+    id: variant.id,
+    label: variant.label,
+    price: variant.price,
+    currency: variant.currency,
+    stock: variant.stock,
+  }));
+
   return {
     source: "aliexpress",
     externalId: product.externalId,
@@ -77,5 +85,6 @@ export async function fetchListingProductSource(url: string): Promise<ListingPro
     currency: product.currency,
     description,
     stock: product.stock,
+    variants,
   };
 }

@@ -10,35 +10,31 @@ interface VeroCheckerProps {
 export function VeroChecker({ result, loading = false }: VeroCheckerProps) {
   if (loading) {
     return (
-      <div className="rounded-xl border border-gray-200 bg-white p-4">
-        <p className="text-sm text-[#6B7280]">Running VeRO safety check...</p>
+      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="flex items-center gap-3">
+          <svg className="h-5 w-5 animate-spin text-brand" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <p className="text-sm text-[#6B7280]">Running VeRO safety check...</p>
+        </div>
       </div>
     );
   }
 
-  if (!result) return null;
+  if (!result) {
+    return (
+      <div className="rounded-xl border border-dashed border-gray-200 bg-white p-6 text-sm text-[#6B7280]">
+        Paste an AliExpress URL and click Start to run the VeRO safety check.
+      </div>
+    );
+  }
 
   if (!result.safe) {
     return (
       <div className="rounded-xl border border-red-200 bg-red-50 p-4">
-        <div className="flex items-start gap-3">
-          <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-red-600 text-xs font-bold text-white">
-            !
-          </span>
-          <div>
-            <p className="text-sm font-semibold text-red-800">
-              Do not list — account may get banned
-            </p>
-            <p className="mt-1 text-sm text-red-700">{result.summary}</p>
-            {result.warnings.length > 0 ? (
-              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-red-700">
-                {result.warnings.map((warning) => (
-                  <li key={warning}>{warning}</li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        </div>
+        <p className="text-sm font-semibold text-red-800">VeRO check failed</p>
+        <p className="mt-1 text-sm text-red-700">{result.summary}</p>
       </div>
     );
   }

@@ -23,7 +23,7 @@ RULES:
 - itemSpecifics: array of { "name": string, "value": string } with at least Brand, Condition, Type, Material (use "Unbranded" if unknown)
 - categorySuggestion: best eBay UK category path as text (e.g. "Home & Garden > Kitchen")
 - condition: one of "New", "New other", "Used"
-- brand: brand name or "Unbranded"
+- brand: ALWAYS set to "Unbranded" — never use a real brand name
 
 Return ONLY valid JSON with this exact shape:
 {
