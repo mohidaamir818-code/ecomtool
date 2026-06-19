@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserQueue } from "@/lib/quota/queue-service";
-import { getSupabaseAdmin } from "@/lib/supabase/server";
+import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
 
 export async function GET(
   _request: NextRequest,
@@ -9,20 +9,15 @@ export async function GET(
   try {
     const { userId } = await context.params;
 
-    const supabase = getSupabaseAdmin();
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("id", userId)
-      .single();
-
-    if (!profile) {
-      return NextResponse.json({ error: "User not found." }, { status: 404 });
-    }
+    const accessDenied = await requireActiveUser(userId);
+    if (accessDenied) return accessDenied;
 
     const queue = await getUserQueue(userId);
     return NextResponse.json({ success: true, queue });
   } catch (error) {
+    const blocked = userBlockErrorResponse(error);
+    if (blocked) return blocked;
+
     const message = error instanceof Error ? error.message : "Failed to load queue.";
     return NextResponse.json({ error: message }, { status: 500 });
   }

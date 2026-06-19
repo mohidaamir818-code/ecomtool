@@ -9,6 +9,7 @@ export interface AdminUserListItem {
   todayRequests: number;
   status: AdminUserStatus;
   lastActive: string | null;
+  isBlocked: boolean;
 }
 
 export type AdminUsersSortField = "joinDate" | "totalRequests" | "todayRequests" | "name" | "lastActive";
@@ -40,6 +41,9 @@ export interface AdminUserDetail {
   lastActive: string | null;
   dailyRequests: AdminUserDailyRequest[];
   recentRequests: AdminUserRequestRow[];
+  isBlocked: boolean;
+  blockedReason: string | null;
+  blockedAt: string | null;
 }
 
 export interface PaginatedUserRequests {

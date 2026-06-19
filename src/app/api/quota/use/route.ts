@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { QuotaExceededError } from "@/lib/quota/errors";
 import { consumeQuota, quotaExceededToJson } from "@/lib/quota/service";
-import { getSupabaseAdmin } from "@/lib/supabase/server";
+import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
 import type { QuotaPlatform } from "@/types/quota";
 
 const PLATFORMS: QuotaPlatform[] = ["ebay", "aliexpress", "amazef"];
@@ -22,20 +22,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Valid platform is required." }, { status: 400 });
     }
 
-    const supabase = getSupabaseAdmin();
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("id", body.userId)
-      .single();
-
-    if (!profile) {
-      return NextResponse.json({ error: "User not found." }, { status: 404 });
-    }
+    const accessDenied = await requireActiveUser(body.userId);
+    if (accessDenied) return accessDenied;
 
     const quota = await consumeQuota(body.userId, body.platform, body.count ?? 1);
     return NextResponse.json({ success: true, quota });
   } catch (error) {
+    const blocked = userBlockErrorResponse(error);
+    if (blocked) return blocked;
+
     if (error instanceof QuotaExceededError) {
       return NextResponse.json(quotaExceededToJson(error), { status: 429 });
     }

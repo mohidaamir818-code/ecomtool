@@ -5,9 +5,9 @@ import {
   processDueHandlingUpdates,
   removeHandlingProduct,
 } from "@/lib/handling/service";
-import { getSupabaseAdmin } from "@/lib/supabase/server";
 import { logUserApiRequest } from "@/lib/requests/tracker";
 import type { HandlingAddPayload } from "@/types/handling";
+import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
 
 export async function GET(request: NextRequest) {
   try {
@@ -17,16 +17,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "userId is required." }, { status: 400 });
     }
 
-    const supabase = getSupabaseAdmin();
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("id", userId)
-      .single();
-
-    if (!profile) {
-      return NextResponse.json({ error: "User not found." }, { status: 404 });
-    }
+    const accessDenied = await requireActiveUser(userId);
+    if (accessDenied) return accessDenied;
 
     await processDueHandlingUpdates(userId);
     const products = await getHandlingProducts(userId);
@@ -40,6 +32,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, products });
   } catch (error) {
+    const blocked = userBlockErrorResponse(error);
+    if (blocked) return blocked;
+
     const message = error instanceof Error ? error.message : "Failed to load handling products.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -68,16 +63,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const supabase = getSupabaseAdmin();
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("id", body.userId)
-      .single();
-
-    if (!profile) {
-      return NextResponse.json({ error: "User not found." }, { status: 404 });
-    }
+    const accessDenied = await requireActiveUser(body.userId);
+    if (accessDenied) return accessDenied;
 
     const product = await addHandlingProduct(body);
     const products = await getHandlingProducts(body.userId);
@@ -91,6 +78,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, product, products }, { status: 201 });
   } catch (error) {
+    const blocked = userBlockErrorResponse(error);
+    if (blocked) return blocked;
+
     const message = error instanceof Error ? error.message : "Failed to add handling product.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -105,11 +95,17 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: "userId and productId are required." }, { status: 400 });
     }
 
+    const accessDenied = await requireActiveUser(userId);
+    if (accessDenied) return accessDenied;
+
     await removeHandlingProduct(userId, productId);
     const products = await getHandlingProducts(userId);
 
     return NextResponse.json({ success: true, products });
   } catch (error) {
+    const blocked = userBlockErrorResponse(error);
+    if (blocked) return blocked;
+
     const message = error instanceof Error ? error.message : "Failed to remove product.";
     return NextResponse.json({ error: message }, { status: 500 });
   }

@@ -3,7 +3,7 @@ import { checkHandlingProductUpdate, getHandlingProducts } from "@/lib/handling/
 import { logUserApiRequest } from "@/lib/requests/tracker";
 import { consumeQuota } from "@/lib/quota/service";
 import { quotaErrorResponse } from "@/lib/quota/api-helpers";
-import { getSupabaseAdmin } from "@/lib/supabase/server";
+import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
 
 export async function POST(request: NextRequest) {
   let trackedUserId: string | null = null;
@@ -16,16 +16,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "userId and productId are required." }, { status: 400 });
     }
 
-    const supabase = getSupabaseAdmin();
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("id", body.userId)
-      .single();
-
-    if (!profile) {
-      return NextResponse.json({ error: "User not found." }, { status: 404 });
-    }
+    const accessDenied = await requireActiveUser(body.userId);
+    if (accessDenied) return accessDenied;
 
     const result = await checkHandlingProductUpdate(body.userId, body.productId);
     const products = await getHandlingProducts(body.userId);
@@ -45,6 +37,9 @@ export async function POST(request: NextRequest) {
       products,
     });
   } catch (error) {
+    const blocked = userBlockErrorResponse(error);
+    if (blocked) return blocked;
+
     const quotaResponse = quotaErrorResponse(error);
     if (quotaResponse) return quotaResponse;
 

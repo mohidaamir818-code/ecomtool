@@ -9,10 +9,10 @@ import {
   saveHuntProducts,
   selectMostSoldProducts,
 } from "@/lib/hunting/service";
-import { getSupabaseAdmin } from "@/lib/supabase/server";
 import { logUserApiRequest } from "@/lib/requests/tracker";
 import { consumeQuota } from "@/lib/quota/service";
 import { quotaErrorResponse } from "@/lib/quota/api-helpers";
+import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
 import type { HuntAmazefPayload } from "@/types/hunting";
 
 export async function GET(request: NextRequest) {
@@ -26,16 +26,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "userId is required." }, { status: 400 });
     }
 
-    const supabase = getSupabaseAdmin();
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("id", userId)
-      .single();
-
-    if (!profile) {
-      return NextResponse.json({ error: "User not found." }, { status: 404 });
-    }
+    const accessDenied = await requireActiveUser(userId);
+    if (accessDenied) return accessDenied;
 
     const data = await getHuntData(userId, lookbackDays);
 
@@ -48,6 +40,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, ...data });
   } catch (error) {
+    const blocked = userBlockErrorResponse(error);
+    if (blocked) return blocked;
+
     const message = error instanceof Error ? error.message : "Failed to load hunt data.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -74,17 +69,9 @@ export async function POST(request: NextRequest) {
 
     const keyword = body.query.trim();
     const lookbackDays = normalizeLookbackDays(body.lookbackDays);
-    const supabase = getSupabaseAdmin();
 
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("id", body.userId)
-      .single();
-
-    if (!profile) {
-      return NextResponse.json({ error: "User not found." }, { status: 404 });
-    }
+    const accessDenied = await requireActiveUser(body.userId);
+    if (accessDenied) return accessDenied;
 
     await consumeQuota(body.userId, "amazef", 1);
 
@@ -135,6 +122,9 @@ export async function POST(request: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
+    const blocked = userBlockErrorResponse(error);
+    if (blocked) return blocked;
+
     const quotaResponse = quotaErrorResponse(error);
     if (quotaResponse) return quotaResponse;
 

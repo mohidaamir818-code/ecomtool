@@ -6,6 +6,7 @@ import type { AdminUserDetail, AdminUserRequestRow } from "@/types/admin-users";
 import { UserDetailSkeleton } from "@/features/admin/components/AdminSkeletons";
 import { RequestsChart } from "@/features/admin/components/RequestsChart";
 import { AdminQuotaEditor } from "@/features/quota/components/AdminQuotaEditor";
+import { AdminBlockUserPanel } from "@/features/admin/components/AdminBlockUserPanel";
 
 function getInitials(name: string): string {
   return name
@@ -120,12 +121,14 @@ export function UserDetailView({ userId, basePath }: UserDetailViewProps) {
             <h1 className="text-2xl font-bold text-white">{user.fullName}</h1>
             <span
               className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                user.status === "Active"
-                  ? "bg-emerald-500/15 text-emerald-300"
-                  : "bg-white/10 text-white/50"
+                user.isBlocked
+                  ? "bg-red-500/15 text-red-300"
+                  : user.status === "Active"
+                    ? "bg-emerald-500/15 text-emerald-300"
+                    : "bg-white/10 text-white/50"
               }`}
             >
-              {user.status}
+              {user.isBlocked ? "Blocked" : user.status}
             </span>
             <span className="inline-flex rounded-full bg-[#5842f4]/20 px-2.5 py-1 text-xs font-semibold text-[#a89bff]">
               {user.totalRequests.toLocaleString()} total requests
@@ -159,6 +162,13 @@ export function UserDetailView({ userId, basePath }: UserDetailViewProps) {
       </section>
 
       <AdminQuotaEditor userId={userId} userEmail={user.email} />
+
+      <AdminBlockUserPanel
+        userId={userId}
+        isBlocked={user.isBlocked}
+        blockedReason={user.blockedReason}
+        onUpdated={() => void loadUser()}
+      />
 
       <section className="space-y-4">
         <div className="flex items-center justify-between gap-4">

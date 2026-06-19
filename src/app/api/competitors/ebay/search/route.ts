@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { searchEbayListings } from "@/lib/ebay/browse";
 import { consumeQuota } from "@/lib/quota/service";
 import { quotaErrorResponse } from "@/lib/quota/api-helpers";
-import { getSupabaseAdmin } from "@/lib/supabase/server";
+import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
 
 export async function GET(request: NextRequest) {
   try {
@@ -21,16 +21,10 @@ export async function GET(request: NextRequest) {
     }
 
     if (userId) {
-      const supabase = getSupabaseAdmin();
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("id", userId)
-        .single();
+      const accessDenied = await requireActiveUser(userId);
+      if (accessDenied) return accessDenied;
 
-      if (profile) {
-        await consumeQuota(userId, "ebay", 1);
-      }
+      await consumeQuota(userId, "ebay", 1);
     }
 
     const result = await searchEbayListings({ query, offset, limit, sort });
@@ -46,6 +40,9 @@ export async function GET(request: NextRequest) {
       sort,
     });
   } catch (error) {
+    const blocked = userBlockErrorResponse(error);
+    if (blocked) return blocked;
+
     const quotaResponse = quotaErrorResponse(error);
     if (quotaResponse) return quotaResponse;
 

@@ -163,12 +163,14 @@ export function UsersTable({ basePath }: UsersTableProps) {
                     <td className="px-4 py-4">
                       <span
                         className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                          user.status === "Active"
-                            ? "bg-emerald-500/15 text-emerald-300"
-                            : "bg-white/10 text-white/50"
+                          user.isBlocked
+                            ? "bg-red-500/15 text-red-300"
+                            : user.status === "Active"
+                              ? "bg-emerald-500/15 text-emerald-300"
+                              : "bg-white/10 text-white/50"
                         }`}
                       >
-                        {user.status}
+                        {user.isBlocked ? "Blocked" : user.status}
                       </span>
                     </td>
                     <td className="px-4 py-4 text-white/70">{formatDate(user.lastActive)}</td>

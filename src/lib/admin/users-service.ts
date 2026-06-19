@@ -120,7 +120,7 @@ export async function listAdminUsers(input?: {
 
   const { data: profiles, error } = await supabase
     .from("profiles")
-    .select("id, full_name, email, created_at")
+    .select("id, full_name, email, created_at, is_blocked")
     .order("created_at", { ascending: false });
 
   if (error) throw new Error(error.message);
@@ -140,6 +140,7 @@ export async function listAdminUsers(input?: {
       todayRequests: stats?.today_requests ?? 0,
       status: deriveStatus(lastActive),
       lastActive,
+      isBlocked: Boolean(profile.is_blocked),
     };
   });
 
@@ -177,7 +178,9 @@ export async function getAdminUserDetail(userId: string): Promise<AdminUserDetai
 
   const { data: profile, error } = await supabase
     .from("profiles")
-    .select("id, full_name, email, created_at, email_verified, onboarding_completed")
+    .select(
+      "id, full_name, email, created_at, email_verified, onboarding_completed, is_blocked, blocked_reason, blocked_at",
+    )
     .eq("id", userId)
     .single();
 
@@ -209,6 +212,9 @@ export async function getAdminUserDetail(userId: string): Promise<AdminUserDetai
     lastActive,
     dailyRequests,
     recentRequests: (recentRows ?? []).map(mapRequestRow),
+    isBlocked: Boolean(profile.is_blocked),
+    blockedReason: profile.blocked_reason ? String(profile.blocked_reason) : null,
+    blockedAt: profile.blocked_at ? String(profile.blocked_at) : null,
   };
 }
 

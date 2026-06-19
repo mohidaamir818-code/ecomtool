@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { addToQueue } from "@/lib/quota/queue-service";
-import { getSupabaseAdmin } from "@/lib/supabase/server";
+import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
 import type { QueuePlatform } from "@/types/quota";
 
 const PLATFORMS: QueuePlatform[] = ["ebay", "aliexpress"];
@@ -26,16 +26,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "itemIds are required." }, { status: 400 });
     }
 
-    const supabase = getSupabaseAdmin();
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("id", body.userId)
-      .single();
-
-    if (!profile) {
-      return NextResponse.json({ error: "User not found." }, { status: 404 });
-    }
+    const accessDenied = await requireActiveUser(body.userId);
+    if (accessDenied) return accessDenied;
 
     const queue = await addToQueue(
       body.userId,
@@ -46,6 +38,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, queue }, { status: 201 });
   } catch (error) {
+    const blocked = userBlockErrorResponse(error);
+    if (blocked) return blocked;
+
     const message = error instanceof Error ? error.message : "Failed to add to queue.";
     return NextResponse.json({ error: message }, { status: 500 });
   }

@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { DashboardSidebar } from "./DashboardSidebar";
+import { BlockedAccountBanner } from "./BlockedAccountBanner";
+import { UserBlockProvider } from "@/features/dashboard/context/UserBlockContext";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -10,16 +12,20 @@ interface DashboardLayoutProps {
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [userName, setUserName] = useState("User");
+  const [userId, setUserId] = useState<string | null>(null);
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [blockReason, setBlockReason] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const userId = sessionStorage.getItem("ecomtools_user_id");
+    const id = sessionStorage.getItem("ecomtools_user_id");
     const emailVerified = sessionStorage.getItem("ecomtools_email_verified") === "true";
     const onboardingComplete =
       sessionStorage.getItem("ecomtools_onboarding_complete") === "true";
 
-    if (!userId) {
+    if (!id) {
       router.replace("/sign-up");
       return;
     }
@@ -34,8 +40,32 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
     const name = sessionStorage.getItem("ecomtools_user_name");
     if (name) setUserName(name);
-    setReady(true);
+    setUserId(id);
+
+    const activeUserId = id;
+
+    async function loadBlockStatus() {
+      try {
+        const response = await fetch(
+          `/api/user/status?userId=${encodeURIComponent(activeUserId)}`,
+        );
+        if (response.ok) {
+          const data = (await response.json()) as {
+            blocked?: boolean;
+            reason?: string | null;
+          };
+          setIsBlocked(Boolean(data.blocked));
+          setBlockReason(data.reason ?? null);
+        }
+      } finally {
+        setReady(true);
+      }
+    }
+
+    void loadBlockStatus();
   }, [router]);
+
+  const isHelpPage = pathname === "/dashboard/help" || pathname.startsWith("/dashboard/help/");
 
   if (!ready) {
     return (
@@ -54,9 +84,16 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   }
 
   return (
-    <div className="flex min-h-screen bg-[#F9FAFB]">
-      <DashboardSidebar userName={userName} plan="Free Plan" />
-      <div className="flex-1 overflow-y-auto">{children}</div>
-    </div>
+    <UserBlockProvider isBlocked={isBlocked} blockReason={blockReason}>
+      <div className="flex min-h-screen bg-[#F9FAFB]">
+        <DashboardSidebar userName={userName} plan="Free Plan" />
+        <div className="flex flex-1 flex-col overflow-y-auto">
+          <BlockedAccountBanner />
+          <div className={isBlocked && !isHelpPage ? "pointer-events-none select-none opacity-60" : ""}>
+            {children}
+          </div>
+        </div>
+      </div>
+    </UserBlockProvider>
   );
 }
