@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type {
-  CreatePolicyType,
-  EbayBusinessPolicies,
-  EbayPoliciesResponse,
-  ListingDraft,
-} from "@/types/listing-generator";
+import type { EbayBusinessPolicies, EbayPoliciesResponse, ListingDraft } from "@/types/listing-generator";
+
+const SELLER_HUB_URLS: Record<string, string> = {
+  EBAY_GB: "https://www.ebay.co.uk/sh/landing",
+  EBAY_US: "https://www.ebay.com/sh/landing",
+  EBAY_DE: "https://www.ebay.de/sh/landing",
+};
 
 interface ListingShippingReturnsStepProps {
   userId: string;
@@ -14,17 +15,16 @@ interface ListingShippingReturnsStepProps {
   onChange: (patch: Partial<ListingDraft>) => void;
 }
 
-type CreatingPolicyType = CreatePolicyType | null;
-
 export function ListingShippingReturnsStep({
   userId,
   draft,
   onChange,
 }: ListingShippingReturnsStepProps) {
-  const [policies, setPolicies] = useState<EbayPoliciesResponse | null>(null);
+  const [policies, setPolicies] = useState<(EbayPoliciesResponse & { marketplaceId?: string }) | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [creatingPolicy, setCreatingPolicy] = useState<CreatingPolicyType>(null);
   const initialPoliciesSet = useRef(false);
   const draftPoliciesRef = useRef(draft.ebayPolicies);
 
@@ -44,10 +44,14 @@ export function ListingShippingReturnsStep({
       if (!response.ok) {
         throw new Error(data.error ?? "Failed to load eBay policies.");
       }
-      const snapshot = data as EbayPoliciesResponse & { success?: boolean };
+      const snapshot = data as EbayPoliciesResponse & { success?: boolean; marketplaceId?: string };
       setPolicies(snapshot);
 
-      if (!initialPoliciesSet.current && !draftPoliciesRef.current) {
+      if (
+        !snapshot.noPoliciesFound &&
+        !initialPoliciesSet.current &&
+        !draftPoliciesRef.current
+      ) {
         initialPoliciesSet.current = true;
         onChange({ ebayPolicies: snapshot.selected });
       }
@@ -68,48 +72,9 @@ export function ListingShippingReturnsStep({
     onChange({ ebayPolicies: { ...current, ...patch } });
   }
 
-  async function handleCreatePolicy(policyType: CreatePolicyType) {
-    setCreatingPolicy(policyType);
-    setError("");
-    try {
-      const response = await fetch("/api/ebay/policies", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, policyType }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error ?? "Failed to create eBay policy.");
-      }
-
-      const snapshot = data as EbayPoliciesResponse & { success?: boolean };
-      setPolicies(snapshot);
-
-      const createdPolicy =
-        policyType === "fulfillment"
-          ? snapshot.fulfillment[snapshot.fulfillment.length - 1]
-          : policyType === "payment"
-            ? snapshot.payment[snapshot.payment.length - 1]
-            : snapshot.return[snapshot.return.length - 1];
-
-      const current = draft.ebayPolicies ?? snapshot.selected;
-      if (createdPolicy) {
-        if (policyType === "fulfillment") {
-          onChange({ ebayPolicies: { ...current, fulfillmentPolicyId: createdPolicy.policyId } });
-        } else if (policyType === "payment") {
-          onChange({ ebayPolicies: { ...current, paymentPolicyId: createdPolicy.policyId } });
-        } else {
-          onChange({ ebayPolicies: { ...current, returnPolicyId: createdPolicy.policyId } });
-        }
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create eBay policy.");
-    } finally {
-      setCreatingPolicy(null);
-    }
-  }
-
   const selected = draft.ebayPolicies ?? policies?.selected;
+  const sellerHubUrl =
+    SELLER_HUB_URLS[policies?.marketplaceId ?? "EBAY_GB"] ?? SELLER_HUB_URLS.EBAY_GB;
 
   if (loading) {
     return (
@@ -150,11 +115,42 @@ export function ListingShippingReturnsStep({
     return null;
   }
 
+  if (policies.noPoliciesFound) {
+    return (
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-base font-semibold text-[#111827]">Shipping &amp; Returns</h2>
+          <p className="mt-1 text-sm text-[#6B7280]">
+            Select shipping, payment, and return policies for this listing.
+          </p>
+        </div>
+        <div className="rounded border border-amber-100 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+          <p>
+            {policies.emptyPolicyMessage ??
+              "No policies found on your eBay account. Please create shipping, return and payment policies on eBay Seller Hub first, then come back here."}
+          </p>
+          <a
+            href={sellerHubUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-3 inline-block font-semibold text-[#3665F3] hover:underline"
+          >
+            Open eBay Seller Hub
+          </a>
+        </div>
+        <button
+          type="button"
+          onClick={() => void loadPolicies(true)}
+          className="rounded border border-[#C5C5C5] bg-white px-4 py-2 text-sm font-medium text-[#191919] hover:bg-[#F7F7F7]"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
   const selectClassName =
     "mt-2 w-full rounded border border-[#C5C5C5] bg-white px-3 py-2 text-sm text-[#191919] outline-none focus:border-[#3665F3]";
-
-  const createButtonClassName =
-    "mt-2 text-sm font-semibold text-[#3665F3] hover:underline disabled:cursor-not-allowed disabled:text-[#9CA3AF]";
 
   return (
     <div className="space-y-4">
@@ -165,79 +161,57 @@ export function ListingShippingReturnsStep({
         </p>
       </div>
 
-      {creatingPolicy ? (
-        <p className="text-sm text-[#6B7280]">Creating new policy…</p>
-      ) : null}
-
       <div className="space-y-4 rounded border border-[#E5E5E5] bg-white px-4 py-4">
-        <label className="block">
-          <span className="text-sm font-medium text-[#191919]">Shipping Policy</span>
-          <select
-            value={selected.fulfillmentPolicyId}
-            onChange={(event) => updatePolicy({ fulfillmentPolicyId: event.target.value })}
-            className={selectClassName}
-          >
-            {policies.fulfillment.map((policy) => (
-              <option key={policy.policyId} value={policy.policyId}>
-                {policy.name}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            disabled={creatingPolicy !== null}
-            onClick={() => void handleCreatePolicy("fulfillment")}
-            className={createButtonClassName}
-          >
-            + Create New Policy
-          </button>
-        </label>
+        {policies.fulfillment.length > 0 ? (
+          <label className="block">
+            <span className="text-sm font-medium text-[#191919]">Shipping Policy</span>
+            <select
+              value={selected.fulfillmentPolicyId}
+              onChange={(event) => updatePolicy({ fulfillmentPolicyId: event.target.value })}
+              className={selectClassName}
+            >
+              {policies.fulfillment.map((policy) => (
+                <option key={policy.policyId} value={policy.policyId}>
+                  {policy.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
 
-        <label className="block">
-          <span className="text-sm font-medium text-[#191919]">Payment Policy</span>
-          <select
-            value={selected.paymentPolicyId}
-            onChange={(event) => updatePolicy({ paymentPolicyId: event.target.value })}
-            className={selectClassName}
-          >
-            {policies.payment.map((policy) => (
-              <option key={policy.policyId} value={policy.policyId}>
-                {policy.name}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            disabled={creatingPolicy !== null}
-            onClick={() => void handleCreatePolicy("payment")}
-            className={createButtonClassName}
-          >
-            + Create New Policy
-          </button>
-        </label>
+        {policies.payment.length > 0 ? (
+          <label className="block">
+            <span className="text-sm font-medium text-[#191919]">Payment Policy</span>
+            <select
+              value={selected.paymentPolicyId}
+              onChange={(event) => updatePolicy({ paymentPolicyId: event.target.value })}
+              className={selectClassName}
+            >
+              {policies.payment.map((policy) => (
+                <option key={policy.policyId} value={policy.policyId}>
+                  {policy.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
 
-        <label className="block">
-          <span className="text-sm font-medium text-[#191919]">Return Policy</span>
-          <select
-            value={selected.returnPolicyId}
-            onChange={(event) => updatePolicy({ returnPolicyId: event.target.value })}
-            className={selectClassName}
-          >
-            {policies.return.map((policy) => (
-              <option key={policy.policyId} value={policy.policyId}>
-                {policy.name}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            disabled={creatingPolicy !== null}
-            onClick={() => void handleCreatePolicy("return")}
-            className={createButtonClassName}
-          >
-            + Create New Policy
-          </button>
-        </label>
+        {policies.return.length > 0 ? (
+          <label className="block">
+            <span className="text-sm font-medium text-[#191919]">Return Policy</span>
+            <select
+              value={selected.returnPolicyId}
+              onChange={(event) => updatePolicy({ returnPolicyId: event.target.value })}
+              className={selectClassName}
+            >
+              {policies.return.map((policy) => (
+                <option key={policy.policyId} value={policy.policyId}>
+                  {policy.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
       </div>
     </div>
   );

@@ -16,8 +16,7 @@ export interface EbayMarketplaceConfig {
   endUserCountry: string;
   listingSiteHost: string;
   categoryTreeId: string;
-  defaultShippingServiceCode: string;
-  defaultShippingCost: string;
+  sellerHubUrl: string;
 }
 
 const MARKETPLACE_CONFIG: Record<EbayMarketplaceId, EbayMarketplaceConfig> = {
@@ -29,8 +28,7 @@ const MARKETPLACE_CONFIG: Record<EbayMarketplaceId, EbayMarketplaceConfig> = {
     endUserCountry: "GB",
     listingSiteHost: "www.ebay.co.uk",
     categoryTreeId: "3",
-    defaultShippingServiceCode: "UK_RoyalMailSecondClass",
-    defaultShippingCost: "3.99",
+    sellerHubUrl: "https://www.ebay.co.uk/sh/landing",
   },
   EBAY_US: {
     marketplaceId: "EBAY_US",
@@ -40,8 +38,7 @@ const MARKETPLACE_CONFIG: Record<EbayMarketplaceId, EbayMarketplaceConfig> = {
     endUserCountry: "US",
     listingSiteHost: "www.ebay.com",
     categoryTreeId: "0",
-    defaultShippingServiceCode: "USPSPriority",
-    defaultShippingCost: "4.99",
+    sellerHubUrl: "https://www.ebay.com/sh/landing",
   },
   EBAY_DE: {
     marketplaceId: "EBAY_DE",
@@ -51,8 +48,7 @@ const MARKETPLACE_CONFIG: Record<EbayMarketplaceId, EbayMarketplaceConfig> = {
     endUserCountry: "DE",
     listingSiteHost: "www.ebay.de",
     categoryTreeId: "77",
-    defaultShippingServiceCode: "DE_DeutschePostWarensendung",
-    defaultShippingCost: "3.99",
+    sellerHubUrl: "https://www.ebay.de/sh/landing",
   },
 };
 

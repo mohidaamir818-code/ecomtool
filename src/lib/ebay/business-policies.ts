@@ -4,10 +4,13 @@ import {
   resolveMarketplaceConfig,
   type EbayMarketplaceId,
 } from "@/lib/ebay/marketplace";
-import type { CreatePolicyType, EbayBusinessPolicies, EbayPoliciesResponse, EbayPolicyOption } from "@/types/listing-generator";
+import type { EbayBusinessPolicies, EbayPoliciesResponse, EbayPolicyOption } from "@/types/listing-generator";
 
 const EBAY_API_BASE = "https://api.ebay.com";
 const POLICY_CACHE_TTL_MS = 5 * 60 * 1000;
+
+const EMPTY_POLICY_MESSAGE =
+  "No policies found on your eBay account. Please create shipping, return and payment policies on eBay Seller Hub first, then come back here.";
 
 type PolicyType = "fulfillment_policy" | "payment_policy" | "return_policy";
 
@@ -85,6 +88,8 @@ async function listPolicies(
     throw new Error(parsePolicyError(response, data));
   }
 
+  console.log(`[eBay Policies] ${type} response:`, JSON.stringify(data));
+
   const key = policyResponseKey(type);
   const policies = (data[key] ?? [])
     .filter((policy) => policy.policyId && policy.name)
@@ -102,174 +107,22 @@ async function listPolicies(
   return policies;
 }
 
-async function createDefaultFulfillmentPolicy(
-  token: string,
-  marketplaceId: EbayMarketplaceId,
-): Promise<EbayPolicyOption> {
-  const config = resolveMarketplaceConfig(marketplaceId);
-  const body = {
-    name: "EcomTool Standard Shipping",
-    marketplaceId: config.marketplaceId,
-    categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }],
-    handlingTime: { value: 1, unit: "DAY" },
-    shippingOptions: [
-      {
-        optionType: "DOMESTIC",
-        costType: "FLAT_RATE",
-        shippingServices: [
-          {
-            sortOrder: 1,
-            shippingServiceCode: config.defaultShippingServiceCode,
-            shippingCost: {
-              value: config.defaultShippingCost,
-              currency: config.currency,
-            },
-            freeShipping: false,
-            buyerResponsibleForShipping: false,
-          },
-        ],
-      },
-    ],
-  };
-
-  const response = await fetch(`${EBAY_API_BASE}/sell/account/v1/fulfillment_policy/`, {
-    method: "POST",
-    headers: accountHeaders(token, config.contentLanguage),
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
-
-  const data = (await response.json()) as {
-    fulfillmentPolicyId?: string;
-    name?: string;
-    errors?: Array<{ message?: string }>;
-  };
-
-  if (!response.ok) {
-    console.error("[eBay Policies] Create fulfillment policy failed", {
-      marketplaceId: config.marketplaceId,
-      status: response.status,
-      response: data,
-    });
-    throw new Error(parsePolicyError(response, data));
-  }
-
-  if (!data.fulfillmentPolicyId) {
-    throw new Error("Failed to create default shipping policy.");
-  }
-
-  return {
-    policyId: data.fulfillmentPolicyId,
-    name: data.name ?? "EcomTool Standard Shipping",
-  };
-}
-
-async function createDefaultPaymentPolicy(
-  token: string,
-  marketplaceId: EbayMarketplaceId,
-): Promise<EbayPolicyOption> {
-  const config = resolveMarketplaceConfig(marketplaceId);
-  const body = {
-    name: "EcomTool Payment",
-    marketplaceId: config.marketplaceId,
-    categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }],
-    immediatePay: true,
-    paymentMethods: [{ paymentMethodType: "PAYPAL" }],
-  };
-
-  const response = await fetch(`${EBAY_API_BASE}/sell/account/v1/payment_policy/`, {
-    method: "POST",
-    headers: accountHeaders(token, config.contentLanguage),
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
-
-  const data = (await response.json()) as {
-    paymentPolicyId?: string;
-    name?: string;
-    errors?: Array<{ message?: string }>;
-  };
-
-  if (!response.ok) {
-    console.error("[eBay Policies] Create payment policy failed", {
-      marketplaceId: config.marketplaceId,
-      status: response.status,
-      response: data,
-    });
-    throw new Error(parsePolicyError(response, data));
-  }
-
-  if (!data.paymentPolicyId) {
-    throw new Error("Failed to create default payment policy.");
-  }
-
-  return {
-    policyId: data.paymentPolicyId,
-    name: data.name ?? "EcomTool Payment",
-  };
-}
-
-async function createDefaultReturnPolicy(
-  token: string,
-  marketplaceId: EbayMarketplaceId,
-): Promise<EbayPolicyOption> {
-  const config = resolveMarketplaceConfig(marketplaceId);
-  const body = {
-    name: "EcomTool 30 Day Returns",
-    marketplaceId: config.marketplaceId,
-    categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }],
-    returnsAccepted: true,
-    returnPeriod: { value: 30, unit: "DAY" },
-    returnShippingCostPayer: "BUYER",
-    refundMethod: "MONEY_BACK",
-  };
-
-  const response = await fetch(`${EBAY_API_BASE}/sell/account/v1/return_policy/`, {
-    method: "POST",
-    headers: accountHeaders(token, config.contentLanguage),
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
-
-  const data = (await response.json()) as {
-    returnPolicyId?: string;
-    name?: string;
-    errors?: Array<{ message?: string }>;
-  };
-
-  if (!response.ok) {
-    console.error("[eBay Policies] Create return policy failed", {
-      marketplaceId: config.marketplaceId,
-      status: response.status,
-      response: data,
-    });
-    throw new Error(parsePolicyError(response, data));
-  }
-
-  if (!data.returnPolicyId) {
-    throw new Error("Failed to create default return policy.");
-  }
-
-  return {
-    policyId: data.returnPolicyId,
-    name: data.name ?? "EcomTool 30 Day Returns",
-  };
-}
-
 function buildSelected(
   fulfillment: EbayPolicyOption[],
   payment: EbayPolicyOption[],
   returns: EbayPolicyOption[],
-): EbayBusinessPolicies {
+): { selected: EbayBusinessPolicies; noPoliciesFound: boolean } {
   const fulfillmentPolicyId = fulfillment[0]?.policyId ?? "";
   const paymentPolicyId = payment[0]?.policyId ?? "";
   const returnPolicyId = returns[0]?.policyId ?? "";
 
-  if (!fulfillmentPolicyId || !paymentPolicyId || !returnPolicyId) {
-    throw new Error("Could not resolve eBay business policies for this account.");
-  }
+  const noPoliciesFound =
+    fulfillment.length === 0 || payment.length === 0 || returns.length === 0;
 
-  return { fulfillmentPolicyId, paymentPolicyId, returnPolicyId };
+  return {
+    selected: { fulfillmentPolicyId, paymentPolicyId, returnPolicyId },
+    noPoliciesFound,
+  };
 }
 
 async function loadAllPolicies(
@@ -285,29 +138,15 @@ async function loadAllPolicies(
   return { fulfillment, payment, returns };
 }
 
-export async function createDefaultPolicy(
-  token: string,
-  marketplaceId: EbayMarketplaceId,
-  policyType: CreatePolicyType,
-): Promise<EbayPolicyOption> {
-  if (policyType === "fulfillment") {
-    return createDefaultFulfillmentPolicy(token, marketplaceId);
-  }
-  if (policyType === "payment") {
-    return createDefaultPaymentPolicy(token, marketplaceId);
-  }
-  return createDefaultReturnPolicy(token, marketplaceId);
-}
-
-export interface EnsureSellerPoliciesOptions {
+export interface FetchSellerPoliciesOptions {
   userId: string;
   refresh?: boolean;
 }
 
-export async function ensureSellerPolicies(
+export async function fetchSellerPolicies(
   token: string,
   marketplaceId: EbayMarketplaceId,
-  options: EnsureSellerPoliciesOptions,
+  options: FetchSellerPoliciesOptions,
 ): Promise<EbayPoliciesResponse> {
   const key = cacheKey(options.userId, marketplaceId);
   if (!options.refresh) {
@@ -317,7 +156,7 @@ export async function ensureSellerPolicies(
     }
   }
 
-  let { fulfillment, payment, returns } = await loadAllPolicies(token, marketplaceId);
+  const { fulfillment, payment, returns } = await loadAllPolicies(token, marketplaceId);
 
   console.info("[eBay Policies] Loaded seller policies", {
     userId: options.userId,
@@ -327,29 +166,19 @@ export async function ensureSellerPolicies(
     returns: returns.length,
   });
 
-  if (fulfillment.length === 0) {
-    console.info("[eBay Policies] No fulfillment policies found; creating default");
-    await createDefaultFulfillmentPolicy(token, marketplaceId);
-    fulfillment = await listPolicies(token, "fulfillment_policy", marketplaceId);
-  }
-
-  if (payment.length === 0) {
-    console.info("[eBay Policies] No payment policies found; creating default");
-    await createDefaultPaymentPolicy(token, marketplaceId);
-    payment = await listPolicies(token, "payment_policy", marketplaceId);
-  }
-
-  if (returns.length === 0) {
-    console.info("[eBay Policies] No return policies found; creating default");
-    await createDefaultReturnPolicy(token, marketplaceId);
-    returns = await listPolicies(token, "return_policy", marketplaceId);
-  }
+  const { selected, noPoliciesFound } = buildSelected(fulfillment, payment, returns);
 
   const response: EbayPoliciesResponse = {
     fulfillment,
     payment,
     return: returns,
-    selected: buildSelected(fulfillment, payment, returns),
+    selected,
+    ...(noPoliciesFound
+      ? {
+          noPoliciesFound: true,
+          emptyPolicyMessage: EMPTY_POLICY_MESSAGE,
+        }
+      : {}),
   };
 
   policyCache.set(key, {
@@ -358,15 +187,4 @@ export async function ensureSellerPolicies(
   });
 
   return response;
-}
-
-export async function createSellerPolicyAndRefresh(
-  token: string,
-  marketplaceId: EbayMarketplaceId,
-  userId: string,
-  policyType: CreatePolicyType,
-): Promise<EbayPoliciesResponse> {
-  await createDefaultPolicy(token, marketplaceId, policyType);
-  invalidatePolicyCache(userId, marketplaceId);
-  return ensureSellerPolicies(token, marketplaceId, { userId, refresh: true });
 }

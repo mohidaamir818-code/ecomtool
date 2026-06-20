@@ -1,19 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  createSellerPolicyAndRefresh,
-  ensureSellerPolicies,
-} from "@/lib/ebay/business-policies";
-import type { CreatePolicyType } from "@/types/listing-generator";
+import { fetchSellerPolicies } from "@/lib/ebay/business-policies";
 import { getSellerMarketplaceId } from "@/lib/ebay/marketplace";
 import { getEbayUserAccessToken } from "@/lib/ebay/oauth-user";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
-
-function parsePolicyType(value: string | null | undefined): CreatePolicyType | null {
-  if (value === "fulfillment" || value === "payment" || value === "return") {
-    return value;
-  }
-  return null;
-}
 
 async function resolveSellerContext(userId: string) {
   const supabase = getSupabaseAdmin();
@@ -48,7 +37,7 @@ export async function GET(request: NextRequest) {
     const context = await resolveSellerContext(userId);
     if ("error" in context) return context.error;
 
-    const policies = await ensureSellerPolicies(context.token, context.marketplaceId, {
+    const policies = await fetchSellerPolicies(context.token, context.marketplaceId, {
       userId,
       refresh,
     });
@@ -61,50 +50,6 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load eBay policies.";
     console.error("[eBay Policies API] GET failed", { userId, error });
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
-}
-
-export async function POST(request: NextRequest) {
-  let userId: string | undefined;
-  try {
-    const body = (await request.json()) as {
-      userId?: string;
-      policyType?: string;
-    };
-
-    userId = body.userId?.trim();
-    const policyType = parsePolicyType(body.policyType);
-
-    if (!userId) {
-      return NextResponse.json({ error: "userId is required." }, { status: 400 });
-    }
-
-    if (!policyType) {
-      return NextResponse.json(
-        { error: "policyType must be fulfillment, payment, or return." },
-        { status: 400 },
-      );
-    }
-
-    const context = await resolveSellerContext(userId);
-    if ("error" in context) return context.error;
-
-    const policies = await createSellerPolicyAndRefresh(
-      context.token,
-      context.marketplaceId,
-      userId,
-      policyType,
-    );
-
-    return NextResponse.json({
-      success: true,
-      marketplaceId: context.marketplaceId,
-      ...policies,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to create eBay policy.";
-    console.error("[eBay Policies API] POST failed", { userId, error });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -136,13 +136,13 @@ export interface EbayBusinessPolicies {
   returnPolicyId: string;
 }
 
-export type CreatePolicyType = "fulfillment" | "payment" | "return";
-
 export interface EbayPoliciesResponse {
   fulfillment: EbayPolicyOption[];
   payment: EbayPolicyOption[];
   return: EbayPolicyOption[];
   selected: EbayBusinessPolicies;
+  noPoliciesFound?: boolean;
+  emptyPolicyMessage?: string;
 }
 
 export interface ListingDraft {
