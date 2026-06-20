@@ -6,6 +6,7 @@ export interface HandlingProductVariant {
   price: number;
   currency: string;
   stock: number | null;
+  imageUrl?: string | null;
 }
 
 export interface HandlingProductData {

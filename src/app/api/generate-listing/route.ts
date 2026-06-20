@@ -13,6 +13,7 @@ export async function POST(request: NextRequest) {
       userId?: string;
       url?: string;
       product?: ListingProductSource;
+      recommendedPrice?: number;
     };
     userId = body.userId?.trim() ?? null;
 
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const listing = await generateEbayListing(product);
+    const listing = await generateEbayListing(product, body.recommendedPrice);
 
     void logUserApiRequest({
       userId,

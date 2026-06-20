@@ -10,31 +10,32 @@ export async function GET(request: NextRequest) {
 
   const redirectUrl = new URL("/dashboard/listings", url.origin);
 
-  if (!code) {
+  function errorRedirect(message: string) {
     redirectUrl.searchParams.set("ebay", "error");
-    redirectUrl.searchParams.set("message", "Missing OAuth code from eBay.");
-    return NextResponse.redirect(redirectUrl);
+    redirectUrl.searchParams.set("message", message);
+    const response = NextResponse.redirect(redirectUrl);
+    response.cookies.delete("ebay_oauth_state");
+    response.cookies.delete("ebay_oauth_user_id");
+    return response;
+  }
+
+  if (!code) {
+    return errorRedirect("Missing OAuth code from eBay.");
   }
 
   if (!state || !expectedState || state !== expectedState || !userId) {
-    redirectUrl.searchParams.set("ebay", "error");
-    redirectUrl.searchParams.set("message", "Invalid OAuth state. Please try again.");
-    return NextResponse.redirect(redirectUrl);
+    return errorRedirect("Invalid OAuth state. Please try again.");
   }
 
   try {
     await exchangeEbayCode(userId, code, url.origin);
+    redirectUrl.searchParams.set("connected", "true");
     redirectUrl.searchParams.set("ebay", "connected");
     const response = NextResponse.redirect(redirectUrl);
     response.cookies.delete("ebay_oauth_state");
     response.cookies.delete("ebay_oauth_user_id");
     return response;
   } catch (error) {
-    redirectUrl.searchParams.set("ebay", "error");
-    redirectUrl.searchParams.set(
-      "message",
-      error instanceof Error ? error.message : "eBay connection failed.",
-    );
-    return NextResponse.redirect(redirectUrl);
+    return errorRedirect(error instanceof Error ? error.message : "eBay connection failed.");
   }
 }

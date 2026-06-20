@@ -194,14 +194,32 @@ export async function getEbayConnectionStatus(userId: string): Promise<EbayConne
   const supabase = getSupabaseAdmin();
   const { data } = await supabase
     .from("ebay_oauth_tokens")
-    .select("access_token_expires_at, ebay_username")
+    .select("access_token_expires_at, refresh_token_expires_at, ebay_username")
     .eq("user_id", userId)
     .maybeSingle();
 
+  if (!data) {
+    return { connected: false, ebayUsername: null, accessTokenExpiresAt: null };
+  }
+
+  const refreshExpiresAt = data.refresh_token_expires_at
+    ? new Date(data.refresh_token_expires_at).getTime()
+    : null;
+
+  if (refreshExpiresAt != null && refreshExpiresAt <= Date.now()) {
+    return {
+      connected: false,
+      ebayUsername: data.ebay_username ?? null,
+      accessTokenExpiresAt: data.access_token_expires_at ?? null,
+    };
+  }
+
+  const accessToken = await getEbayUserAccessToken(userId);
+
   return {
-    connected: Boolean(data),
-    ebayUsername: data?.ebay_username ?? null,
-    accessTokenExpiresAt: data?.access_token_expires_at ?? null,
+    connected: Boolean(accessToken),
+    ebayUsername: data.ebay_username ?? null,
+    accessTokenExpiresAt: data.access_token_expires_at ?? null,
   };
 }
 

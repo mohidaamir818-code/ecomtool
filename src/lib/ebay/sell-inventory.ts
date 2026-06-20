@@ -242,7 +242,7 @@ async function createOffer(
   categoryId: string,
   quantity: number,
   promotions: VolumePromotionTier[],
-  options: { sku?: string; inventoryItemGroupKey?: string },
+  options: { sku?: string; inventoryItemGroupKey?: string; priceOverride?: number },
 ): Promise<string> {
   const fulfillmentPolicyId = await getFirstPolicyId(token, "fulfillment_policy");
   const paymentPolicyId = await getFirstPolicyId(token, "payment_policy");
@@ -255,9 +255,10 @@ async function createOffer(
   }
 
   const volumePricing = buildVolumePricing(promotions);
+  const priceValue = options.priceOverride ?? listing.suggestedPrice;
   const pricingSummary: Record<string, unknown> = {
     price: {
-      value: listing.suggestedPrice.toFixed(2),
+      value: priceValue.toFixed(2),
       currency: listing.currency === "USD" ? "GBP" : listing.currency,
     },
   };
@@ -282,7 +283,8 @@ async function createOffer(
 
   if (options.inventoryItemGroupKey) {
     body.inventoryItemGroupKey = options.inventoryItemGroupKey;
-  } else if (options.sku) {
+  }
+  if (options.sku) {
     body.sku = options.sku;
   }
 
@@ -300,6 +302,35 @@ async function createOffer(
   }
 
   return data.offerId;
+}
+
+async function publishOfferByGroup(
+  token: string,
+  groupKey: string,
+): Promise<{ listingId: string | null }> {
+  const response = await fetch(
+    `${EBAY_API_BASE}/sell/inventory/v1/offer/publish_by_inventory_item_group`,
+    {
+      method: "POST",
+      headers: sellHeaders(token),
+      body: JSON.stringify({
+        inventoryItemGroupKey: groupKey,
+        marketplaceId: MARKETPLACE_ID,
+      }),
+      cache: "no-store",
+    },
+  );
+
+  const data = (await response.json()) as {
+    listingId?: string;
+    errors?: Array<{ message?: string }>;
+  };
+
+  if (!response.ok) {
+    throw new Error(data.errors?.[0]?.message ?? "Failed to publish eBay listing group.");
+  }
+
+  return { listingId: data.listingId ?? null };
 }
 
 async function publishOffer(token: string, offerId: string): Promise<{ listingId: string | null }> {
@@ -370,6 +401,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
   const groupKey = buildSku(draft.product.externalId, "group");
   const variantSkus: string[] = [];
   const variantLabels: string[] = [];
+  let firstOfferId = "";
 
   for (const variant of activeVariants) {
     const sku = buildSku(draft.product.externalId, variant.id);
@@ -380,6 +412,14 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
     const variantListing = { ...listing, suggestedPrice: variant.price };
 
     await upsertInventoryItem(token, sku, variantListing, images, variant.stock, variant.label);
+
+    const offerId = await createOffer(token, listing, categoryId, variant.stock, draft.promotions, {
+      sku,
+      inventoryItemGroupKey: groupKey,
+      priceOverride: variant.price,
+    });
+
+    if (!firstOfferId) firstOfferId = offerId;
   }
 
   await upsertInventoryItemGroup(
@@ -391,15 +431,11 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
     variantLabels,
   );
 
-  const totalQuantity = activeVariants.reduce((sum, variant) => sum + variant.stock, 0);
-  const offerId = await createOffer(token, listing, categoryId, totalQuantity, draft.promotions, {
-    inventoryItemGroupKey: groupKey,
-  });
-  const published = await publishOffer(token, offerId);
+  const published = await publishOfferByGroup(token, groupKey);
 
   return {
     sku: groupKey,
-    offerId,
+    offerId: firstOfferId,
     listingId: published.listingId,
     listingUrl: published.listingId ? `https://www.ebay.co.uk/itm/${published.listingId}` : null,
   };

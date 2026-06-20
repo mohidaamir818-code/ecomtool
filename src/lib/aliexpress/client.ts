@@ -66,6 +66,46 @@ function parseNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function parseMultimediaImages(multimedia: Record<string, unknown> | undefined): string[] {
+  if (!multimedia) return [];
+
+  const imageUrls = multimedia.image_urls as
+    | { string?: string[] }
+    | string[]
+    | string
+    | undefined;
+
+  if (Array.isArray(imageUrls)) {
+    return imageUrls.map((url) => String(url).trim()).filter(Boolean);
+  }
+
+  if (typeof imageUrls === "string") {
+    return imageUrls
+      .split(";")
+      .map((url) => url.trim())
+      .filter(Boolean);
+  }
+
+  if (imageUrls?.string) {
+    return imageUrls.string.map((url) => String(url).trim()).filter(Boolean);
+  }
+
+  return [];
+}
+
+function extractSkuImage(properties: Array<Record<string, unknown>> | undefined): string | null {
+  if (!properties?.length) return null;
+  for (const prop of properties) {
+    const image =
+      prop.sku_image ??
+      prop.skuImage ??
+      prop.property_value_definition_image ??
+      prop.image_url;
+    if (typeof image === "string" && image.trim()) return image.trim();
+  }
+  return null;
+}
+
 function parseCookies(setCookieHeaders: string[]): Record<string, string> {
   const cookies: Record<string, string> = {};
   for (const header of setCookieHeaders) {
@@ -811,7 +851,7 @@ function parseDsProductPayload(
   if (!title) return null;
 
   const skus = normalizeDsSkuList(result.ae_item_sku_info_dtos);
-  const variants: HandlingProductVariant[] = skus
+  const variants = skus
     .map((sku) => {
       const price = parseNumber(sku.offer_sale_price ?? sku.sku_price);
       if (price == null) return null;
@@ -824,6 +864,7 @@ function parseDsProductPayload(
         | undefined;
       const labelFromProp = properties?.[0]?.property_value_definition_name;
       const fallbackLabel = sku.sku_attr ?? sku.id ?? sku.sku_id ?? "Variant";
+      const skuImage = extractSkuImage(properties);
 
       return {
         id: String(sku.sku_id ?? sku.id ?? fallbackLabel),
@@ -831,24 +872,17 @@ function parseDsProductPayload(
         price,
         currency: String(sku.currency_code ?? base?.currency_code ?? "GBP"),
         stock,
+        imageUrl: skuImage ?? null,
       } satisfies HandlingProductVariant;
     })
-    .filter((value): value is HandlingProductVariant => value != null);
+    .filter((value) => value !== null) as HandlingProductVariant[];
 
   const defaultVariant = variants[0];
   if (!defaultVariant) return null;
 
   const multimedia = result.ae_multimedia_info_dto as Record<string, unknown> | undefined;
-  const imageUrls = multimedia?.image_urls as
-    | { string?: string[] }
-    | string[]
-    | string
-    | undefined;
-  const imageUrl = Array.isArray(imageUrls)
-    ? imageUrls[0]
-    : typeof imageUrls === "string"
-      ? imageUrls.split(";").find((url) => url.trim()) ?? null
-      : imageUrls?.string?.[0] ?? null;
+  const parsedImages = parseMultimediaImages(multimedia);
+  const imageUrl = parsedImages[0] ?? null;
 
   const soldCount = parseNumber(base?.sales_count);
   const ratingValue = parseNumber(base?.avg_evaluation_rating);
@@ -871,6 +905,7 @@ function parseDsProductPayload(
     productUrl: `https://www.aliexpress.com/item/${productId}.html`,
     title,
     imageUrl: imageUrl ? String(imageUrl) : null,
+    images: parsedImages,
     price: defaultVariant.price,
     currency: defaultVariant.currency,
     stock: defaultVariant.stock,

@@ -16,7 +16,7 @@ export function ListingWizardProgress({ currentStep }: ListingWizardProgressProp
         <span className="hidden sm:inline">{LISTING_WIZARD_STEPS[currentStep]}</span>
       </div>
 
-      <div className="grid grid-cols-6 gap-1 sm:gap-2">
+      <div className="grid grid-cols-5 gap-1 sm:grid-cols-10 sm:gap-2">
         {LISTING_WIZARD_STEPS.map((label, index) => {
           const active = index === currentStep;
           const complete = index < currentStep;
@@ -29,7 +29,7 @@ export function ListingWizardProgress({ currentStep }: ListingWizardProgressProp
                 }`}
               />
               <p
-                className={`mt-2 hidden truncate text-[10px] sm:block ${
+                className={`mt-2 hidden truncate text-[10px] lg:block ${
                   active ? "font-semibold text-brand" : "text-[#9CA3AF]"
                 }`}
               >

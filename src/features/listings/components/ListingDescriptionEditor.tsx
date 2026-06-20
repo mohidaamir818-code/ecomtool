@@ -48,10 +48,13 @@ export function ListingDescriptionEditor({ value, onChange }: ListingDescription
         placeholder="HTML description..."
       />
 
-      <div
-        className="prose prose-sm max-w-none rounded-lg border border-gray-100 bg-gray-50 p-4 text-[#374151]"
-        dangerouslySetInnerHTML={{ __html: value }}
-      />
+      <div>
+        <p className="mb-2 text-sm font-semibold text-[#374151]">Preview:</p>
+        <div
+          className="prose prose-sm max-w-none rounded-lg border border-gray-100 bg-gray-50 p-4 text-[#374151]"
+          dangerouslySetInnerHTML={{ __html: value }}
+        />
+      </div>
     </div>
   );
 }

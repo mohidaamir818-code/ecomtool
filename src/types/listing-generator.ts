@@ -4,6 +4,7 @@ export interface ListingProductVariant {
   price: number;
   currency: string;
   stock: number | null;
+  imageUrl?: string | null;
 }
 
 export interface ListingProductSource {
@@ -58,6 +59,7 @@ export interface ListingVariantDraft {
   imageUrl: string;
   price: number;
   stock: number;
+  aliExpressPrice?: number;
 }
 
 export interface ListingPhotoDraft {
@@ -65,10 +67,49 @@ export interface ListingPhotoDraft {
   selected: boolean;
 }
 
+export type VolumePromotionQuantity = 2 | 3 | 5 | 10;
+
 export interface VolumePromotionTier {
   enabled: boolean;
-  quantity: 2 | 3 | 5;
+  quantity: VolumePromotionQuantity;
   discountPercent: number;
+}
+
+export interface ListingPricingPreferences {
+  ebayFinalValueFeePercent: number;
+  ebayTransactionFee: number;
+  paymentFeePercent: number;
+  profitMarginPercent: number;
+  shippingCost: number;
+  currency: string;
+}
+
+export interface SellerPreferences {
+  ebayFinalValueFeePercent: number;
+  transactionFeeAmount: number;
+  paymentFeePercent: number;
+  profitMarginPercent: number;
+  shippingCost: number;
+  currency: string;
+  buy2DiscountPercent: number;
+  buy3DiscountPercent: number;
+  buy5DiscountPercent: number;
+  buy10DiscountPercent: number;
+  buy2Enabled: boolean;
+  buy3Enabled: boolean;
+  buy5Enabled: boolean;
+  buy10Enabled: boolean;
+}
+
+export interface PricingBreakdown {
+  aliExpressCost: number;
+  shippingCost: number;
+  baseCost: number;
+  ebayFees: number;
+  profit: number;
+  profitPercent: number;
+  recommendedPrice: number;
+  currency: string;
 }
 
 export interface ListingDraft {
@@ -77,6 +118,9 @@ export interface ListingDraft {
   photos: ListingPhotoDraft[];
   variants: ListingVariantDraft[];
   promotions: VolumePromotionTier[];
+  pricing?: ListingPricingPreferences;
+  pricingBreakdown?: PricingBreakdown;
+  manualPriceOverride?: number | null;
 }
 
 export interface EbayCategorySuggestion {
@@ -97,18 +141,73 @@ export interface ListOnEbayResult {
   listingUrl: string | null;
 }
 
+export interface ListingQualityCheck {
+  id: string;
+  label: string;
+  passed: boolean;
+  points: number;
+  maxPoints: number;
+  tip?: string;
+}
+
+export interface ListingQualityScore {
+  total: number;
+  maxTotal: number;
+  checks: ListingQualityCheck[];
+  tips: string[];
+}
+
+export const DEFAULT_FEE_PREFERENCES: Omit<ListingPricingPreferences, "currency"> = {
+  ebayFinalValueFeePercent: 13.25,
+  ebayTransactionFee: 0.3,
+  paymentFeePercent: 2.9,
+  profitMarginPercent: 30,
+  shippingCost: 0,
+};
+
+export function defaultFeePreferencesForCurrency(currency: string): ListingPricingPreferences {
+  return {
+    ...DEFAULT_FEE_PREFERENCES,
+    currency,
+  };
+}
+
+export function defaultSellerPreferences(currency = "GBP"): SellerPreferences {
+  return {
+    ebayFinalValueFeePercent: DEFAULT_FEE_PREFERENCES.ebayFinalValueFeePercent,
+    transactionFeeAmount: DEFAULT_FEE_PREFERENCES.ebayTransactionFee,
+    paymentFeePercent: DEFAULT_FEE_PREFERENCES.paymentFeePercent,
+    profitMarginPercent: DEFAULT_FEE_PREFERENCES.profitMarginPercent,
+    shippingCost: DEFAULT_FEE_PREFERENCES.shippingCost,
+    currency,
+    buy2DiscountPercent: 0,
+    buy3DiscountPercent: 0,
+    buy5DiscountPercent: 0,
+    buy10DiscountPercent: 0,
+    buy2Enabled: false,
+    buy3Enabled: false,
+    buy5Enabled: false,
+    buy10Enabled: false,
+  };
+}
+
 export const DEFAULT_PROMOTIONS: VolumePromotionTier[] = [
   { enabled: false, quantity: 2, discountPercent: 10 },
   { enabled: false, quantity: 3, discountPercent: 15 },
   { enabled: false, quantity: 5, discountPercent: 20 },
+  { enabled: false, quantity: 10, discountPercent: 25 },
 ];
 
 export const LISTING_WIZARD_STEPS = [
+  "Product URL",
   "VeRO Check",
-  "Preview & Edit",
+  "Profit & Fees",
+  "AI Generate",
+  "Edit Listing",
   "Photos",
   "Variants",
-  "Promotions",
+  "Volume Discounts",
+  "Quality Score",
   "Confirm & List",
 ] as const;
 

@@ -2,6 +2,7 @@
 
 import type { GeneratedListing, ListingProductSource } from "@/types/listing-generator";
 import { ListingPreviewEditor } from "./ListingPreviewEditor";
+import { ProxiedImage } from "./ProxiedImage";
 
 interface AiListingGeneratorProps {
   userId: string;
@@ -46,8 +47,7 @@ export function AiListingGenerator({
         <h2 className="text-base font-semibold text-[#111827]">Source product</h2>
         <div className="mt-4 flex gap-4">
           {product.imageUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
+            <ProxiedImage
               src={product.imageUrl}
               alt={product.title}
               className="h-24 w-24 rounded-lg border border-gray-100 object-cover"

@@ -1,15 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { DashboardLayout } from "@/features/dashboard/components/DashboardLayout";
 import { useUserBlock } from "@/features/dashboard/context/UserBlockContext";
-import { buildInitialDraft } from "@/features/listings/lib/draft-utils";
+import { buildInitialDraft, recalculateDraftPricing } from "@/features/listings/lib/draft-utils";
+import { fetchSellerPreferences, persistSellerPreferences } from "@/features/listings/lib/seller-preferences-client";
+import { sellerPreferencesToPromotions, promotionsToSellerPreferences } from "@/lib/listings/seller-preferences-mappers";
 import { AiListingGenerator } from "./AiListingGenerator";
 import { EbayConnect } from "./EbayConnect";
 import { ListingConfirmStep } from "./ListingConfirmStep";
 import { ListingPhotosStep } from "./ListingPhotosStep";
+import { ListingProfitCalculatorStep } from "./ListingProfitCalculatorStep";
 import { ListingPromotionsStep } from "./ListingPromotionsStep";
+import { ListingQualityScoreStep } from "./ListingQualityScoreStep";
 import { ListingVariantsStep } from "./ListingVariantsStep";
 import { ListingWizardNav } from "./ListingWizardNav";
 import { ListingWizardProgress } from "./ListingWizardProgress";
@@ -18,9 +22,15 @@ import { VeroChecker } from "./VeroChecker";
 import type {
   GeneratedListing,
   ListingDraft,
+  ListingPricingPreferences,
   ListingProductSource,
+  PricingBreakdown,
+  SellerPreferences,
   VeroCheckResult,
 } from "@/types/listing-generator";
+import { defaultSellerPreferences } from "@/types/listing-generator";
+
+const MAX_STEP = 9;
 
 export function ListingsShell() {
   const searchParams = useSearchParams();
@@ -39,6 +49,18 @@ export function ListingsShell() {
   const [notice, setNotice] = useState("");
   const [isError, setIsError] = useState(false);
   const [listedUrl, setListedUrl] = useState<string | null>(null);
+  const [pricingPrefs, setPricingPrefs] = useState<ListingPricingPreferences | null>(null);
+  const [pricingBreakdown, setPricingBreakdown] = useState<PricingBreakdown | null>(null);
+  const [manualPriceOverride, setManualPriceOverride] = useState<number | null>(null);
+  const [resumeOffer, setResumeOffer] = useState<{ productUrl: string; step: number } | null>(null);
+  const [sellerPrefs, setSellerPrefs] = useState<SellerPreferences | null>(null);
+  const [sellerPrefsLoading, setSellerPrefsLoading] = useState(true);
+  const [showSavedToast, setShowSavedToast] = useState(false);
+  const generateStarted = useRef(false);
+  const savedToastTimer = useRef<number | null>(null);
+
+  const oauthRefreshKey =
+    searchParams.get("connected") ?? searchParams.get("ebay") ?? undefined;
 
   useEffect(() => {
     const id = sessionStorage.getItem("ecomtools_user_id");
@@ -46,17 +68,76 @@ export function ListingsShell() {
   }, []);
 
   useEffect(() => {
-    const ebayStatus = searchParams.get("ebay");
-    const message = searchParams.get("message");
+    if (!userId) return;
+    setSellerPrefsLoading(true);
+    void fetchSellerPreferences(userId)
+      .then(({ preferences }) => setSellerPrefs(preferences))
+      .catch(() => setSellerPrefs(defaultSellerPreferences()))
+      .finally(() => setSellerPrefsLoading(false));
+  }, [userId]);
 
-    if (ebayStatus === "connected") {
-      setNotice("eBay account connected successfully.");
+  function triggerSavedToast() {
+    setShowSavedToast(true);
+    if (savedToastTimer.current) window.clearTimeout(savedToastTimer.current);
+    savedToastTimer.current = window.setTimeout(() => setShowSavedToast(false), 2500);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (savedToastTimer.current) window.clearTimeout(savedToastTimer.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (searchParams.get("connected") === "true" || searchParams.get("ebay") === "connected") {
+      setNotice("eBay Connected ✓");
       setIsError(false);
-    } else if (ebayStatus === "error" && message) {
-      setNotice(message);
+    } else if (searchParams.get("ebay") === "error") {
+      setNotice(searchParams.get("message") ?? "eBay connection failed.");
       setIsError(true);
     }
   }, [searchParams]);
+
+  const saveDraft = useCallback(async () => {
+    if (!userId || !draft) return;
+    await fetch("/api/listings/drafts", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId,
+        productUrl: url.trim() || product?.productUrl,
+        currentStep,
+        draft,
+      }),
+    });
+  }, [userId, draft, url, product, currentStep]);
+
+  useEffect(() => {
+    if (!userId || !draft) return;
+    const timer = window.setTimeout(() => void saveDraft(), 2000);
+    return () => window.clearTimeout(timer);
+  }, [userId, draft, currentStep, saveDraft]);
+
+  useEffect(() => {
+    if (!userId) return;
+    async function loadSaved() {
+      const response = await fetch(`/api/listings/drafts?userId=${encodeURIComponent(userId!)}`);
+      const data = await response.json();
+      if (response.ok && data.draft?.draftJson?.product) {
+        setResumeOffer({
+          productUrl: data.draft.productUrl ?? "",
+          step: data.draft.currentStep ?? 0,
+        });
+      }
+    }
+    void loadSaved();
+  }, [userId]);
+
+  async function clearSavedDraft() {
+    if (!userId) return;
+    await fetch(`/api/listings/drafts?userId=${encodeURIComponent(userId)}`, { method: "DELETE" });
+    setResumeOffer(null);
+  }
 
   function resetWizard() {
     setCurrentStep(0);
@@ -68,19 +149,22 @@ export function ListingsShell() {
     setListedUrl(null);
     setNotice("");
     setIsError(false);
+    setPricingPrefs(null);
+    setPricingBreakdown(null);
+    setManualPriceOverride(null);
+    generateStarted.current = false;
+    void clearSavedDraft();
   }
 
   async function runVeroCheck() {
-    if (!userId) return;
-
-    if (!url.trim()) {
+    if (!userId || !url.trim()) {
       setNotice("Please paste an AliExpress product URL.");
       setIsError(true);
-      return;
+      return false;
     }
 
-    resetWizard();
     setVeroLoading(true);
+    setNotice("");
 
     try {
       const response = await fetch("/api/vero-check", {
@@ -94,7 +178,7 @@ export function ListingsShell() {
       if (!response.ok) {
         setNotice(data.error ?? "VeRO check failed.");
         setIsError(true);
-        return;
+        return false;
       }
 
       setProduct(data.product ?? null);
@@ -102,28 +186,31 @@ export function ListingsShell() {
 
       if (!data.vero?.safe) {
         setShowVeroModal(true);
-        return;
+        return false;
       }
 
-      setCurrentStep(1);
-      await generateListing(data.product ?? null);
+      return true;
     } catch {
       setNotice("Network error while running VeRO check.");
       setIsError(true);
+      return false;
     } finally {
       setVeroLoading(false);
     }
   }
 
-  async function generateListing(sourceProduct: ListingProductSource | null) {
-    if (!userId || !sourceProduct) return;
+  async function generateListing(sourceProduct: ListingProductSource) {
+    if (!userId) return false;
 
     setGenerateLoading(true);
     try {
+      const recommendedPrice =
+        manualPriceOverride ?? pricingBreakdown?.recommendedPrice ?? undefined;
+
       const response = await fetch("/api/generate-listing", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, product: sourceProduct }),
+        body: JSON.stringify({ userId, product: sourceProduct, recommendedPrice }),
       });
 
       const data = await response.json();
@@ -131,7 +218,7 @@ export function ListingsShell() {
       if (!response.ok) {
         setNotice(data.error ?? "Failed to generate listing.");
         setIsError(true);
-        return;
+        return false;
       }
 
       const nextProduct = data.product ?? sourceProduct;
@@ -139,18 +226,37 @@ export function ListingsShell() {
 
       setProduct(nextProduct);
       setListing(nextListing);
+
       if (nextListing) {
-        setDraft(buildInitialDraft(nextProduct, nextListing));
+        const promotions = sellerPreferencesToPromotions(
+          sellerPrefs ?? defaultSellerPreferences(),
+        );
+        const initial = buildInitialDraft(nextProduct, nextListing, {
+          pricing: pricingPrefs ?? undefined,
+          pricingBreakdown: pricingBreakdown ?? undefined,
+          manualPriceOverride,
+          promotions,
+        });
+        setDraft(initial);
       }
+
       setNotice("Listing generated. Review and edit before continuing.");
       setIsError(false);
+      return true;
     } catch {
       setNotice("Network error while generating listing.");
       setIsError(true);
+      return false;
     } finally {
       setGenerateLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (currentStep !== 3 || !product || generateStarted.current || listing) return;
+    generateStarted.current = true;
+    void generateListing(product);
+  }, [currentStep, product, listing]);
 
   function updateDraft(patch: Partial<ListingDraft>) {
     setDraft((current) => (current ? { ...current, ...patch } : current));
@@ -162,37 +268,47 @@ export function ListingsShell() {
       current
         ? {
             ...current,
-            listing: {
-              ...nextListing,
-              brand: "Unbranded",
-            },
+            listing: { ...nextListing, brand: "Unbranded" },
           }
         : current,
     );
   }
 
+  function handlePricingChange(
+    prefs: ListingPricingPreferences,
+    breakdown: PricingBreakdown,
+    manualPrice: number | null,
+  ) {
+    setPricingPrefs(prefs);
+    setPricingBreakdown(breakdown);
+    setManualPriceOverride(manualPrice);
+
+    if (draft) {
+      setDraft(recalculateDraftPricing(draft, prefs, manualPrice));
+    }
+  }
+
   function validateStep(step: number): string | null {
-    if (step === 1) {
+    if (step === 0 && !url.trim()) return "Please paste an AliExpress product URL.";
+    if (step === 1 && vero && !vero.safe) return "VeRO check must pass before continuing.";
+    if (step === 2 && !pricingBreakdown) return "Apply your pricing preferences before continuing.";
+    if (step === 4) {
       if (!listing?.seoTitle.trim()) return "Title is required.";
-      if ((listing?.seoTitle.length ?? 0) > 80) return "Title must be 80 characters or less.";
+      if (listing.seoTitle.length > 80) return "Title must be 80 characters or less.";
       if ((listing?.suggestedPrice ?? 0) <= 0) return "Price must be greater than 0.";
     }
-
-    if (step === 2) {
-      if (!draft?.photos.some((photo) => photo.selected)) return "Select at least one photo.";
+    if (step === 5 && !draft?.photos.some((photo) => photo.selected)) {
+      return "Select at least one photo.";
     }
-
-    if (step === 3) {
+    if (step === 6) {
       for (const variant of draft?.variants ?? []) {
         if (variant.price <= 0) return "All variant prices must be greater than 0.";
-        if (variant.stock < 0) return "Variant stock cannot be negative.";
       }
     }
-
     return null;
   }
 
-  function handleNext() {
+  async function handleNext() {
     const error = validateStep(currentStep);
     if (error) {
       setNotice(error);
@@ -202,15 +318,73 @@ export function ListingsShell() {
 
     setNotice("");
     setIsError(false);
-    setCurrentStep((step) => Math.min(step + 1, 5));
+
+    if (currentStep === 0) {
+      setCurrentStep(1);
+      await runVeroCheck();
+      return;
+    }
+
+    if (currentStep === 1) {
+      if (!vero?.safe) {
+        setShowVeroModal(true);
+        return;
+      }
+      setCurrentStep(2);
+      return;
+    }
+
+    if (currentStep === 2) {
+      if (!pricingBreakdown) {
+        setNotice("Click Apply pricing before continuing.");
+        setIsError(true);
+        return;
+      }
+      setCurrentStep(3);
+      return;
+    }
+
+    if (currentStep === 3 && generateLoading) return;
+
+    if (currentStep === 7 && draft && userId && sellerPrefs) {
+      const merged = promotionsToSellerPreferences(draft.promotions, sellerPrefs);
+      try {
+        await persistSellerPreferences(userId, merged);
+        setSellerPrefs(merged);
+        triggerSavedToast();
+      } catch {
+        // Auto-save may have already persisted; continue either way.
+      }
+    }
+
+    setCurrentStep((step) => Math.min(step + 1, MAX_STEP));
   }
 
   function handleBack() {
     setCurrentStep((step) => Math.max(step - 1, 0));
   }
 
+  async function resumeSavedDraft() {
+    if (!userId || !resumeOffer) return;
+    const response = await fetch(`/api/listings/drafts?userId=${encodeURIComponent(userId)}`);
+    const data = await response.json();
+    if (!response.ok || !data.draft?.draftJson) return;
+
+    const saved = data.draft.draftJson as ListingDraft;
+    setUrl(data.draft.productUrl ?? "");
+    setDraft(saved);
+    setProduct(saved.product);
+    setListing(saved.listing);
+    setPricingPrefs(saved.pricing ?? null);
+    setPricingBreakdown(saved.pricingBreakdown ?? null);
+    setManualPriceOverride(saved.manualPriceOverride ?? null);
+    setCurrentStep(data.draft.currentStep ?? 0);
+    setResumeOffer(null);
+    generateStarted.current = true;
+  }
+
   const busy = veroLoading || generateLoading;
-  const wizardStarted = currentStep > 0 || Boolean(vero);
+  const wizardStarted = currentStep > 0 || Boolean(vero) || Boolean(draft);
 
   return (
     <DashboardLayout>
@@ -219,7 +393,7 @@ export function ListingsShell() {
           <div>
             <h1 className="text-2xl font-bold text-[#111827]">AI Listing Generator</h1>
             <p className="mt-1 text-sm text-[#6B7280]">
-              Step-by-step wizard to check VeRO safety, edit your listing, and publish to eBay.
+              Professional 10-step wizard to create optimized eBay listings from AliExpress.
             </p>
           </div>
 
@@ -234,9 +408,16 @@ export function ListingsShell() {
           ) : null}
         </div>
 
-        {userId ? (
-          <div className="mb-6">
-            <EbayConnect userId={userId} refreshKey={searchParams.get("ebay") ?? undefined} />
+        {resumeOffer && !wizardStarted ? (
+          <div className="mb-6 rounded-xl border border-brand/20 bg-brand-light/30 p-4">
+            <p className="text-sm text-[#374151]">You have a listing in progress.</p>
+            <button
+              type="button"
+              onClick={() => void resumeSavedDraft()}
+              className="mt-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark"
+            >
+              Resume listing
+            </button>
           </div>
         ) : null}
 
@@ -255,24 +436,29 @@ export function ListingsShell() {
                 className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand disabled:opacity-60"
               />
             </label>
-
-            <button
-              type="button"
-              disabled={isBlocked || busy || !userId}
-              onClick={() => void runVeroCheck()}
-              className="mt-4 rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {busy ? "Processing..." : "Start VeRO Check"}
-            </button>
           </div>
         ) : null}
 
         <div className="mt-6 space-y-6">
-          {currentStep === 0 ? <VeroChecker result={vero} loading={veroLoading} /> : null}
+          {currentStep === 1 ? <VeroChecker result={vero} loading={veroLoading} /> : null}
 
-          {currentStep === 1 && userId ? (
-            <AiListingGenerator
+          {currentStep === 2 && product && userId ? (
+            <ListingProfitCalculatorStep
               userId={userId}
+              product={product}
+              preferences={pricingPrefs}
+              manualPriceOverride={manualPriceOverride}
+              sellerPreferences={sellerPrefs}
+              sellerPreferencesLoading={sellerPrefsLoading}
+              onChange={handlePricingChange}
+              onSellerPreferencesChange={setSellerPrefs}
+              onSaved={triggerSavedToast}
+            />
+          ) : null}
+
+          {currentStep === 3 ? (
+            <AiListingGenerator
+              userId={userId ?? ""}
               product={product}
               listing={listing}
               loading={generateLoading}
@@ -280,35 +466,62 @@ export function ListingsShell() {
             />
           ) : null}
 
-          {currentStep === 2 && draft ? (
+          {currentStep === 4 && userId && listing ? (
+            <AiListingGenerator
+              userId={userId}
+              product={product}
+              listing={listing}
+              loading={false}
+              onListingChange={updateListing}
+            />
+          ) : null}
+
+          {currentStep === 5 && draft ? (
             <ListingPhotosStep
               photos={draft.photos}
               onChange={(photos) => updateDraft({ photos })}
             />
           ) : null}
 
-          {currentStep === 3 && draft ? (
+          {currentStep === 6 && draft ? (
             <ListingVariantsStep draft={draft} onChange={(variants) => updateDraft({ variants })} />
           ) : null}
 
-          {currentStep === 4 && draft ? (
+          {currentStep === 7 && draft && userId && sellerPrefs ? (
             <ListingPromotionsStep
+              userId={userId}
               promotions={draft.promotions}
+              sellerPreferences={sellerPrefs}
               onChange={(promotions) => updateDraft({ promotions })}
+              onSellerPreferencesChange={setSellerPrefs}
+              onSaved={triggerSavedToast}
             />
           ) : null}
 
-          {currentStep === 5 && draft && userId ? (
-            <ListingConfirmStep
-              userId={userId}
-              draft={draft}
-              disabled={isBlocked}
-              onListed={setListedUrl}
-            />
+          {currentStep === 8 && draft ? <ListingQualityScoreStep draft={draft} /> : null}
+
+          {currentStep === 9 && draft && userId ? (
+            <>
+              <EbayConnect userId={userId} refreshKey={oauthRefreshKey} />
+              <ListingConfirmStep
+                userId={userId}
+                draft={draft}
+                disabled={isBlocked}
+                onListed={setListedUrl}
+              />
+            </>
           ) : null}
 
           {notice ? (
-            <p className={`text-sm ${isError ? "text-red-600" : "text-emerald-700"}`}>{notice}</p>
+            <p
+              className={`rounded-lg px-4 py-3 text-sm font-medium ${
+                isError
+                  ? "border border-red-100 bg-red-50 text-red-600"
+                  : "border border-emerald-100 bg-emerald-50 text-emerald-700"
+              }`}
+            >
+              {notice}
+            </p>
           ) : null}
 
           {listedUrl ? (
@@ -323,18 +536,25 @@ export function ListingsShell() {
           ) : null}
         </div>
 
-        {currentStep > 0 && currentStep < 5 ? (
+        {currentStep < MAX_STEP ? (
           <ListingWizardNav
             currentStep={currentStep}
-            maxStep={5}
+            maxStep={MAX_STEP}
             onBack={handleBack}
-            onNext={handleNext}
+            onNext={() => void handleNext()}
+            nextDisabled={busy || (currentStep === 3 && generateLoading)}
           />
         ) : null}
       </div>
 
       {showVeroModal && vero && !vero.safe ? (
         <VeroBlockModal result={vero} onClose={() => setShowVeroModal(false)} />
+      ) : null}
+
+      {showSavedToast ? (
+        <div className="fixed bottom-6 right-6 z-50 rounded-lg border border-emerald-200 bg-white px-4 py-2 text-sm font-medium text-emerald-700 shadow-lg">
+          Saved ✓
+        </div>
       ) : null}
     </DashboardLayout>
   );

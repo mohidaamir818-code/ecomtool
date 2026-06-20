@@ -1,15 +1,56 @@
 "use client";
 
-import type { VolumePromotionTier } from "@/types/listing-generator";
+import { useEffect, useRef } from "react";
+import type { SellerPreferences, VolumePromotionTier } from "@/types/listing-generator";
+import { promotionsToSellerPreferences } from "@/lib/listings/seller-preferences-mappers";
+import { persistSellerPreferences } from "@/features/listings/lib/seller-preferences-client";
 
 interface ListingPromotionsStepProps {
+  userId: string;
   promotions: VolumePromotionTier[];
+  sellerPreferences: SellerPreferences;
   onChange: (promotions: VolumePromotionTier[]) => void;
+  onSellerPreferencesChange: (preferences: SellerPreferences) => void;
+  onSaved?: () => void;
 }
 
-export function ListingPromotionsStep({ promotions, onChange }: ListingPromotionsStepProps) {
+export function ListingPromotionsStep({
+  userId,
+  promotions,
+  sellerPreferences,
+  onChange,
+  onSellerPreferencesChange,
+  onSaved,
+}: ListingPromotionsStepProps) {
+  const saveTimerRef = useRef<number | null>(null);
+  const sellerPrefsRef = useRef(sellerPreferences);
+
+  useEffect(() => {
+    sellerPrefsRef.current = sellerPreferences;
+  }, [sellerPreferences]);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    };
+  }, []);
+
+  function scheduleSave(nextPromotions: VolumePromotionTier[]) {
+    const merged = promotionsToSellerPreferences(nextPromotions, sellerPrefsRef.current);
+    sellerPrefsRef.current = merged;
+    onSellerPreferencesChange(merged);
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => {
+      void persistSellerPreferences(userId, sellerPrefsRef.current)
+        .then(() => onSaved?.())
+        .catch(() => undefined);
+    }, 1500);
+  }
+
   function updateTier(index: number, patch: Partial<VolumePromotionTier>) {
-    onChange(promotions.map((tier, i) => (i === index ? { ...tier, ...patch } : tier)));
+    const next = promotions.map((tier, i) => (i === index ? { ...tier, ...patch } : tier));
+    onChange(next);
+    scheduleSave(next);
   }
 
   return (
@@ -17,7 +58,7 @@ export function ListingPromotionsStep({ promotions, onChange }: ListingPromotion
       <div>
         <h2 className="text-base font-semibold text-[#111827]">Volume discounts</h2>
         <p className="mt-1 text-sm text-[#6B7280]">
-          Optional eBay volume pricing. Enable any deal you want included on the listing.
+          Would you like to add volume discounts? Enable any tier to include in your eBay listing.
         </p>
       </div>
 

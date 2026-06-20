@@ -16,8 +16,29 @@ interface AiListingResponse {
 
 const UNBRANDED = "Unbranded";
 
-function normalizeTitle(title: string): string {
-  return title.trim().slice(0, 80);
+function padTitleTo80(title: string, productTitle: string): string {
+  let result = title.trim().slice(0, 80);
+  if (result.length >= 80) return result;
+
+  const fillerWords = productTitle
+    .replace(/[^\w\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !result.toLowerCase().includes(w.toLowerCase()));
+
+  for (const word of fillerWords) {
+    if (result.length >= 80) break;
+    const addition = result.length > 0 ? ` ${word}` : word;
+    if (result.length + addition.length <= 80) {
+      result += addition;
+    }
+  }
+
+  while (result.length < 80) {
+    result += result.length < 77 ? " New" : " UK";
+    if (result.length > 80) break;
+  }
+
+  return result.slice(0, 80);
 }
 
 function normalizeItemSpecifics(
@@ -30,8 +51,9 @@ function normalizeItemSpecifics(
       value: String(entry.value ?? "").trim(),
     }))
     .filter((entry) => entry.name && entry.value)
-    .filter((entry) => entry.name.toLowerCase() !== "brand");
+    .filter((entry) => entry.name.toLowerCase() !== "brand" && entry.name.toLowerCase() !== "mpn");
 
+  specifics.unshift({ name: "MPN", value: "Does Not Apply" });
   specifics.unshift({ name: "Brand", value: UNBRANDED });
 
   if (!specifics.some((entry) => entry.name.toLowerCase() === "condition")) {
@@ -41,11 +63,16 @@ function normalizeItemSpecifics(
   return specifics;
 }
 
-export async function generateEbayListing(product: ListingProductSource): Promise<GeneratedListing> {
-  const fallbackPrice = Number((product.price * 2.5).toFixed(2));
+export async function generateEbayListing(
+  product: ListingProductSource,
+  recommendedPrice?: number,
+): Promise<GeneratedListing> {
+  const fallbackPrice = recommendedPrice ?? Number((product.price * 2.5).toFixed(2));
   const currency = product.currency === "USD" ? "GBP" : product.currency;
 
-  const raw = await generateAiJson<AiListingResponse>(buildListingPrompt(product));
+  const raw = await generateAiJson<AiListingResponse>(
+    buildListingPrompt(product, recommendedPrice ?? fallbackPrice),
+  );
 
   const condition = raw.condition?.trim() || "New";
   const itemSpecifics = normalizeItemSpecifics(raw.itemSpecifics, condition);
@@ -56,7 +83,7 @@ export async function generateEbayListing(product: ListingProductSource): Promis
       : fallbackPrice;
 
   return {
-    seoTitle: normalizeTitle(raw.seoTitle ?? product.title),
+    seoTitle: padTitleTo80(raw.seoTitle ?? product.title, product.title),
     descriptionHtml: raw.descriptionHtml?.trim() || `<p>${product.description ?? product.title}</p>`,
     suggestedPrice,
     currency: raw.currency?.trim() || currency,
