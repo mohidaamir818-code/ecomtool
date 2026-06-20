@@ -17,6 +17,7 @@ export { ListingPreviewModal } from "./ListingPreviewModal";
 export { ListingPromotionsStep } from "./ListingPromotionsStep";
 export { ListingProfitCalculatorStep } from "./ListingProfitCalculatorStep";
 export { ListingQualityScoreStep } from "./ListingQualityScoreStep";
+export { ListingShippingReturnsStep } from "./ListingShippingReturnsStep";
 export { ProxiedImage } from "./ProxiedImage";
 export { ListingWizardNav } from "./ListingWizardNav";
 export { ListingWizardProgress } from "./ListingWizardProgress";

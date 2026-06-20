@@ -4,6 +4,7 @@ import { buildDescriptionHtmlWithImages, getSelectedDescriptionPhotos } from "@/
 import { getAppOrigin } from "@/lib/env";
 import { getEbayUserAccessToken } from "@/lib/ebay/oauth-user";
 import type {
+  EbayBusinessPolicies,
   EbayCategorySuggestion,
   GeneratedListing,
   ListingDraft,
@@ -171,31 +172,6 @@ async function resolveCategoryId(token: string, listing: GeneratedListing): Prom
   return categoryId;
 }
 
-async function getFirstPolicyId(
-  token: string,
-  path: "fulfillment_policy" | "payment_policy" | "return_policy",
-): Promise<string | null> {
-  const url = new URL(`${EBAY_API_BASE}/sell/account/v1/${path}`);
-  url.searchParams.set("marketplace_id", MARKETPLACE_ID);
-
-  const response = await fetch(url.toString(), {
-    headers: sellHeaders(token),
-    cache: "no-store",
-  });
-
-  if (!response.ok) return null;
-
-  const data = (await response.json()) as Record<string, Array<{ policyId?: string }> | undefined>;
-  const key =
-    path === "fulfillment_policy"
-      ? "fulfillmentPolicies"
-      : path === "payment_policy"
-        ? "paymentPolicies"
-        : "returnPolicies";
-
-  return data[key]?.[0]?.policyId ?? null;
-}
-
 async function upsertInventoryItem(
   token: string,
   sku: string,
@@ -288,15 +264,14 @@ async function createOffer(
   categoryId: string,
   quantity: number,
   promotions: VolumePromotionTier[],
+  policyIds: EbayBusinessPolicies,
   options: { sku?: string; inventoryItemGroupKey?: string; priceOverride?: number },
 ): Promise<string> {
-  const fulfillmentPolicyId = await getFirstPolicyId(token, "fulfillment_policy");
-  const paymentPolicyId = await getFirstPolicyId(token, "payment_policy");
-  const returnPolicyId = await getFirstPolicyId(token, "return_policy");
+  const { fulfillmentPolicyId, paymentPolicyId, returnPolicyId } = policyIds;
 
   if (!fulfillmentPolicyId || !paymentPolicyId || !returnPolicyId) {
     throw new Error(
-      "Your eBay account needs business policies (shipping, payment, returns) configured before listing.",
+      "Shipping, payment, and return policies are required before listing on eBay.",
     );
   }
 
@@ -416,6 +391,15 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
     throw new Error("Select at least one photo for the listing.");
   }
 
+  if (
+    !draft.ebayPolicies?.fulfillmentPolicyId ||
+    !draft.ebayPolicies?.paymentPolicyId ||
+    !draft.ebayPolicies?.returnPolicyId
+  ) {
+    throw new Error("Shipping, payment, and return policies are required before listing on eBay.");
+  }
+
+  const policyIds = draft.ebayPolicies;
   const categoryId = await resolveCategoryId(token, draft.listing);
   const selectedDescriptionPhotos = getSelectedDescriptionPhotos(draft.descriptionPhotos);
   const appOrigin = selectedDescriptionPhotos.length > 0 ? getAppOrigin() : "";
@@ -452,7 +436,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
       variant?.label,
       variant?.ean,
     );
-    const offerId = await createOffer(token, listing, categoryId, quantity, draft.promotions, { sku });
+    const offerId = await createOffer(token, listing, categoryId, quantity, draft.promotions, policyIds, { sku });
     const published = await publishOffer(token, offerId);
 
     return {
@@ -487,7 +471,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
       variant.ean,
     );
 
-    const offerId = await createOffer(token, listing, categoryId, quantity, draft.promotions, {
+    const offerId = await createOffer(token, listing, categoryId, quantity, draft.promotions, policyIds, {
       sku,
       inventoryItemGroupKey: groupKey,
       priceOverride: variant.price,

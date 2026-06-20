@@ -124,6 +124,24 @@ export interface PricingBreakdown {
   currency: string;
 }
 
+export interface EbayPolicyOption {
+  policyId: string;
+  name: string;
+}
+
+export interface EbayBusinessPolicies {
+  fulfillmentPolicyId: string;
+  paymentPolicyId: string;
+  returnPolicyId: string;
+}
+
+export interface EbayPoliciesResponse {
+  fulfillment: EbayPolicyOption[];
+  payment: EbayPolicyOption[];
+  return: EbayPolicyOption[];
+  selected: EbayBusinessPolicies;
+}
+
 export interface ListingDraft {
   product: ListingProductSource;
   listing: GeneratedListing;
@@ -135,6 +153,7 @@ export interface ListingDraft {
   pricing?: ListingPricingPreferences;
   pricingBreakdown?: PricingBreakdown;
   manualPriceOverride?: number | null;
+  ebayPolicies?: EbayBusinessPolicies;
 }
 
 export interface EbayCategorySuggestion {
@@ -219,6 +238,7 @@ export const LISTING_WIZARD_STEPS = [
   "AI Generate",
   "Edit Listing",
   "Photos & Variations",
+  "Shipping & Returns",
   "Volume Discounts",
   "Quality Score",
   "Confirm & List",

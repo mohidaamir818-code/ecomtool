@@ -16,6 +16,7 @@ import { ListingPhotosVariantsStep } from "./ListingPhotosVariantsStep";
 import { ListingProfitCalculatorStep } from "./ListingProfitCalculatorStep";
 import { ListingPromotionsStep } from "./ListingPromotionsStep";
 import { ListingQualityScoreStep } from "./ListingQualityScoreStep";
+import { ListingShippingReturnsStep } from "./ListingShippingReturnsStep";
 import { ListingWizardNav } from "./ListingWizardNav";
 import { ListingWizardProgress } from "./ListingWizardProgress";
 import { VeroBlockModal } from "./VeroBlockModal";
@@ -32,7 +33,7 @@ import type {
 } from "@/types/listing-generator";
 import { defaultSellerPreferences } from "@/types/listing-generator";
 
-const MAX_STEP = 8;
+const MAX_STEP = 9;
 
 export function ListingsShell() {
   const searchParams = useSearchParams();
@@ -362,6 +363,11 @@ export function ListingsShell() {
         if (!variant.imageUrl) return "Each variant must have a photo.";
       }
     }
+    if (step === 6) {
+      if (!draft?.ebayPolicies?.fulfillmentPolicyId) return "Select a shipping policy.";
+      if (!draft?.ebayPolicies?.paymentPolicyId) return "Select a payment policy.";
+      if (!draft?.ebayPolicies?.returnPolicyId) return "Select a return policy.";
+    }
     return null;
   }
 
@@ -403,7 +409,7 @@ export function ListingsShell() {
 
     if (currentStep === 3 && generateLoading) return;
 
-    if (currentStep === 6 && draft && userId && sellerPrefs) {
+    if (currentStep === 7 && draft && userId && sellerPrefs) {
       const merged = promotionsToSellerPreferences(draft.promotions, sellerPrefs);
       try {
         await persistSellerPreferences(userId, merged);
@@ -436,7 +442,7 @@ export function ListingsShell() {
     setPricingBreakdown(saved.pricingBreakdown ?? null);
     setManualPriceOverride(saved.manualPriceOverride ?? null);
     let step = data.draft.currentStep ?? 0;
-    if (step >= 6) step -= 1;
+    if (step >= 6 && !saved.ebayPolicies?.fulfillmentPolicyId) step += 1;
     setCurrentStep(step);
     setResumeOffer(null);
     generateStarted.current = true;
@@ -624,7 +630,15 @@ export function ListingsShell() {
             />
           ) : null}
 
-          {currentStep === 6 && draft && userId && sellerPrefs ? (
+          {currentStep === 6 && draft && userId ? (
+            <ListingShippingReturnsStep
+              userId={userId}
+              draft={draft}
+              onChange={updateDraft}
+            />
+          ) : null}
+
+          {currentStep === 7 && draft && userId && sellerPrefs ? (
             <ListingPromotionsStep
               userId={userId}
               promotions={draft.promotions}
@@ -635,9 +649,9 @@ export function ListingsShell() {
             />
           ) : null}
 
-          {currentStep === 7 && draft ? <ListingQualityScoreStep draft={draft} /> : null}
+          {currentStep === 8 && draft ? <ListingQualityScoreStep draft={draft} /> : null}
 
-          {currentStep === 8 && draft && userId ? (
+          {currentStep === 9 && draft && userId ? (
             <>
               <EbayConnect userId={userId} refreshKey={oauthRefreshKey} />
               <ListingConfirmStep

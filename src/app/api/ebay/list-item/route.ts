@@ -11,6 +11,14 @@ function validateDraft(draft: ListingDraft): string | null {
   if (draft.listing.brand !== "Unbranded") return "Brand must remain Unbranded.";
   if (!draft.photos.some((photo) => photo.selected)) return "Select at least one photo.";
 
+  if (
+    !draft.ebayPolicies?.fulfillmentPolicyId ||
+    !draft.ebayPolicies?.paymentPolicyId ||
+    !draft.ebayPolicies?.returnPolicyId
+  ) {
+    return "Shipping, payment, and return policies are required.";
+  }
+
   for (const variant of draft.variants) {
     if (variant.price <= 0) return "All variant prices must be greater than 0.";
     if (variant.stock < 0) return "Variant stock cannot be negative.";
