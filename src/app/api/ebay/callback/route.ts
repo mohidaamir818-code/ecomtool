@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exchangeEbayCode } from "@/lib/ebay/oauth-user";
+import {
+  decodeEbayOAuthCode,
+  exchangeEbayCode,
+  parseEbayOAuthState,
+} from "@/lib/ebay/oauth-user";
 import { serverEnv } from "@/lib/env";
 
 export async function GET(request: NextRequest) {
   const url = request.nextUrl;
-  const code = url.searchParams.get("code");
+  const rawCode = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const expectedState = request.cookies.get("ebay_oauth_state")?.value;
-  const userId = request.cookies.get("ebay_oauth_user_id")?.value;
+  const cookieUserId = request.cookies.get("ebay_oauth_user_id")?.value;
 
   const appOrigin = serverEnv.appUrl() || url.origin;
   const redirectUrl = new URL("/dashboard/listings", appOrigin);
@@ -21,11 +25,26 @@ export async function GET(request: NextRequest) {
     return response;
   }
 
-  if (!code) {
+  if (!rawCode) {
     return errorRedirect("Missing OAuth code from eBay.");
   }
 
-  if (!state || !expectedState || state !== expectedState || !userId) {
+  if (!state) {
+    return errorRedirect("Invalid OAuth state. Please try again.");
+  }
+
+  const code = decodeEbayOAuthCode(rawCode);
+  const parsedState = parseEbayOAuthState(state);
+  const userId = parsedState?.userId ?? cookieUserId ?? null;
+
+  const legacyCookieMatch =
+    Boolean(expectedState) && state === expectedState && Boolean(cookieUserId);
+
+  if (!parsedState && !legacyCookieMatch) {
+    return errorRedirect("Invalid OAuth state. Please try again.");
+  }
+
+  if (!userId) {
     return errorRedirect("Invalid OAuth state. Please try again.");
   }
 

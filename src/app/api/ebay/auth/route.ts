@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { buildEbayAuthorizeUrl, createEbayOAuthState } from "@/lib/ebay/oauth-user";
+import {
+  buildEbayAuthorizeUrl,
+  createEbayOAuthState,
+  validateEbayOAuthPreflight,
+} from "@/lib/ebay/oauth-user";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 
 export async function GET(request: NextRequest) {
@@ -7,6 +11,11 @@ export async function GET(request: NextRequest) {
 
   if (!userId) {
     return NextResponse.json({ error: "userId is required." }, { status: 400 });
+  }
+
+  const preflightError = validateEbayOAuthPreflight();
+  if (preflightError) {
+    return NextResponse.json({ error: preflightError }, { status: 400 });
   }
 
   const supabase = getSupabaseAdmin();
@@ -20,7 +29,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "User not found." }, { status: 404 });
   }
 
-  const state = createEbayOAuthState();
+  const state = createEbayOAuthState(userId);
   const url = buildEbayAuthorizeUrl(request.nextUrl.origin, state);
 
   const response = NextResponse.redirect(url);

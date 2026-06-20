@@ -13,6 +13,7 @@ const EBAY_SCOPES = [
   "https://api.ebay.com/oauth/api_scope/sell.account",
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
 ].join(" ");
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
 interface TokenResponse {
   access_token?: string;
@@ -20,6 +21,16 @@ interface TokenResponse {
   expires_in?: number;
   refresh_token_expires_in?: number;
   token_type?: string;
+}
+
+export interface EbayOAuthSetupStatus {
+  configured: boolean;
+  authAcceptedUrl: string | null;
+  authDeclinedUrl: string | null;
+  ruNameSet: boolean;
+  appUrlSet: boolean;
+  appIdSet: boolean;
+  certIdSet: boolean;
 }
 
 function basicAuthHeader(): string {
@@ -34,6 +45,26 @@ function basicAuthHeader(): string {
 function resolveExpiry(seconds: number | undefined): string | null {
   if (!seconds || seconds <= 0) return null;
   return new Date(Date.now() + seconds * 1000).toISOString();
+}
+
+function stateSigningSecret(): string {
+  const certId = serverEnv.ebayCertId();
+  if (!certId) {
+    throw new Error("EBAY_CERT_ID is not configured.");
+  }
+  return certId;
+}
+
+function toBase64Url(value: string): string {
+  return Buffer.from(value, "utf8").toString("base64url");
+}
+
+function fromBase64Url(value: string): string {
+  return Buffer.from(value, "base64url").toString("utf8");
+}
+
+function signStatePayload(payloadB64: string): string {
+  return crypto.createHmac("sha256", stateSigningSecret()).update(payloadB64).digest("base64url");
 }
 
 async function persistUserTokens(
@@ -94,6 +125,93 @@ function getEbayOAuthRedirectUri(): string {
   return ruName;
 }
 
+export function getEbayOAuthSetupStatus(): EbayOAuthSetupStatus {
+  const appUrl = serverEnv.appUrl();
+  const ruNameSet = Boolean(serverEnv.ebayRuName());
+  const appUrlSet = Boolean(appUrl);
+  const appIdSet = Boolean(serverEnv.ebayAppId());
+  const certIdSet = Boolean(serverEnv.ebayCertId());
+
+  const authAcceptedUrl = appUrlSet ? `${appUrl}/api/ebay/callback` : null;
+  const authDeclinedUrl = appUrlSet
+    ? `${appUrl}/dashboard/listings?error=connection_failed`
+    : null;
+
+  return {
+    configured: ruNameSet && appUrlSet && appIdSet && certIdSet,
+    authAcceptedUrl,
+    authDeclinedUrl,
+    ruNameSet,
+    appUrlSet,
+    appIdSet,
+    certIdSet,
+  };
+}
+
+export function validateEbayOAuthPreflight(): string | null {
+  const setup = getEbayOAuthSetupStatus();
+  if (!setup.ruNameSet) {
+    return "EBAY_RUNAME is not configured. Set your eBay RuName in environment variables.";
+  }
+  if (!setup.appUrlSet) {
+    return "APP_URL is not configured. Set your production domain in environment variables.";
+  }
+  if (!setup.appIdSet || !setup.certIdSet) {
+    return "EBAY_APP_ID and EBAY_CERT_ID must be configured.";
+  }
+  return null;
+}
+
+export function decodeEbayOAuthCode(code: string): string {
+  try {
+    return decodeURIComponent(code);
+  } catch {
+    return code;
+  }
+}
+
+export function createEbayOAuthState(userId: string): string {
+  const payload = {
+    userId,
+    nonce: crypto.randomUUID(),
+    exp: Date.now() + OAUTH_STATE_TTL_MS,
+  };
+  const payloadB64 = toBase64Url(JSON.stringify(payload));
+  const signature = signStatePayload(payloadB64);
+  return `${payloadB64}.${signature}`;
+}
+
+export function parseEbayOAuthState(state: string): { userId: string } | null {
+  const dotIndex = state.lastIndexOf(".");
+  if (dotIndex <= 0) return null;
+
+  const payloadB64 = state.slice(0, dotIndex);
+  const signature = state.slice(dotIndex + 1);
+  if (!payloadB64 || !signature) return null;
+
+  const expected = signStatePayload(payloadB64);
+  const expectedBuffer = Buffer.from(expected);
+  const signatureBuffer = Buffer.from(signature);
+  if (
+    expectedBuffer.length !== signatureBuffer.length ||
+    !crypto.timingSafeEqual(expectedBuffer, signatureBuffer)
+  ) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(fromBase64Url(payloadB64)) as {
+      userId?: string;
+      exp?: number;
+    };
+    if (!payload.userId || typeof payload.exp !== "number") return null;
+    if (payload.exp < Date.now()) return null;
+    return { userId: payload.userId };
+  } catch {
+    return null;
+  }
+}
+
 export function buildEbayAuthorizeUrl(_origin: string, state: string): string {
   const redirectUri = getEbayOAuthRedirectUri();
   const baseParams = new URLSearchParams({
@@ -112,6 +230,7 @@ export function buildEbayAuthorizeUrl(_origin: string, state: string): string {
 
 export async function exchangeEbayCode(userId: string, code: string, _origin: string): Promise<void> {
   const redirectUri = getEbayOAuthRedirectUri();
+  const decodedCode = decodeEbayOAuthCode(code);
 
   const response = await fetch(`${EBAY_API_BASE}/identity/v1/oauth2/token`, {
     method: "POST",
@@ -121,7 +240,7 @@ export async function exchangeEbayCode(userId: string, code: string, _origin: st
     },
     body: new URLSearchParams({
       grant_type: "authorization_code",
-      code,
+      code: decodedCode,
       redirect_uri: redirectUri,
     }),
     cache: "no-store",
@@ -134,19 +253,16 @@ export async function exchangeEbayCode(userId: string, code: string, _origin: st
   }
 
   await persistUserTokens(userId, raw, raw, null);
-  void updateEbayUsernameInBackground(userId, raw.access_token);
-}
 
-async function updateEbayUsernameInBackground(userId: string, accessToken: string): Promise<void> {
   try {
-    const ebayUsername = await fetchEbayUsername(accessToken);
-    if (!ebayUsername) return;
-
-    const supabase = getSupabaseAdmin();
-    await supabase
-      .from("ebay_oauth_tokens")
-      .update({ ebay_username: ebayUsername })
-      .eq("user_id", userId);
+    const ebayUsername = await fetchEbayUsername(raw.access_token);
+    if (ebayUsername) {
+      const supabase = getSupabaseAdmin();
+      await supabase
+        .from("ebay_oauth_tokens")
+        .update({ ebay_username: ebayUsername })
+        .eq("user_id", userId);
+    }
   } catch {
     // Username is optional; OAuth tokens are already saved.
   }
@@ -236,10 +352,6 @@ export async function getEbayConnectionStatus(userId: string): Promise<EbayConne
     ebayUsername: data.ebay_username ?? null,
     accessTokenExpiresAt: data.access_token_expires_at ?? null,
   };
-}
-
-export function createEbayOAuthState(): string {
-  return crypto.randomUUID();
 }
 
 export async function disconnectEbayAccount(userId: string): Promise<void> {

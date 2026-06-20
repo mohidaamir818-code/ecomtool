@@ -100,7 +100,9 @@ export function ListingsShell() {
             return current;
           }
           if (nextStatus.connected) {
-            oauthJustSucceeded.current = false;
+            if (nextStatus.ebayUsername) {
+              oauthJustSucceeded.current = false;
+            }
           }
           return nextStatus;
         });
@@ -170,7 +172,24 @@ export function ListingsShell() {
 
   useEffect(() => {
     if (!oauthJustSucceeded.current || !userId) return;
-    void loadEbayStatus({ silent: true });
+
+    let cancelled = false;
+
+    async function pollForUsername() {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        if (cancelled) return;
+        const status = await loadEbayStatus({ silent: true });
+        if (status?.ebayUsername) return;
+        if (attempt < 4) {
+          await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        }
+      }
+    }
+
+    void pollForUsername();
+    return () => {
+      cancelled = true;
+    };
   }, [userId, loadEbayStatus]);
 
   useEffect(() => {

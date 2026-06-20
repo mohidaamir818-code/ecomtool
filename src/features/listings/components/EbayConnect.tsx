@@ -22,8 +22,8 @@ export function EbayConnect({ userId, refreshKey }: EbayConnectProps) {
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [toast, setToast] = useState<{ message: string; isError: boolean } | null>(null);
 
-  const loadStatus = useCallback(async () => {
-    setLoadingStatus(true);
+  const loadStatus = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) setLoadingStatus(true);
     try {
       const response = await fetch(`/api/ebay/status?userId=${encodeURIComponent(userId)}`);
       const data = await response.json();
@@ -37,7 +37,7 @@ export function EbayConnect({ userId, refreshKey }: EbayConnectProps) {
           if (oauthJustSucceeded.current && !nextStatus.connected) {
             return current;
           }
-          if (nextStatus.connected) {
+          if (nextStatus.connected && nextStatus.ebayUsername) {
             oauthJustSucceeded.current = false;
           }
           return nextStatus;
@@ -46,7 +46,7 @@ export function EbayConnect({ userId, refreshKey }: EbayConnectProps) {
       }
       return null;
     } finally {
-      setLoadingStatus(false);
+      if (!options?.silent) setLoadingStatus(false);
     }
   }, [userId]);
 
@@ -75,7 +75,24 @@ export function EbayConnect({ userId, refreshKey }: EbayConnectProps) {
 
   useEffect(() => {
     if (!oauthJustSucceeded.current) return;
-    void loadStatus();
+
+    let cancelled = false;
+
+    async function pollForUsername() {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        if (cancelled) return;
+        const nextStatus = await loadStatus({ silent: true });
+        if (nextStatus?.ebayUsername) return;
+        if (attempt < 4) {
+          await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        }
+      }
+    }
+
+    void pollForUsername();
+    return () => {
+      cancelled = true;
+    };
   }, [userId, loadStatus]);
 
   useEffect(() => {
@@ -107,7 +124,8 @@ export function EbayConnect({ userId, refreshKey }: EbayConnectProps) {
       <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
         <p className="text-sm font-medium text-emerald-800">
           <span className="mr-1">✓</span>
-          Connected to eBay{status.ebayUsername ? ` as ${status.ebayUsername}` : ""}
+          Connected to eBay
+          {status.ebayUsername ? ` as ${status.ebayUsername}` : " — loading your store name..."}
         </p>
       </div>
     );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { EBAY_BORDER, ebayPrimaryButtonClass } from "@/features/listings/lib/ebay-ui";
 import { EbayLogo } from "./EbayLogo";
 
@@ -11,6 +11,12 @@ const BENEFITS = [
   "AI-powered titles and descriptions",
 ];
 
+interface OAuthSetupInfo {
+  configured: boolean;
+  authAcceptedUrl: string | null;
+  authDeclinedUrl: string | null;
+}
+
 interface EbayStoreConnectGateProps {
   userId: string;
   errorMessage?: string;
@@ -18,6 +24,7 @@ interface EbayStoreConnectGateProps {
 
 export function EbayStoreConnectGate({ userId, errorMessage }: EbayStoreConnectGateProps) {
   const authUrl = `/api/ebay/auth?userId=${encodeURIComponent(userId)}`;
+  const [setup, setSetup] = useState<OAuthSetupInfo | null>(null);
 
   useEffect(() => {
     function handlePageShow(event: PageTransitionEvent) {
@@ -28,6 +35,21 @@ export function EbayStoreConnectGate({ userId, errorMessage }: EbayStoreConnectG
 
     window.addEventListener("pageshow", handlePageShow);
     return () => window.removeEventListener("pageshow", handlePageShow);
+  }, []);
+
+  useEffect(() => {
+    void fetch("/api/ebay/oauth-setup")
+      .then((response) => response.json())
+      .then((data) => {
+        setSetup({
+          configured: Boolean(data.configured),
+          authAcceptedUrl: data.authAcceptedUrl ?? null,
+          authDeclinedUrl: data.authDeclinedUrl ?? null,
+        });
+      })
+      .catch(() => {
+        setSetup({ configured: true, authAcceptedUrl: null, authDeclinedUrl: null });
+      });
   }, []);
 
   return (
@@ -44,6 +66,24 @@ export function EbayStoreConnectGate({ userId, errorMessage }: EbayStoreConnectG
           Connect Your eBay Store
         </h2>
         <p className="mt-2 text-base text-[#707070]">Start listing products in one click</p>
+
+        {setup && !setup.configured ? (
+          <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-left text-sm text-amber-900">
+            <p className="font-medium">eBay OAuth is not fully configured.</p>
+            <p className="mt-2">
+              In the eBay Developer Portal, set your RuName <strong>Auth Accepted URL</strong> to:
+            </p>
+            <p className="mt-1 break-all font-mono text-xs">
+              {setup.authAcceptedUrl ?? "Set APP_URL in your environment first"}
+            </p>
+            {setup.authDeclinedUrl ? (
+              <p className="mt-2 text-xs text-amber-800">
+                Auth Declined URL:{" "}
+                <span className="break-all font-mono">{setup.authDeclinedUrl}</span>
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         <ul className="mt-8 space-y-3 text-left">
           {BENEFITS.map((benefit) => (
