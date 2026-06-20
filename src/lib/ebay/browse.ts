@@ -64,7 +64,6 @@ function ebayHeaders(token: string, marketplaceId?: EbayMarketplaceId): HeadersI
   return {
     Authorization: `Bearer ${token}`,
     "X-EBAY-C-MARKETPLACE-ID": config.marketplaceId,
-    "Accept-Language": config.acceptLanguage,
     "X-EBAY-C-ENDUSERCTX": `contextualLocation=country=${config.endUserCountry}`,
   };
 }

@@ -22,12 +22,24 @@ import { DEFAULT_PROMOTIONS } from "@/types/listing-generator";
 const EBAY_API_BASE = "https://api.ebay.com";
 const MAX_PHOTOS = 24;
 
-function sellHeaders(token: string): HeadersInit {
+function taxonomyHeaders(token: string, acceptLanguage: string): HeadersInit {
   return {
     Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
     Accept: "application/json",
+    "Accept-Language": acceptLanguage,
   };
+}
+
+function inventoryHeaders(token: string, contentLanguage: string, withBody = true): HeadersInit {
+  const headers: HeadersInit = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/json",
+    "Content-Language": contentLanguage,
+  };
+  if (withBody) {
+    headers["Content-Type"] = "application/json";
+  }
+  return headers;
 }
 
 function mapCondition(condition: string): string {
@@ -103,7 +115,7 @@ export async function getCategorySuggestions(
   url.searchParams.set("q", query.slice(0, 80));
 
   const response = await fetch(url.toString(), {
-    headers: sellHeaders(token),
+    headers: taxonomyHeaders(token, config.acceptLanguage),
     cache: "no-store",
   });
 
@@ -148,7 +160,7 @@ export async function getItemAspectsForCategory(
   url.searchParams.set("category_id", categoryId);
 
   const response = await fetch(url.toString(), {
-    headers: sellHeaders(token),
+    headers: taxonomyHeaders(token, config.acceptLanguage),
     cache: "no-store",
   });
 
@@ -190,6 +202,7 @@ async function upsertInventoryItem(
   listing: GeneratedListing,
   imageUrls: string[],
   quantity: number,
+  contentLanguage: string,
   variantLabel?: string,
   gtin?: string,
 ): Promise<void> {
@@ -218,7 +231,7 @@ async function upsertInventoryItem(
 
   const response = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
     method: "PUT",
-    headers: sellHeaders(token),
+    headers: inventoryHeaders(token, contentLanguage),
     body: JSON.stringify(body),
     cache: "no-store",
   });
@@ -236,6 +249,7 @@ async function upsertInventoryItemGroup(
   imageUrls: string[],
   variantSkus: string[],
   variantLabels: string[],
+  contentLanguage: string,
 ): Promise<void> {
   const body = {
     inventoryItemGroupKey: groupKey,
@@ -258,7 +272,7 @@ async function upsertInventoryItemGroup(
     `${EBAY_API_BASE}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupKey)}`,
     {
       method: "PUT",
-      headers: sellHeaders(token),
+      headers: inventoryHeaders(token, contentLanguage),
       body: JSON.stringify(body),
       cache: "no-store",
     },
@@ -325,7 +339,7 @@ async function createOffer(
 
   const response = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/offer`, {
     method: "POST",
-    headers: sellHeaders(token),
+    headers: inventoryHeaders(token, config.contentLanguage),
     body: JSON.stringify(body),
     cache: "no-store",
   });
@@ -349,7 +363,7 @@ async function publishOfferByGroup(
     `${EBAY_API_BASE}/sell/inventory/v1/offer/publish_by_inventory_item_group`,
     {
       method: "POST",
-      headers: sellHeaders(token),
+      headers: inventoryHeaders(token, config.contentLanguage),
       body: JSON.stringify({
         inventoryItemGroupKey: groupKey,
         marketplaceId: config.marketplaceId,
@@ -373,12 +387,13 @@ async function publishOfferByGroup(
 async function publishOffer(
   token: string,
   offerId: string,
+  contentLanguage: string,
 ): Promise<{ listingId: string | null }> {
   const response = await fetch(
     `${EBAY_API_BASE}/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/publish`,
     {
       method: "POST",
-      headers: sellHeaders(token),
+      headers: inventoryHeaders(token, contentLanguage, false),
       cache: "no-store",
     },
   );
@@ -456,6 +471,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
       listing,
       images,
       quantity,
+      marketplaceConfig.contentLanguage,
       variant?.label,
       variant?.ean,
     );
@@ -469,7 +485,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
       marketplaceId,
       { sku },
     );
-    const published = await publishOffer(token, offerId);
+    const published = await publishOffer(token, offerId, marketplaceConfig.contentLanguage);
 
     return {
       sku,
@@ -501,6 +517,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
       variantListing,
       images,
       quantity,
+      marketplaceConfig.contentLanguage,
       variant.label,
       variant.ean,
     );
@@ -530,6 +547,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
     selectedPhotos,
     variantSkus,
     variantLabels,
+    marketplaceConfig.contentLanguage,
   );
 
   const published = await publishOfferByGroup(token, groupKey, marketplaceId);
