@@ -2,6 +2,7 @@ export { AiListingGenerator } from "./AiListingGenerator";
 export { EbayConditionSelector } from "./EbayConditionSelector";
 export { EbayConnect } from "./EbayConnect";
 export { EbayConnectedBanner } from "./EbayConnectedBanner";
+export { EbayDescriptionImagesPanel } from "./EbayDescriptionImagesPanel";
 export { EbayItemSpecificsForm } from "./EbayItemSpecificsForm";
 export { EbayLogo } from "./EbayLogo";
 export { EbayOAuthSuccess } from "./EbayOAuthSuccess";

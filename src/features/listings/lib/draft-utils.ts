@@ -10,7 +10,7 @@ import type {
 } from "@/types/listing-generator";
 import { DEFAULT_PROMOTIONS } from "@/types/listing-generator";
 import { buildVariantPrices, calculatePricingBreakdown } from "@/lib/listings/pricing";
-import { filterSupplierImages } from "@/lib/listings/listing-sanitize";
+import { filterListingImages } from "@/lib/listings/listing-sanitize";
 import { buildPreviewSku } from "@/features/listings/lib/ebay-ui";
 
 export function normalizeVariantDraft(
@@ -28,6 +28,11 @@ export function normalizeVariantDraft(
 export function normalizeDraftVariants(draft: ListingDraft): ListingDraft {
   return {
     ...draft,
+    product: {
+      ...draft.product,
+      descriptionImages: draft.product.descriptionImages ?? [],
+    },
+    descriptionPhotos: draft.descriptionPhotos ?? [],
     variationPhotoAttribute: draft.variationPhotoAttribute ?? "default",
     variants: draft.variants.map((variant) =>
       normalizeVariantDraft(variant, draft.product.externalId),
@@ -45,11 +50,21 @@ export function buildInitialDraft(
     promotions?: VolumePromotionTier[];
   },
 ): ListingDraft {
-  const allImages = filterSupplierImages(product.images.filter(Boolean));
+  const galleryFilter = filterListingImages(product.images.filter(Boolean));
   const imagePool =
-    allImages.length > 0 ? allImages : product.imageUrl ? filterSupplierImages([product.imageUrl]) : [];
+    galleryFilter.allowed.length > 0
+      ? galleryFilter.allowed
+      : product.imageUrl
+        ? filterListingImages([product.imageUrl]).allowed
+        : [];
 
   const photos: ListingPhotoDraft[] = imagePool.slice(0, 24).map((url) => ({
+    url,
+    selected: true,
+  }));
+
+  const descriptionFilter = filterListingImages(product.descriptionImages ?? []);
+  const descriptionPhotos: ListingPhotoDraft[] = descriptionFilter.allowed.map((url) => ({
     url,
     selected: true,
   }));
@@ -74,6 +89,7 @@ export function buildInitialDraft(
       ),
     },
     photos,
+    descriptionPhotos,
     variants,
     promotions: (options?.promotions ?? DEFAULT_PROMOTIONS).map((tier) => ({ ...tier })),
     variationPhotoAttribute: "default",
@@ -108,9 +124,37 @@ export function summarizeDeals(promotions: ListingDraft["promotions"]): string {
     .join(", ");
 }
 
-export function proxyImageUrl(originalUrl: string): string {
+export function proxyImageUrl(originalUrl: string, appOrigin = ""): string {
   if (!originalUrl) return "";
-  return `/api/proxy-image?url=${encodeURIComponent(originalUrl)}`;
+  const path = `/api/proxy-image?url=${encodeURIComponent(originalUrl)}`;
+  if (!appOrigin) return path;
+  return `${appOrigin.replace(/\/$/, "")}${path}`;
+}
+
+export function getSelectedDescriptionPhotos(
+  descriptionPhotos: ListingPhotoDraft[] | undefined,
+): string[] {
+  if (!descriptionPhotos?.length) return [];
+  const selected = descriptionPhotos.filter((photo) => photo.selected).map((photo) => photo.url);
+  return selected.length > 0 ? selected : descriptionPhotos.map((photo) => photo.url);
+}
+
+export function buildDescriptionHtmlWithImages(
+  descriptionHtml: string,
+  descriptionPhotos: ListingPhotoDraft[] | undefined,
+  appOrigin: string,
+): string {
+  const urls = getSelectedDescriptionPhotos(descriptionPhotos);
+  if (urls.length === 0) return descriptionHtml;
+
+  const imagesHtml = urls
+    .map(
+      (url) =>
+        `<img src="${proxyImageUrl(url, appOrigin)}" alt="" style="max-width:100%;" />`,
+    )
+    .join("\n");
+
+  return `${descriptionHtml}\n<div class="description-images">\n${imagesHtml}\n</div>`;
 }
 
 export function recalculateDraftPricing(

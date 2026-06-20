@@ -8,6 +8,7 @@ const SUPPLIER_TERMS = [
   "wholesale",
   "dhgate",
   "temu",
+  "shein",
   "made in china",
   "ships from china",
   "processing time",
@@ -15,21 +16,66 @@ const SUPPLIER_TERMS = [
   "1688",
 ];
 
-const SUPPLIER_URL_PATTERNS = [
-  /aliexpress/i,
-  /alibaba/i,
-  /dhgate/i,
-  /temu/i,
-  /1688/i,
+const RESTRICTED_URL_KEYWORDS = [
+  "aliexpress",
+  "alibaba",
+  "dropship",
+  "dhgate",
+  "temu",
+  "shein",
+  "china",
+  "supplier",
+  "wholesale",
+];
+
+const RESTRICTED_BRAND_KEYWORDS = [
+  "nike",
+  "adidas",
+  "apple",
+  "samsung",
+  "sony",
+  "gucci",
+  "louisvuitton",
+  "louis-vuitton",
+  "prada",
+  "chanel",
+  "rolex",
+  "microsoft",
+  "google",
+  "canon",
+  "dyson",
+];
+
+const RESTRICTED_URL_PATTERNS = [
+  /[\u4e00-\u9fff]/,
+  /[$£€]\s*\d+/,
+  /\d+\s*[$£€]/,
+  /\bsale\b/i,
+  /\bdeal\b/i,
+  /\bpromo\b/i,
+  /%\s*off/i,
+  /%off/i,
+  /\bdiscount\b/i,
+  /processing[\s_-]?time/i,
+  /delivery[\s_-]?time/i,
+  /shipping[\s_-]?time/i,
+  /\bwww\./i,
+  /\.cn\//i,
   /watermark/i,
   /sale[\s_-]?price/i,
-  /promo/i,
   /-sum\./i,
-  /[\u4e00-\u9fff]/,
 ];
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function decodeUrlSafe(url: string): string {
+  try {
+    return decodeURIComponent(url);
+  } catch {
+    return url;
+  }
 }
 
 export function sanitizeListingText(text: string): string {
@@ -48,14 +94,50 @@ export function sanitizeListingHtml(html: string): string {
   });
 }
 
-export function isSupplierImageUrl(url: string): boolean {
+export function isRestrictedImageUrl(url: string): boolean {
   if (!url.trim()) return true;
-  const decoded = decodeURIComponent(url);
-  return SUPPLIER_URL_PATTERNS.some((pattern) => pattern.test(decoded));
+
+  const decoded = decodeUrlSafe(url).toLowerCase();
+
+  for (const keyword of RESTRICTED_URL_KEYWORDS) {
+    if (decoded.includes(keyword)) return true;
+  }
+
+  for (const brand of RESTRICTED_BRAND_KEYWORDS) {
+    if (decoded.includes(brand)) return true;
+  }
+
+  return RESTRICTED_URL_PATTERNS.some((pattern) => pattern.test(decoded));
+}
+
+export function isSupplierImageUrl(url: string): boolean {
+  return isRestrictedImageUrl(url);
+}
+
+export function filterListingImages(urls: string[]): {
+  allowed: string[];
+  removedCount: number;
+} {
+  const allowed: string[] = [];
+  let removedCount = 0;
+
+  for (const url of urls) {
+    if (!url?.trim()) {
+      removedCount += 1;
+      continue;
+    }
+    if (isRestrictedImageUrl(url)) {
+      removedCount += 1;
+    } else {
+      allowed.push(url);
+    }
+  }
+
+  return { allowed, removedCount };
 }
 
 export function filterSupplierImages(urls: string[]): string[] {
-  return urls.filter((url) => url && !isSupplierImageUrl(url));
+  return filterListingImages(urls).allowed;
 }
 
 export function sanitizeListingContent(input: {

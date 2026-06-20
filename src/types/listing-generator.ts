@@ -7,6 +7,11 @@ export interface ListingProductVariant {
   imageUrl?: string | null;
 }
 
+export interface ListingImageFilterMeta {
+  galleryRemoved: number;
+  descriptionRemoved: number;
+}
+
 export interface ListingProductSource {
   source: "aliexpress";
   externalId: string;
@@ -14,6 +19,8 @@ export interface ListingProductSource {
   title: string;
   imageUrl: string | null;
   images: string[];
+  descriptionImages: string[];
+  imageFilterMeta?: ListingImageFilterMeta;
   price: number;
   currency: string;
   description: string | null;
@@ -121,6 +128,7 @@ export interface ListingDraft {
   product: ListingProductSource;
   listing: GeneratedListing;
   photos: ListingPhotoDraft[];
+  descriptionPhotos?: ListingPhotoDraft[];
   variants: ListingVariantDraft[];
   promotions: VolumePromotionTier[];
   variationPhotoAttribute?: VariationPhotoAttribute;

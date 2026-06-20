@@ -43,4 +43,13 @@ export const serverEnv = {
   smtpFrom: () => process.env.SMTP_FROM ?? process.env.SMTP_USER ?? "",
   amazefApiUrl: () => process.env.AMAZEF_API_URL ?? "",
   amazefApiKey: () => process.env.AMAZEF_API_KEY ?? "",
+  appUrl: () => process.env.APP_URL?.trim().replace(/\/$/, "") ?? "",
 } as const;
+
+export function getAppOrigin(): string {
+  const url = serverEnv.appUrl();
+  if (!url) {
+    throw new Error("APP_URL is not configured. Set APP_URL in your environment to publish listings with description images.");
+  }
+  return url;
+}

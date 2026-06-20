@@ -1,7 +1,7 @@
 "use client";
 
 import type { ListingDraft } from "@/types/listing-generator";
-import { formatListingPrice } from "@/features/listings/lib/draft-utils";
+import { buildDescriptionHtmlWithImages, formatListingPrice } from "@/features/listings/lib/draft-utils";
 import { ProxiedImage } from "./ProxiedImage";
 
 interface ListingPreviewModalProps {
@@ -11,6 +11,11 @@ interface ListingPreviewModalProps {
 
 export function ListingPreviewModal({ draft, onClose }: ListingPreviewModalProps) {
   const mainPhoto = draft.photos[0]?.url;
+  const previewDescriptionHtml = buildDescriptionHtmlWithImages(
+    draft.listing.descriptionHtml,
+    draft.descriptionPhotos,
+    typeof window !== "undefined" ? window.location.origin : "",
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -57,8 +62,8 @@ export function ListingPreviewModal({ draft, onClose }: ListingPreviewModalProps
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-[#707070]">Description</p>
             <div
-              className="prose prose-sm mt-2 max-w-none text-[#191919]"
-              dangerouslySetInnerHTML={{ __html: draft.listing.descriptionHtml }}
+              className="prose prose-sm mt-2 max-w-none text-[#191919] [&_img]:max-w-full"
+              dangerouslySetInnerHTML={{ __html: previewDescriptionHtml }}
             />
           </div>
         </div>

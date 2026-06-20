@@ -1,5 +1,7 @@
 import "server-only";
 
+import { buildDescriptionHtmlWithImages, getSelectedDescriptionPhotos } from "@/features/listings/lib/draft-utils";
+import { getAppOrigin } from "@/lib/env";
 import { getEbayUserAccessToken } from "@/lib/ebay/oauth-user";
 import type {
   EbayCategorySuggestion,
@@ -415,7 +417,18 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
   }
 
   const categoryId = await resolveCategoryId(token, draft.listing);
-  const listing = { ...draft.listing, categoryId, brand: "Unbranded" as const };
+  const selectedDescriptionPhotos = getSelectedDescriptionPhotos(draft.descriptionPhotos);
+  const appOrigin = selectedDescriptionPhotos.length > 0 ? getAppOrigin() : "";
+  const listing = {
+    ...draft.listing,
+    categoryId,
+    brand: "Unbranded" as const,
+    descriptionHtml: buildDescriptionHtmlWithImages(
+      draft.listing.descriptionHtml,
+      draft.descriptionPhotos,
+      appOrigin,
+    ),
+  };
 
   const activeVariants = draft.variants.length > 0 ? draft.variants : [];
   const isMultiVariant = activeVariants.length > 1;

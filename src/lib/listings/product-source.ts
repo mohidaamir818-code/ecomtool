@@ -1,7 +1,7 @@
 import "server-only";
 
-import { fetchAliExpressProduct } from "@/lib/aliexpress/client";
-import { filterSupplierImages, sanitizeListingText } from "@/lib/listings/listing-sanitize";
+import { fetchAliExpressProduct, fetchDescriptionHtmlFromPage, extractImagesFromHtml } from "@/lib/aliexpress/client";
+import { filterListingImages, sanitizeListingText } from "@/lib/listings/listing-sanitize";
 import type { ListingProductSource } from "@/types/listing-generator";
 
 const BROWSER_HEADERS = {
@@ -19,17 +19,24 @@ function stripHtml(value: string): string {
     .trim();
 }
 
-async function fetchDescriptionFromHtml(url: string): Promise<string | null> {
+async function fetchDescriptionFromHtml(url: string): Promise<{ text: string | null; html: string | null }> {
   try {
+    const htmlFromPage = await fetchDescriptionHtmlFromPage(url);
+    if (htmlFromPage) {
+      const text = stripHtml(htmlFromPage);
+      if (text.length >= 20) {
+        return { text: text.slice(0, 4000), html: htmlFromPage };
+      }
+    }
+
     const response = await fetch(url, {
       headers: BROWSER_HEADERS,
       cache: "no-store",
     });
 
-    if (!response.ok) return null;
+    if (!response.ok) return { text: null, html: null };
 
     const html = await response.text();
-
     const patterns = [
       /"description"\s*:\s*"((?:\\.|[^"\\])*)"/,
       /"productDesc"\s*:\s*"((?:\\.|[^"\\])*)"/,
@@ -47,40 +54,63 @@ async function fetchDescriptionFromHtml(url: string): Promise<string | null> {
         .replace(/\\u0026/g, "&");
 
       const text = stripHtml(decoded);
-      if (text.length >= 20) return text.slice(0, 4000);
+      if (text.length >= 20) {
+        return {
+          text: text.slice(0, 4000),
+          html: decoded.includes("<img") ? decoded : null,
+        };
+      }
     }
 
-    return null;
+    return { text: null, html: null };
   } catch {
-    return null;
+    return { text: null, html: null };
   }
+}
+
+function dedupeAgainstGallery(urls: string[], gallery: string[]): string[] {
+  const gallerySet = new Set(gallery);
+  return urls.filter((url) => url && !gallerySet.has(url));
 }
 
 export async function fetchListingProductSource(url: string): Promise<ListingProductSource> {
   const product = await fetchAliExpressProduct(url);
+  const descriptionPayload = await fetchDescriptionFromHtml(product.productUrl);
   const description = sanitizeListingText(
-    product.description?.trim() ||
-      (await fetchDescriptionFromHtml(product.productUrl)) ||
-      product.title,
+    product.description?.trim() || descriptionPayload.text || product.title,
   );
 
   const rawImages =
     product.images?.filter(Boolean) ?? (product.imageUrl ? [product.imageUrl] : []);
-  const images = filterSupplierImages(rawImages);
+  const galleryFilter = filterListingImages(rawImages);
+  const images = galleryFilter.allowed;
   const imageUrl = images[0] ?? null;
+
+  const rawDescriptionImages = dedupeAgainstGallery(
+    [
+      ...(product.descriptionImages ?? []),
+      ...(descriptionPayload.html ? extractImagesFromHtml(descriptionPayload.html) : []),
+    ],
+    images,
+  );
+  const descriptionFilter = filterListingImages(rawDescriptionImages);
 
   const variants = product.variants
     ?.filter((variant) => variant.stock != null && variant.stock > 0)
-    .map((variant) => ({
-      id: variant.id,
-      label: variant.label,
-      price: variant.price,
-      currency: variant.currency,
-      stock: variant.stock,
-      imageUrl: variant.imageUrl
-        ? filterSupplierImages([variant.imageUrl])[0] ?? null
-        : null,
-    }));
+    .map((variant) => {
+      const variantFilter = variant.imageUrl
+        ? filterListingImages([variant.imageUrl])
+        : { allowed: [] as string[], removedCount: 0 };
+
+      return {
+        id: variant.id,
+        label: variant.label,
+        price: variant.price,
+        currency: variant.currency,
+        stock: variant.stock,
+        imageUrl: variantFilter.allowed[0] ?? null,
+      };
+    });
 
   return {
     source: "aliexpress",
@@ -89,6 +119,11 @@ export async function fetchListingProductSource(url: string): Promise<ListingPro
     title: sanitizeListingText(product.title),
     imageUrl,
     images,
+    descriptionImages: descriptionFilter.allowed,
+    imageFilterMeta: {
+      galleryRemoved: galleryFilter.removedCount,
+      descriptionRemoved: descriptionFilter.removedCount,
+    },
     price: product.price,
     currency: product.currency,
     description,

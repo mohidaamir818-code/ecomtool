@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import sharp from "sharp";
 
 const ALLOWED_HOSTS = [
   "ae01.alicdn.com",
@@ -21,6 +22,40 @@ function isAllowedImageUrl(raw: string): boolean {
     );
   } catch {
     return false;
+  }
+}
+
+async function stripImageMetadata(buffer: Buffer, contentType: string): Promise<{ buffer: Buffer; contentType: string }> {
+  try {
+    const image = sharp(buffer, { failOn: "none" }).rotate();
+
+    if (contentType.includes("png")) {
+      return {
+        buffer: await image.png().toBuffer(),
+        contentType: "image/png",
+      };
+    }
+
+    if (contentType.includes("webp")) {
+      return {
+        buffer: await image.webp().toBuffer(),
+        contentType: "image/webp",
+      };
+    }
+
+    if (contentType.includes("gif")) {
+      return {
+        buffer: await image.gif().toBuffer(),
+        contentType: "image/gif",
+      };
+    }
+
+    return {
+      buffer: await image.jpeg({ quality: 90 }).toBuffer(),
+      contentType: "image/jpeg",
+    };
+  } catch {
+    return { buffer, contentType };
   }
 }
 
@@ -53,11 +88,12 @@ export async function GET(request: NextRequest) {
     }
 
     const contentType = response.headers.get("content-type") ?? "image/jpeg";
-    const buffer = await response.arrayBuffer();
+    const rawBuffer = Buffer.from(await response.arrayBuffer());
+    const { buffer, contentType: outputType } = await stripImageMetadata(rawBuffer, contentType);
 
-    return new NextResponse(buffer, {
+    return new NextResponse(new Uint8Array(buffer), {
       headers: {
-        "Content-Type": contentType,
+        "Content-Type": outputType,
         "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
       },
     });

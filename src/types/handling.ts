@@ -24,6 +24,7 @@ export interface HandlingProductData {
   selectedVariantId?: string;
   description?: string | null;
   images?: string[];
+  descriptionImages?: string[];
 }
 
 export interface HandlingProduct {

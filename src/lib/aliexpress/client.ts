@@ -834,6 +834,144 @@ function normalizeDsSkuList(raw: unknown): Array<Record<string, unknown>> {
   return [];
 }
 
+function normalizeImageUrl(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.startsWith("data:")) return null;
+  if (trimmed.startsWith("//")) return `https:${trimmed}`;
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
+  return null;
+}
+
+function dedupeUrls(urls: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const url of urls) {
+    const normalized = normalizeImageUrl(url);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+export function extractImagesFromHtml(html: string): string[] {
+  if (!html.trim()) return [];
+
+  const urls: string[] = [];
+  const imgTagPattern = /<img[^>]+>/gi;
+
+  for (const tag of html.match(imgTagPattern) ?? []) {
+    const srcMatch = tag.match(/\bsrc=["']([^"']+)["']/i);
+    if (srcMatch?.[1]) urls.push(srcMatch[1]);
+
+    const dataSrcMatch = tag.match(/\bdata-src=["']([^"']+)["']/i);
+    if (dataSrcMatch?.[1]) urls.push(dataSrcMatch[1]);
+
+    const srcsetMatch = tag.match(/\bsrcset=["']([^"']+)["']/i);
+    if (srcsetMatch?.[1]) {
+      const first = srcsetMatch[1].split(",")[0]?.trim().split(/\s+/)[0];
+      if (first) urls.push(first);
+    }
+  }
+
+  return dedupeUrls(urls);
+}
+
+function collectHtmlStrings(value: unknown, keyHint: string, output: string[]): void {
+  if (typeof value === "string" && /<img/i.test(value) && /description|detail/i.test(keyHint)) {
+    output.push(value);
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectHtmlStrings(item, keyHint, output);
+    return;
+  }
+
+  if (value && typeof value === "object") {
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      collectHtmlStrings(nested, key, output);
+    }
+  }
+}
+
+export function extractDescriptionImagesFromDsResult(result: Record<string, unknown>): string[] {
+  const htmlChunks: string[] = [];
+  const base = result.ae_item_base_info_dto as Record<string, unknown> | undefined;
+  const descriptionDto = result.ae_item_description_dto as Record<string, unknown> | undefined;
+
+  for (const source of [base, descriptionDto, result]) {
+    if (!source) continue;
+    for (const key of ["detail", "mobile_detail", "product_description", "description"]) {
+      const value = source[key];
+      if (typeof value === "string" && value.includes("<img")) {
+        htmlChunks.push(value);
+      }
+    }
+  }
+
+  collectHtmlStrings(result, "", htmlChunks);
+
+  return dedupeUrls(htmlChunks.flatMap((chunk) => extractImagesFromHtml(chunk)));
+}
+
+export async function fetchDescriptionHtmlFromPage(productUrl: string): Promise<string | null> {
+  try {
+    const response = await fetch(productUrl, {
+      headers: BROWSER_HEADERS,
+      cache: "no-store",
+    });
+
+    if (!response.ok) return null;
+
+    const html = await response.text();
+    const patterns = [
+      /"description"\s*:\s*"((?:\\.|[^"\\])*)"/,
+      /"productDesc"\s*:\s*"((?:\\.|[^"\\])*)"/,
+    ];
+
+    for (const pattern of patterns) {
+      const match = html.match(pattern);
+      if (!match?.[1]) continue;
+
+      const decoded = match[1]
+        .replace(/\\n/g, "\n")
+        .replace(/\\"/g, '"')
+        .replace(/\\u0026/g, "&");
+
+      if (decoded.includes("<img") || decoded.length >= 20) {
+        return decoded;
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function excludeGalleryImages(descriptionImages: string[], galleryImages: string[]): string[] {
+  const gallerySet = new Set(galleryImages.map((url) => normalizeImageUrl(url)).filter(Boolean));
+  return descriptionImages.filter((url) => !gallerySet.has(url));
+}
+
+async function enrichDescriptionImages(product: HandlingProductData): Promise<HandlingProductData> {
+  const gallery = product.images?.filter(Boolean) ?? (product.imageUrl ? [product.imageUrl] : []);
+  let descriptionImages = excludeGalleryImages(product.descriptionImages ?? [], gallery);
+
+  if (descriptionImages.length === 0) {
+    const html = await fetchDescriptionHtmlFromPage(product.productUrl);
+    if (html) {
+      descriptionImages = excludeGalleryImages(extractImagesFromHtml(html), gallery);
+    }
+  }
+
+  return {
+    ...product,
+    descriptionImages,
+  };
+}
+
 function parseDsProductPayload(
   payload: Record<string, unknown>,
   productId: string,
@@ -883,6 +1021,10 @@ function parseDsProductPayload(
   const multimedia = result.ae_multimedia_info_dto as Record<string, unknown> | undefined;
   const parsedImages = parseMultimediaImages(multimedia);
   const imageUrl = parsedImages[0] ?? null;
+  const descriptionImages = excludeGalleryImages(
+    extractDescriptionImagesFromDsResult(result),
+    parsedImages,
+  );
 
   const soldCount = parseNumber(base?.sales_count);
   const ratingValue = parseNumber(base?.avg_evaluation_rating);
@@ -914,6 +1056,7 @@ function parseDsProductPayload(
     rating: ratingValue != null && ratingValue > 0 ? ratingValue : null,
     variants,
     selectedVariantId: defaultVariant.id,
+    descriptionImages,
   };
 }
 
@@ -1109,16 +1252,22 @@ export async function fetchAliExpressProduct(url: string): Promise<HandlingProdu
       resolvedUrl,
     ]);
 
+    const enriched = await enrichDescriptionImages({
+      ...openPlatformProduct,
+      productUrl: canonicalUrl,
+    });
+
     console.log("[AliExpress Fetch Debug] Final source selected", {
       source: "open-platform",
       productId,
-      finalPrice: openPlatformProduct.price,
-      finalCurrency: openPlatformProduct.currency,
-      finalStock: openPlatformProduct.stock,
-      finalOrders: openPlatformProduct.orders,
+      finalPrice: enriched.price,
+      finalCurrency: enriched.currency,
+      finalStock: enriched.stock,
+      finalOrders: enriched.orders,
+      descriptionImagesCount: enriched.descriptionImages?.length ?? 0,
       inputUrl: trimmedUrl,
     });
-    return openPlatformProduct;
+    return enriched;
   }
 
   throw new Error(

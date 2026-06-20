@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { ListingPhotoDraft, ListingProductSource, ListingVariantDraft } from "@/types/listing-generator";
 import { ebayTextButtonClass } from "@/features/listings/lib/ebay-ui";
+import { isRestrictedImageUrl } from "@/lib/listings/listing-sanitize";
 import { ProxiedImage } from "./ProxiedImage";
 
 const MAX_PHOTOS = 24;
@@ -11,16 +12,24 @@ interface EbayPhotosPanelProps {
   photos: ListingPhotoDraft[];
   product: ListingProductSource;
   variants: ListingVariantDraft[];
+  removedCount?: number;
   onChange: (photos: ListingPhotoDraft[]) => void;
 }
 
-export function EbayPhotosPanel({ photos, product, variants, onChange }: EbayPhotosPanelProps) {
+export function EbayPhotosPanel({
+  photos,
+  product,
+  variants,
+  removedCount = 0,
+  onChange,
+}: EbayPhotosPanelProps) {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [showOptions, setShowOptions] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [addUrl, setAddUrl] = useState("");
+  const [addError, setAddError] = useState("");
 
   const mainPhoto = photos[0];
   const gridPhotos = photos.slice(1);
@@ -65,6 +74,11 @@ export function EbayPhotosPanel({ photos, product, variants, onChange }: EbayPho
     const trimmed = url.trim();
     if (!trimmed || photos.length >= MAX_PHOTOS) return;
     if (photos.some((photo) => photo.url === trimmed)) return;
+    if (isRestrictedImageUrl(trimmed)) {
+      setAddError("This image URL contains restricted content and cannot be added.");
+      return;
+    }
+    setAddError("");
     onChange([...photos, { url: trimmed, selected: true }]);
     setAddUrl("");
     setShowAddModal(false);
@@ -173,9 +187,15 @@ export function EbayPhotosPanel({ photos, product, variants, onChange }: EbayPho
       </div>
 
       <div className="p-4">
-        <p className="mb-4 text-sm text-[#707070]">
+        <h3 className="text-sm font-semibold text-[#191919]">Product Photos</h3>
+        <p className="mt-1 mb-4 text-sm text-[#707070]">
           You can add up to 24 photos. Buyers want to see all details and angles.
         </p>
+        {removedCount > 0 ? (
+          <p className="mb-4 text-xs text-[#707070]">
+            {removedCount} image{removedCount === 1 ? "" : "s"} removed (contained restricted content)
+          </p>
+        ) : null}
 
         {selectMode && selectedIndices.size > 0 ? (
           <div className="mb-4 flex items-center gap-3">
@@ -285,6 +305,7 @@ export function EbayPhotosPanel({ photos, product, variants, onChange }: EbayPho
                 className="mt-2 w-full rounded border border-[#C5C5C5] px-3 py-2 text-sm outline-none focus:border-[#3665F3]"
               />
             </label>
+            {addError ? <p className="mt-2 text-xs text-red-600">{addError}</p> : null}
             <button
               type="button"
               disabled={!addUrl.trim()}

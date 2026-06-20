@@ -7,6 +7,7 @@ import {
   ebaySecondaryButtonClass,
   ebayTextButtonClass,
 } from "@/features/listings/lib/ebay-ui";
+import { EbayDescriptionImagesPanel } from "./EbayDescriptionImagesPanel";
 import { EbayPhotosPanel } from "./EbayPhotosPanel";
 import { EbayVariationsTable } from "./EbayVariationsTable";
 import { ListingPreviewModal } from "./ListingPreviewModal";
@@ -65,13 +66,24 @@ export function ListingPhotosVariantsStep({
     }
   }
 
+  function handleDescriptionPhotosChange(descriptionPhotos: ListingPhotoDraft[]) {
+    onChange({ descriptionPhotos });
+  }
+
   return (
     <div className="space-y-0">
       <EbayPhotosPanel
         photos={draft.photos}
         product={draft.product}
         variants={draft.variants}
+        removedCount={draft.product.imageFilterMeta?.galleryRemoved ?? 0}
         onChange={handlePhotosChange}
+      />
+
+      <EbayDescriptionImagesPanel
+        descriptionPhotos={draft.descriptionPhotos ?? []}
+        product={draft.product}
+        onChange={handleDescriptionPhotosChange}
       />
 
       <section className="mt-6 rounded border border-[#E5E5E5] bg-white px-4 py-4">
