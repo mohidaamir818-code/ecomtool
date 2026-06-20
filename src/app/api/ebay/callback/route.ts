@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { exchangeEbayCode } from "@/lib/ebay/oauth-user";
+import { serverEnv } from "@/lib/env";
 
 export async function GET(request: NextRequest) {
   const url = request.nextUrl;
@@ -8,7 +9,8 @@ export async function GET(request: NextRequest) {
   const expectedState = request.cookies.get("ebay_oauth_state")?.value;
   const userId = request.cookies.get("ebay_oauth_user_id")?.value;
 
-  const redirectUrl = new URL("/dashboard/listings", url.origin);
+  const appOrigin = serverEnv.appUrl() || url.origin;
+  const redirectUrl = new URL("/dashboard/listings", appOrigin);
 
   function errorRedirect(message: string) {
     redirectUrl.searchParams.set("error", "connection_failed");

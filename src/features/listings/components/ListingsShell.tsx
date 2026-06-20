@@ -71,9 +71,17 @@ export function ListingsShell() {
   const generateStarted = useRef(false);
   const savedToastTimer = useRef<number | null>(null);
   const ebayConnectedToastTimer = useRef<number | null>(null);
+  const oauthJustSucceeded = useRef(false);
+  const oauthReturnHandled = useRef(false);
+  const oauthFailureHandled = useRef(false);
 
   const oauthRefreshKey =
     searchParams.get("connected") ?? searchParams.get("error") ?? searchParams.get("ebay") ?? undefined;
+
+  const isOAuthReturn = searchParams.get("connected") === "true";
+  const isOAuthFailure =
+    searchParams.get("error") === "connection_failed" ||
+    searchParams.get("ebay") === "error";
 
   const loadEbayStatus = useCallback(async (options?: { silent?: boolean }) => {
     if (!userId) return null;
@@ -87,7 +95,15 @@ export function ListingsShell() {
           ebayUsername: data.ebayUsername ?? null,
           accessTokenExpiresAt: data.accessTokenExpiresAt ?? null,
         };
-        setEbayStatus(nextStatus);
+        setEbayStatus((current) => {
+          if (oauthJustSucceeded.current && !nextStatus.connected) {
+            return current;
+          }
+          if (nextStatus.connected) {
+            oauthJustSucceeded.current = false;
+          }
+          return nextStatus;
+        });
         return nextStatus;
       }
       return null;
@@ -131,18 +147,31 @@ export function ListingsShell() {
 
   useEffect(() => {
     if (searchParams.get("connected") === "true") return;
+    if (
+      searchParams.get("error") === "connection_failed" ||
+      searchParams.get("ebay") === "error"
+    ) {
+      return;
+    }
     void loadEbayStatus();
   }, [loadEbayStatus, oauthRefreshKey, searchParams]);
 
   useEffect(() => {
-    if (searchParams.get("connected") !== "true" || !userId) return;
+    if (searchParams.get("connected") !== "true") return;
+    if (oauthReturnHandled.current) return;
+    oauthReturnHandled.current = true;
 
-    triggerEbayConnectedToast();
-    setEbayStatus((current) => ({ ...current, connected: true }));
+    oauthJustSucceeded.current = true;
     setEbayStatusLoading(false);
+    setEbayStatus((current) => ({ ...current, connected: true }));
+    triggerEbayConnectedToast();
     router.replace("/dashboard/listings");
+  }, [searchParams, router]);
+
+  useEffect(() => {
+    if (!oauthJustSucceeded.current || !userId) return;
     void loadEbayStatus({ silent: true });
-  }, [searchParams, userId, loadEbayStatus, router]);
+  }, [userId, loadEbayStatus]);
 
   useEffect(() => {
     const connectionFailed =
@@ -150,7 +179,11 @@ export function ListingsShell() {
       searchParams.get("ebay") === "error";
 
     if (!connectionFailed) return;
+    if (oauthFailureHandled.current) return;
+    oauthFailureHandled.current = true;
 
+    oauthJustSucceeded.current = false;
+    setEbayStatusLoading(false);
     setNotice(searchParams.get("message") ?? "eBay connection failed.");
     setIsError(true);
     router.replace("/dashboard/listings");
@@ -487,6 +520,7 @@ export function ListingsShell() {
     !resumeOffer;
 
   function handleEbayDisconnected() {
+    oauthJustSucceeded.current = false;
     setEbayStatus({
       connected: false,
       ebayUsername: null,
@@ -516,7 +550,7 @@ export function ListingsShell() {
           ) : null}
         </div>
 
-        {ebayStatusLoading && !ebayStatus.connected ? (
+        {ebayStatusLoading && !ebayStatus.connected && !isOAuthReturn && !isOAuthFailure ? (
           <div className="flex justify-center py-16">
             <svg
               className="h-8 w-8 animate-spin text-brand"
@@ -540,7 +574,7 @@ export function ListingsShell() {
             </svg>
           </div>
         ) : showConnectGate && userId ? (
-          <EbayStoreConnectGate userId={userId} />
+          <EbayStoreConnectGate userId={userId} errorMessage={isError ? notice : undefined} />
         ) : (
           <>
             {ebayStatus.connected && userId ? (

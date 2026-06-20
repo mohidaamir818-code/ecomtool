@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { EbayConnectionStatus } from "@/types/listing-generator";
 
@@ -12,6 +12,8 @@ interface EbayConnectProps {
 export function EbayConnect({ userId, refreshKey }: EbayConnectProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const oauthJustSucceeded = useRef(false);
+  const oauthReturnHandled = useRef(false);
   const [status, setStatus] = useState<EbayConnectionStatus>({
     connected: false,
     ebayUsername: null,
@@ -26,47 +28,79 @@ export function EbayConnect({ userId, refreshKey }: EbayConnectProps) {
       const response = await fetch(`/api/ebay/status?userId=${encodeURIComponent(userId)}`);
       const data = await response.json();
       if (response.ok) {
-        setStatus({
+        const nextStatus: EbayConnectionStatus = {
           connected: Boolean(data.connected),
           ebayUsername: data.ebayUsername ?? null,
           accessTokenExpiresAt: data.accessTokenExpiresAt ?? null,
+        };
+        setStatus((current) => {
+          if (oauthJustSucceeded.current && !nextStatus.connected) {
+            return current;
+          }
+          if (nextStatus.connected) {
+            oauthJustSucceeded.current = false;
+          }
+          return nextStatus;
         });
+        return nextStatus;
       }
+      return null;
     } finally {
       setLoadingStatus(false);
     }
   }, [userId]);
 
   useEffect(() => {
-    void loadStatus();
-  }, [loadStatus, refreshKey]);
-
-  useEffect(() => {
-    if (searchParams.get("connected") === "true") {
-      setToast({ message: "Successfully connected to eBay", isError: false });
-      void loadStatus();
-      router.replace("/dashboard/listings");
+    if (searchParams.get("connected") === "true") return;
+    if (
+      searchParams.get("error") === "connection_failed" ||
+      searchParams.get("ebay") === "error"
+    ) {
       return;
     }
+    void loadStatus();
+  }, [loadStatus, refreshKey, searchParams]);
 
+  useEffect(() => {
+    if (searchParams.get("connected") !== "true") return;
+    if (oauthReturnHandled.current) return;
+    oauthReturnHandled.current = true;
+
+    oauthJustSucceeded.current = true;
+    setLoadingStatus(false);
+    setStatus((current) => ({ ...current, connected: true }));
+    setToast({ message: "Successfully connected to eBay", isError: false });
+    router.replace("/dashboard/listings");
+  }, [searchParams, router]);
+
+  useEffect(() => {
+    if (!oauthJustSucceeded.current) return;
+    void loadStatus();
+  }, [userId, loadStatus]);
+
+  useEffect(() => {
     const connectionFailed =
       searchParams.get("error") === "connection_failed" ||
       searchParams.get("ebay") === "error";
 
-    if (connectionFailed) {
-      setToast({
-        message: searchParams.get("message") ?? "eBay connection failed.",
-        isError: true,
-      });
-      router.replace("/dashboard/listings");
-    }
-  }, [searchParams, loadStatus, router]);
+    if (!connectionFailed) return;
+
+    oauthJustSucceeded.current = false;
+    setLoadingStatus(false);
+    setToast({
+      message: searchParams.get("message") ?? "eBay connection failed.",
+      isError: true,
+    });
+    router.replace("/dashboard/listings");
+  }, [searchParams, router]);
 
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(null), 3000);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  const authUrl = `/api/ebay/auth?userId=${encodeURIComponent(userId)}`;
 
   if (status.connected) {
     return (
@@ -91,7 +125,7 @@ export function EbayConnect({ userId, refreshKey }: EbayConnectProps) {
           </div>
 
           <a
-            href={`/api/ebay/auth?userId=${encodeURIComponent(userId)}`}
+            href={authUrl}
             className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white no-underline hover:bg-brand-dark"
           >
             Connect eBay Account
@@ -108,6 +142,14 @@ export function EbayConnect({ userId, refreshKey }: EbayConnectProps) {
           }`}
         >
           {toast.message}
+          {toast.isError ? (
+            <>
+              {" "}
+              <a href={authUrl} className="font-semibold underline">
+                Try again
+              </a>
+            </>
+          ) : null}
         </p>
       ) : null}
     </>

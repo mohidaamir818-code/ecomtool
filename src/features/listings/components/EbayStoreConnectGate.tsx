@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { EBAY_BORDER, ebayPrimaryButtonClass } from "@/features/listings/lib/ebay-ui";
 import { EbayLogo } from "./EbayLogo";
 
@@ -12,10 +13,22 @@ const BENEFITS = [
 
 interface EbayStoreConnectGateProps {
   userId: string;
+  errorMessage?: string;
 }
 
-export function EbayStoreConnectGate({ userId }: EbayStoreConnectGateProps) {
+export function EbayStoreConnectGate({ userId, errorMessage }: EbayStoreConnectGateProps) {
   const authUrl = `/api/ebay/auth?userId=${encodeURIComponent(userId)}`;
+
+  useEffect(() => {
+    function handlePageShow(event: PageTransitionEvent) {
+      if (event.persisted) {
+        window.location.reload();
+      }
+    }
+
+    window.addEventListener("pageshow", handlePageShow);
+    return () => window.removeEventListener("pageshow", handlePageShow);
+  }, []);
 
   return (
     <div className="mx-auto max-w-[480px] animate-[fadeIn_0.6s_ease-out] px-2 py-8">
@@ -48,6 +61,13 @@ export function EbayStoreConnectGate({ userId }: EbayStoreConnectGateProps) {
             </li>
           ))}
         </ul>
+
+        {errorMessage ? (
+          <div className="mt-6 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-left text-sm text-red-600">
+            <p className="font-medium">Connection failed. Please try again.</p>
+            <p className="mt-1">{errorMessage}</p>
+          </div>
+        ) : null}
 
         <a
           href={authUrl}

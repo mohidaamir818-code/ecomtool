@@ -134,14 +134,21 @@ export async function exchangeEbayCode(userId: string, code: string, _origin: st
   }
 
   await persistUserTokens(userId, raw, raw, null);
+  void updateEbayUsernameInBackground(userId, raw.access_token);
+}
 
-  const ebayUsername = await fetchEbayUsername(raw.access_token);
-  if (ebayUsername) {
+async function updateEbayUsernameInBackground(userId: string, accessToken: string): Promise<void> {
+  try {
+    const ebayUsername = await fetchEbayUsername(accessToken);
+    if (!ebayUsername) return;
+
     const supabase = getSupabaseAdmin();
     await supabase
       .from("ebay_oauth_tokens")
       .update({ ebay_username: ebayUsername })
       .eq("user_id", userId);
+  } catch {
+    // Username is optional; OAuth tokens are already saved.
   }
 }
 
