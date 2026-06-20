@@ -2,7 +2,11 @@ import "server-only";
 
 import { searchAmazefProducts } from "@/lib/amazef/client";
 import { searchEbayListings } from "@/lib/ebay/browse";
-import { getEbayCompetitorWatchSearchQuery, ebayListingMatchesProductQuery } from "@/lib/ebay/query";
+import {
+  buildEbayCompetitorWatchSearchQueries,
+  cleanCompetitorProductQuery,
+  ebayListingMatchesSameTitle,
+} from "@/lib/ebay/query";
 import { sendEmail } from "@/lib/email/send-email";
 import { QuotaExceededError } from "@/lib/quota/errors";
 import { enqueueOverflow } from "@/lib/quota/queue-service";
@@ -227,19 +231,37 @@ export async function searchCheaperEbayCompetitors(
   currency: string;
   userPriceLabel: string;
 }> {
-  const query = productQuery.trim();
-  const candidateQuery = getEbayCompetitorWatchSearchQuery(query);
+  const cleanedTitle = cleanCompetitorProductQuery(productQuery.trim());
+  const queryCandidates = buildEbayCompetitorWatchSearchQueries(cleanedTitle);
+  const candidates = queryCandidates.length > 0 ? queryCandidates : [cleanedTitle];
 
-  const result = await searchEbayListings({
-    query: candidateQuery,
-    limit: 25,
-    offset: 0,
-    sort: "asc",
-    enrichDetails: false,
-  });
+  const seenIds = new Set<string>();
+  let mergedListings: EbayListing[] = [];
 
-  const bestRelevantListings = result.listings.filter((listing) =>
-    ebayListingMatchesProductQuery(listing.title, query),
+  for (const candidateQuery of candidates) {
+    const result = await searchEbayListings({
+      query: candidateQuery,
+      limit: 25,
+      offset: 0,
+      sort: "asc",
+      enrichDetails: false,
+    });
+
+    for (const listing of result.listings) {
+      if (seenIds.has(listing.id)) continue;
+      seenIds.add(listing.id);
+      mergedListings.push(listing);
+    }
+
+    const sameTitleCount = mergedListings.filter((listing) =>
+      ebayListingMatchesSameTitle(listing.title, cleanedTitle),
+    ).length;
+
+    if (sameTitleCount > 0) break;
+  }
+
+  const bestRelevantListings = mergedListings.filter((listing) =>
+    ebayListingMatchesSameTitle(listing.title, cleanedTitle),
   );
 
   const currency = bestRelevantListings[0]?.currency ?? "GBP";
