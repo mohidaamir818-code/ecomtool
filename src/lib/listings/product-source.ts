@@ -1,6 +1,7 @@
 import "server-only";
 
 import { fetchAliExpressProduct } from "@/lib/aliexpress/client";
+import { filterSupplierImages, sanitizeListingText } from "@/lib/listings/listing-sanitize";
 import type { ListingProductSource } from "@/types/listing-generator";
 
 const BROWSER_HEADERS = {
@@ -57,14 +58,16 @@ async function fetchDescriptionFromHtml(url: string): Promise<string | null> {
 
 export async function fetchListingProductSource(url: string): Promise<ListingProductSource> {
   const product = await fetchAliExpressProduct(url);
-  const description =
+  const description = sanitizeListingText(
     product.description?.trim() ||
-    (await fetchDescriptionFromHtml(product.productUrl)) ||
-    product.title;
+      (await fetchDescriptionFromHtml(product.productUrl)) ||
+      product.title,
+  );
 
-  const images =
-    product.images?.filter(Boolean) ??
-    (product.imageUrl ? [product.imageUrl] : []);
+  const rawImages =
+    product.images?.filter(Boolean) ?? (product.imageUrl ? [product.imageUrl] : []);
+  const images = filterSupplierImages(rawImages);
+  const imageUrl = images[0] ?? null;
 
   const variants = product.variants
     ?.filter((variant) => variant.stock != null && variant.stock > 0)
@@ -74,15 +77,17 @@ export async function fetchListingProductSource(url: string): Promise<ListingPro
       price: variant.price,
       currency: variant.currency,
       stock: variant.stock,
-      imageUrl: variant.imageUrl ?? null,
+      imageUrl: variant.imageUrl
+        ? filterSupplierImages([variant.imageUrl])[0] ?? null
+        : null,
     }));
 
   return {
     source: "aliexpress",
     externalId: product.externalId,
     productUrl: product.productUrl,
-    title: product.title,
-    imageUrl: product.imageUrl,
+    title: sanitizeListingText(product.title),
+    imageUrl,
     images,
     price: product.price,
     currency: product.currency,

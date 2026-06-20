@@ -1,4 +1,5 @@
 import type { ListingDraft, ListingQualityCheck, ListingQualityScore } from "@/types/listing-generator";
+import { countFilledItemSpecifics } from "@/lib/listings/item-specifics";
 import { getEnabledPromotions, getSelectedPhotos } from "@/features/listings/lib/draft-utils";
 
 function countDescriptionWords(html: string): number {
@@ -46,15 +47,15 @@ export function computeListingQualityScore(draft: ListingDraft): ListingQualityS
   });
   if (!descPassed) tips.push("Expand your description with features, compatibility, and what's in the box.");
 
-  const specificsCount = draft.listing.itemSpecifics.length;
-  const specificsPassed = specificsCount >= 8;
+  const specificsCount = countFilledItemSpecifics(draft.listing.itemSpecifics);
+  const specificsPassed = specificsCount >= 10;
   checks.push({
     id: "specifics",
     label: "Item specifics",
     passed: specificsPassed,
-    points: specificsCount >= 8 ? 15 : specificsCount >= 4 ? 8 : specificsCount >= 1 ? 4 : 0,
+    points: specificsCount >= 10 ? 15 : specificsCount >= 6 ? 8 : specificsCount >= 3 ? 4 : 0,
     maxPoints: 15,
-    tip: specificsPassed ? undefined : "Add at least 8 item specifics to improve search ranking.",
+    tip: specificsPassed ? undefined : "Fill in at least 10 item specifics to improve search ranking.",
   });
   if (!specificsPassed) tips.push("Fill in more item specifics — eBay uses these for search ranking.");
 

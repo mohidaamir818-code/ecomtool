@@ -27,6 +27,9 @@ function sellHeaders(token: string): HeadersInit {
 function mapCondition(condition: string): string {
   const normalized = condition.toLowerCase();
   if (normalized.includes("used")) return "USED_EXCELLENT";
+  if (normalized.includes("new with defects")) return "NEW_WITH_DEFECTS";
+  if (normalized.includes("new without tags")) return "NEW_OTHER";
+  if (normalized.includes("new with tags")) return "NEW";
   if (normalized.includes("new other")) return "NEW_OTHER";
   return "NEW";
 }
@@ -57,10 +60,12 @@ function aspectsFromListing(listing: GeneratedListing): Record<string, string[]>
   const aspects: Record<string, string[]> = {};
 
   for (const specific of listing.itemSpecifics) {
-    if (specific.name.toLowerCase() === "brand") {
+    const nameLower = specific.name.toLowerCase();
+    if (nameLower === "brand") {
       aspects.Brand = ["Unbranded"];
       continue;
     }
+    if (nameLower === "condition") continue;
     aspects[specific.name] = [specific.value];
   }
 
@@ -121,6 +126,31 @@ export async function getCategorySuggestions(
       } satisfies EbayCategorySuggestion;
     })
     .filter((entry): entry is EbayCategorySuggestion => entry !== null);
+}
+
+export async function getItemAspectsForCategory(
+  token: string,
+  categoryId: string,
+): Promise<string[]> {
+  const url = new URL(
+    `${EBAY_API_BASE}/commerce/taxonomy/v1/category_tree/${CATEGORY_TREE_ID}/get_item_aspects_for_category`,
+  );
+  url.searchParams.set("category_id", categoryId);
+
+  const response = await fetch(url.toString(), {
+    headers: sellHeaders(token),
+    cache: "no-store",
+  });
+
+  if (!response.ok) return [];
+
+  const data = (await response.json()) as {
+    aspects?: Array<{ localizedAspectName?: string }>;
+  };
+
+  return (data.aspects ?? [])
+    .map((aspect) => aspect.localizedAspectName?.trim())
+    .filter((name): name is string => Boolean(name));
 }
 
 async function resolveCategoryId(token: string, listing: GeneratedListing): Promise<string> {

@@ -10,6 +10,7 @@ import type {
 } from "@/types/listing-generator";
 import { DEFAULT_PROMOTIONS } from "@/types/listing-generator";
 import { buildVariantPrices, calculatePricingBreakdown } from "@/lib/listings/pricing";
+import { filterSupplierImages } from "@/lib/listings/listing-sanitize";
 import { buildPreviewSku } from "@/features/listings/lib/ebay-ui";
 
 export function normalizeVariantDraft(
@@ -44,8 +45,9 @@ export function buildInitialDraft(
     promotions?: VolumePromotionTier[];
   },
 ): ListingDraft {
-  const allImages = product.images.filter(Boolean);
-  const imagePool = allImages.length > 0 ? allImages : product.imageUrl ? [product.imageUrl] : [];
+  const allImages = filterSupplierImages(product.images.filter(Boolean));
+  const imagePool =
+    allImages.length > 0 ? allImages : product.imageUrl ? filterSupplierImages([product.imageUrl]) : [];
 
   const photos: ListingPhotoDraft[] = imagePool.slice(0, 24).map((url) => ({
     url,

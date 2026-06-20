@@ -2,15 +2,16 @@
 
 import { useEffect, useState } from "react";
 import type { EbayCategorySuggestion, GeneratedListing } from "@/types/listing-generator";
+import type { EbayConditionOption } from "@/lib/listings/item-specifics";
 import { ListingDescriptionEditor } from "./ListingDescriptionEditor";
+import { EbayConditionSelector } from "./EbayConditionSelector";
+import { EbayItemSpecificsForm } from "./EbayItemSpecificsForm";
 
 interface ListingPreviewEditorProps {
   userId: string;
   listing: GeneratedListing;
   onChange: (listing: GeneratedListing) => void;
 }
-
-const CONDITIONS = ["New", "New other", "Used"];
 
 export function ListingPreviewEditor({ userId, listing, onChange }: ListingPreviewEditorProps) {
   const [categoryQuery, setCategoryQuery] = useState(listing.categorySuggestion);
@@ -41,25 +42,8 @@ export function ListingPreviewEditor({ userId, listing, onChange }: ListingPrevi
     return () => window.clearTimeout(timer);
   }, [categoryQuery, userId]);
 
-  function updateSpecific(index: number, field: "name" | "value", value: string) {
-    const itemSpecifics = listing.itemSpecifics.map((specific, i) =>
-      i === index ? { ...specific, [field]: value } : specific,
-    );
-    onChange({ ...listing, itemSpecifics });
-  }
-
-  function addSpecific() {
-    onChange({
-      ...listing,
-      itemSpecifics: [...listing.itemSpecifics, { name: "", value: "" }],
-    });
-  }
-
-  function removeSpecific(index: number) {
-    onChange({
-      ...listing,
-      itemSpecifics: listing.itemSpecifics.filter((_, i) => i !== index),
-    });
+  function handleConditionChange(condition: EbayConditionOption) {
+    onChange({ ...listing, condition });
   }
 
   return (
@@ -88,7 +72,7 @@ export function ListingPreviewEditor({ userId, listing, onChange }: ListingPrevi
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div>
         <label className="block text-sm font-medium text-[#111827]">
           Price
           <input
@@ -99,34 +83,7 @@ export function ListingPreviewEditor({ userId, listing, onChange }: ListingPrevi
             onChange={(event) =>
               onChange({ ...listing, suggestedPrice: Number(event.target.value) || 0 })
             }
-            className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
-          />
-        </label>
-
-        <label className="block text-sm font-medium text-[#111827]">
-          Condition
-          <select
-            value={listing.condition}
-            onChange={(event) => onChange({ ...listing, condition: event.target.value })}
-            className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
-          >
-            {CONDITIONS.map((condition) => (
-              <option key={condition} value={condition}>
-                {condition}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-[#111827]">
-          Brand
-          <input
-            type="text"
-            value="Unbranded"
-            readOnly
-            className="mt-2 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-[#6B7280]"
+            className="mt-2 w-full max-w-xs rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
           />
         </label>
       </div>
@@ -173,55 +130,14 @@ export function ListingPreviewEditor({ userId, listing, onChange }: ListingPrevi
         ) : null}
       </div>
 
-      <div>
-        <div className="mb-3 flex items-center justify-between">
-          <p className="text-sm font-medium text-[#111827]">Item specifics</p>
-          <button
-            type="button"
-            onClick={addSpecific}
-            className="text-xs font-semibold text-brand hover:underline"
-          >
-            Add specific
-          </button>
-        </div>
+      <EbayItemSpecificsForm
+        userId={userId}
+        categoryId={listing.categoryId}
+        itemSpecifics={listing.itemSpecifics}
+        onChange={(itemSpecifics) => onChange({ ...listing, itemSpecifics })}
+      />
 
-        <div className="space-y-3">
-          {listing.itemSpecifics.map((specific, index) => {
-            const isBrand = specific.name.toLowerCase() === "brand";
-            return (
-              <div key={`${specific.name}-${index}`} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-                <input
-                  type="text"
-                  value={specific.name}
-                  readOnly={isBrand}
-                  onChange={(event) => updateSpecific(index, "name", event.target.value)}
-                  className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-                  placeholder="Name"
-                />
-                <input
-                  type="text"
-                  value={isBrand ? "Unbranded" : specific.value}
-                  readOnly={isBrand}
-                  onChange={(event) => updateSpecific(index, "value", event.target.value)}
-                  className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-                  placeholder="Value"
-                />
-                {!isBrand ? (
-                  <button
-                    type="button"
-                    onClick={() => removeSpecific(index)}
-                    className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-[#6B7280] hover:bg-gray-50"
-                  >
-                    Remove
-                  </button>
-                ) : (
-                  <span />
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      <EbayConditionSelector value={listing.condition} onChange={handleConditionChange} />
     </div>
   );
 }

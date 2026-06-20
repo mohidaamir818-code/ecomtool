@@ -2,6 +2,13 @@ import "server-only";
 
 import { generateAiJson } from "@/lib/gemini/client";
 import { buildListingPrompt } from "@/lib/gemini/prompts";
+import {
+  DEFAULT_EBAY_CONDITION,
+  enforceItemSpecifics,
+  syncConditionInSpecifics,
+  UNBRANDED,
+} from "@/lib/listings/item-specifics";
+import { sanitizeListingContent } from "@/lib/listings/listing-sanitize";
 import type { GeneratedListing, ListingProductSource } from "@/types/listing-generator";
 
 interface AiListingResponse {
@@ -13,8 +20,6 @@ interface AiListingResponse {
   categorySuggestion?: string;
   condition?: string;
 }
-
-const UNBRANDED = "Unbranded";
 
 function padTitleTo80(title: string, productTitle: string): string {
   let result = title.trim().slice(0, 80);
@@ -41,26 +46,15 @@ function padTitleTo80(title: string, productTitle: string): string {
   return result.slice(0, 80);
 }
 
-function normalizeItemSpecifics(
-  raw: Array<{ name?: string; value?: string }> | undefined,
-  condition: string,
-): GeneratedListing["itemSpecifics"] {
-  const specifics = (raw ?? [])
-    .map((entry) => ({
-      name: String(entry.name ?? "").trim(),
-      value: String(entry.value ?? "").trim(),
-    }))
-    .filter((entry) => entry.name && entry.value)
-    .filter((entry) => entry.name.toLowerCase() !== "brand" && entry.name.toLowerCase() !== "mpn");
-
-  specifics.unshift({ name: "MPN", value: "Does Not Apply" });
-  specifics.unshift({ name: "Brand", value: UNBRANDED });
-
-  if (!specifics.some((entry) => entry.name.toLowerCase() === "condition")) {
-    specifics.unshift({ name: "Condition", value: condition });
-  }
-
-  return specifics;
+function normalizeCondition(raw?: string): string {
+  const value = raw?.trim() ?? "";
+  if (!value) return DEFAULT_EBAY_CONDITION;
+  if (/^new with tags$/i.test(value)) return "New with tags";
+  if (/^new without tags$/i.test(value)) return "New without tags";
+  if (/^new with defects$/i.test(value)) return "New with defects";
+  if (/^used$/i.test(value) || /used/i.test(value)) return "Used";
+  if (/^new$/i.test(value)) return DEFAULT_EBAY_CONDITION;
+  return DEFAULT_EBAY_CONDITION;
 }
 
 export async function generateEbayListing(
@@ -74,17 +68,25 @@ export async function generateEbayListing(
     buildListingPrompt(product, recommendedPrice ?? fallbackPrice),
   );
 
-  const condition = raw.condition?.trim() || "New";
-  const itemSpecifics = normalizeItemSpecifics(raw.itemSpecifics, condition);
+  const condition = normalizeCondition(raw.condition);
+  let itemSpecifics = syncConditionInSpecifics(enforceItemSpecifics(raw.itemSpecifics, product));
 
   const suggestedPrice =
     typeof raw.suggestedPrice === "number" && Number.isFinite(raw.suggestedPrice) && raw.suggestedPrice > 0
       ? Number(raw.suggestedPrice.toFixed(2))
       : fallbackPrice;
 
-  return {
+  const sanitized = sanitizeListingContent({
     seoTitle: padTitleTo80(raw.seoTitle ?? product.title, product.title),
     descriptionHtml: raw.descriptionHtml?.trim() || `<p>${product.description ?? product.title}</p>`,
+    itemSpecifics,
+  });
+
+  itemSpecifics = sanitized.itemSpecifics;
+
+  return {
+    seoTitle: sanitized.seoTitle,
+    descriptionHtml: sanitized.descriptionHtml,
     suggestedPrice,
     currency: raw.currency?.trim() || currency,
     itemSpecifics,
