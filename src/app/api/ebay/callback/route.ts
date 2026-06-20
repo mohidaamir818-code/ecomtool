@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
   const redirectUrl = new URL("/dashboard/listings", url.origin);
 
   function errorRedirect(message: string) {
-    redirectUrl.searchParams.set("ebay", "error");
+    redirectUrl.searchParams.set("error", "connection_failed");
     redirectUrl.searchParams.set("message", message);
     const response = NextResponse.redirect(redirectUrl);
     response.cookies.delete("ebay_oauth_state");
@@ -30,7 +30,6 @@ export async function GET(request: NextRequest) {
   try {
     await exchangeEbayCode(userId, code, url.origin);
     redirectUrl.searchParams.set("connected", "true");
-    redirectUrl.searchParams.set("ebay", "connected");
     const response = NextResponse.redirect(redirectUrl);
     response.cookies.delete("ebay_oauth_state");
     response.cookies.delete("ebay_oauth_user_id");

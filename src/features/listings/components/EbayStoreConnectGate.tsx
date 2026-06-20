@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { EBAY_BORDER, ebayPrimaryButtonClass } from "@/features/listings/lib/ebay-ui";
 import { EbayLogo } from "./EbayLogo";
 
@@ -16,13 +15,7 @@ interface EbayStoreConnectGateProps {
 }
 
 export function EbayStoreConnectGate({ userId }: EbayStoreConnectGateProps) {
-  const [connecting, setConnecting] = useState(false);
-
-  function handleConnect() {
-    if (connecting) return;
-    setConnecting(true);
-    window.location.href = `/api/ebay/auth?userId=${encodeURIComponent(userId)}`;
-  }
+  const authUrl = `/api/ebay/auth?userId=${encodeURIComponent(userId)}`;
 
   return (
     <div className="mx-auto max-w-[480px] animate-[fadeIn_0.6s_ease-out] px-2 py-8">
@@ -56,40 +49,12 @@ export function EbayStoreConnectGate({ userId }: EbayStoreConnectGateProps) {
           ))}
         </ul>
 
-        <button
-          type="button"
-          disabled={connecting}
-          onClick={handleConnect}
-          className={`${ebayPrimaryButtonClass} mt-8 flex w-full items-center justify-center gap-2 px-8 py-3.5 text-base`}
+        <a
+          href={authUrl}
+          className={`${ebayPrimaryButtonClass} mt-8 inline-flex w-full items-center justify-center px-8 py-3.5 text-base no-underline`}
         >
-          {connecting ? (
-            <>
-              <svg
-                className="h-5 w-5 animate-spin"
-                viewBox="0 0 24 24"
-                fill="none"
-                aria-hidden
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                />
-              </svg>
-              Connecting...
-            </>
-          ) : (
-            "Connect eBay Account"
-          )}
-        </button>
+          Connect eBay Account
+        </a>
 
         <p className="mt-6 flex items-center justify-center gap-1.5 text-xs text-[#707070]">
           <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4 shrink-0" aria-hidden>

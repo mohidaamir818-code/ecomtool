@@ -133,8 +133,16 @@ export async function exchangeEbayCode(userId: string, code: string, _origin: st
     throw new Error(raw.error_description ?? "eBay OAuth code exchange failed.");
   }
 
+  await persistUserTokens(userId, raw, raw, null);
+
   const ebayUsername = await fetchEbayUsername(raw.access_token);
-  await persistUserTokens(userId, raw, raw, ebayUsername);
+  if (ebayUsername) {
+    const supabase = getSupabaseAdmin();
+    await supabase
+      .from("ebay_oauth_tokens")
+      .update({ ebay_username: ebayUsername })
+      .eq("user_id", userId);
+  }
 }
 
 async function refreshUserToken(userId: string, refreshToken: string): Promise<string> {

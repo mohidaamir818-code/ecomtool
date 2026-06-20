@@ -10,7 +10,6 @@ import { sellerPreferencesToPromotions, promotionsToSellerPreferences } from "@/
 import { AiListingGenerator } from "./AiListingGenerator";
 import { EbayConnect } from "./EbayConnect";
 import { EbayConnectedBanner } from "./EbayConnectedBanner";
-import { EbayOAuthSuccess } from "./EbayOAuthSuccess";
 import { EbayStoreConnectGate } from "./EbayStoreConnectGate";
 import { ListingConfirmStep } from "./ListingConfirmStep";
 import { ListingPhotosVariantsStep } from "./ListingPhotosVariantsStep";
@@ -67,16 +66,17 @@ export function ListingsShell() {
     accessTokenExpiresAt: null,
   });
   const [ebayStatusLoading, setEbayStatusLoading] = useState(true);
-  const [showOAuthSuccess, setShowOAuthSuccess] = useState(false);
+  const [showEbayConnectedToast, setShowEbayConnectedToast] = useState(false);
   const generateStarted = useRef(false);
   const savedToastTimer = useRef<number | null>(null);
+  const ebayConnectedToastTimer = useRef<number | null>(null);
 
   const oauthRefreshKey =
-    searchParams.get("connected") ?? searchParams.get("ebay") ?? undefined;
+    searchParams.get("connected") ?? searchParams.get("error") ?? searchParams.get("ebay") ?? undefined;
 
-  const loadEbayStatus = useCallback(async () => {
+  const loadEbayStatus = useCallback(async (options?: { silent?: boolean }) => {
     if (!userId) return null;
-    setEbayStatusLoading(true);
+    if (!options?.silent) setEbayStatusLoading(true);
     try {
       const response = await fetch(`/api/ebay/status?userId=${encodeURIComponent(userId)}`);
       const data = await response.json();
@@ -91,7 +91,7 @@ export function ListingsShell() {
       }
       return null;
     } finally {
-      setEbayStatusLoading(false);
+      if (!options?.silent) setEbayStatusLoading(false);
     }
   }, [userId]);
 
@@ -118,30 +118,42 @@ export function ListingsShell() {
   useEffect(() => {
     return () => {
       if (savedToastTimer.current) window.clearTimeout(savedToastTimer.current);
+      if (ebayConnectedToastTimer.current) window.clearTimeout(ebayConnectedToastTimer.current);
     };
   }, []);
 
+  function triggerEbayConnectedToast() {
+    setShowEbayConnectedToast(true);
+    if (ebayConnectedToastTimer.current) window.clearTimeout(ebayConnectedToastTimer.current);
+    ebayConnectedToastTimer.current = window.setTimeout(() => setShowEbayConnectedToast(false), 3000);
+  }
+
   useEffect(() => {
+    if (searchParams.get("connected") === "true") return;
     void loadEbayStatus();
-  }, [loadEbayStatus, oauthRefreshKey]);
+  }, [loadEbayStatus, oauthRefreshKey, searchParams]);
 
   useEffect(() => {
-    const connectedParam =
-      searchParams.get("connected") === "true" ||
-      searchParams.get("ebay") === "connected";
+    if (searchParams.get("connected") !== "true" || !userId) return;
 
-    if (connectedParam && userId) {
-      void loadEbayStatus().then((status) => {
-        if (status?.connected) {
-          setShowOAuthSuccess(true);
-          router.replace("/dashboard/listings");
-        }
-      });
-    } else if (searchParams.get("ebay") === "error") {
-      setNotice(searchParams.get("message") ?? "eBay connection failed.");
-      setIsError(true);
-    }
+    triggerEbayConnectedToast();
+    setEbayStatus((current) => ({ ...current, connected: true }));
+    setEbayStatusLoading(false);
+    router.replace("/dashboard/listings");
+    void loadEbayStatus({ silent: true });
   }, [searchParams, userId, loadEbayStatus, router]);
+
+  useEffect(() => {
+    const connectionFailed =
+      searchParams.get("error") === "connection_failed" ||
+      searchParams.get("ebay") === "error";
+
+    if (!connectionFailed) return;
+
+    setNotice(searchParams.get("message") ?? "eBay connection failed.");
+    setIsError(true);
+    router.replace("/dashboard/listings");
+  }, [searchParams, router]);
 
   const saveDraft = useCallback(async () => {
     if (!userId || !draft) return;
@@ -464,7 +476,6 @@ export function ListingsShell() {
   const wizardStarted = currentStep > 0 || Boolean(vero) || Boolean(draft);
   const showConnectGate =
     !ebayStatusLoading &&
-    !showOAuthSuccess &&
     !ebayStatus.connected &&
     !wizardStarted &&
     !resumeOffer;
@@ -475,10 +486,6 @@ export function ListingsShell() {
       ebayUsername: null,
       accessTokenExpiresAt: null,
     });
-  }
-
-  function handleOAuthSuccessComplete() {
-    setShowOAuthSuccess(false);
   }
 
   return (
@@ -503,7 +510,7 @@ export function ListingsShell() {
           ) : null}
         </div>
 
-        {ebayStatusLoading ? (
+        {ebayStatusLoading && !ebayStatus.connected ? (
           <div className="flex justify-center py-16">
             <svg
               className="h-8 w-8 animate-spin text-brand"
@@ -526,8 +533,6 @@ export function ListingsShell() {
               />
             </svg>
           </div>
-        ) : showOAuthSuccess ? (
-          <EbayOAuthSuccess onComplete={handleOAuthSuccessComplete} />
         ) : showConnectGate && userId ? (
           <EbayStoreConnectGate userId={userId} />
         ) : (
@@ -688,6 +693,12 @@ export function ListingsShell() {
       {showSavedToast ? (
         <div className="fixed bottom-6 right-6 z-50 rounded-lg border border-emerald-200 bg-white px-4 py-2 text-sm font-medium text-emerald-700 shadow-lg">
           Saved ✓
+        </div>
+      ) : null}
+
+      {showEbayConnectedToast ? (
+        <div className="fixed bottom-6 right-6 z-50 rounded-lg border border-emerald-200 bg-white px-4 py-2 text-sm font-medium text-emerald-700 shadow-lg">
+          Successfully connected to eBay ✓
         </div>
       ) : null}
     </DashboardLayout>
