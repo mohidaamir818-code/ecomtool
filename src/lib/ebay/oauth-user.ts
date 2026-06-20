@@ -4,6 +4,11 @@ import crypto from "crypto";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import { serverEnv } from "@/lib/env";
 import type { EbayConnectionStatus } from "@/types/listing-generator";
+import {
+  normalizeMarketplaceId,
+  persistSellerMarketplaceId,
+  type EbayMarketplaceId,
+} from "@/lib/ebay/marketplace";
 
 const EBAY_AUTH_BASE = "https://auth.ebay.com";
 const EBAY_API_BASE = "https://api.ebay.com";
@@ -72,33 +77,48 @@ async function persistUserTokens(
   token: TokenResponse,
   raw: unknown,
   ebayUsername: string | null,
+  marketplaceId: EbayMarketplaceId | null,
 ): Promise<void> {
   if (!token.access_token || !token.refresh_token) {
     throw new Error("eBay OAuth response missing tokens.");
   }
 
   const supabase = getSupabaseAdmin();
-  const { error } = await supabase.from("ebay_oauth_tokens").upsert(
-    {
-      user_id: userId,
-      access_token: token.access_token,
-      refresh_token: token.refresh_token,
-      access_token_expires_at: resolveExpiry(token.expires_in),
-      refresh_token_expires_at: resolveExpiry(token.refresh_token_expires_in),
-      scope: EBAY_SCOPES,
-      token_type: token.token_type ?? "Bearer",
-      ebay_username: ebayUsername,
-      raw_response: raw,
-    },
-    { onConflict: "user_id" },
-  );
+  const { data: existing } = await supabase
+    .from("ebay_oauth_tokens")
+    .select("marketplace_id")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  const row: Record<string, unknown> = {
+    user_id: userId,
+    access_token: token.access_token,
+    refresh_token: token.refresh_token,
+    access_token_expires_at: resolveExpiry(token.expires_in),
+    refresh_token_expires_at: resolveExpiry(token.refresh_token_expires_in),
+    scope: EBAY_SCOPES,
+    token_type: token.token_type ?? "Bearer",
+    ebay_username: ebayUsername,
+    raw_response: raw,
+  };
+
+  if (marketplaceId && !existing?.marketplace_id) {
+    row.marketplace_id = marketplaceId;
+  }
+
+  const { error } = await supabase.from("ebay_oauth_tokens").upsert(row, { onConflict: "user_id" });
 
   if (error) {
     throw new Error(`Failed to save eBay OAuth token: ${error.message}`);
   }
 }
 
-async function fetchEbayUsername(accessToken: string): Promise<string | null> {
+interface EbayIdentityProfile {
+  username: string | null;
+  registrationMarketplaceId: EbayMarketplaceId | null;
+}
+
+async function fetchEbayIdentityProfile(accessToken: string): Promise<EbayIdentityProfile> {
   try {
     const response = await fetch(`${EBAY_API_BASE}/commerce/identity/v1/user/`, {
       headers: {
@@ -108,12 +128,25 @@ async function fetchEbayUsername(accessToken: string): Promise<string | null> {
       cache: "no-store",
     });
 
-    if (!response.ok) return null;
+    if (!response.ok) {
+      return { username: null, registrationMarketplaceId: null };
+    }
 
-    const data = (await response.json()) as { username?: string };
-    return data.username ?? null;
+    const data = (await response.json()) as {
+      username?: string;
+      registrationMarketplaceId?: string;
+    };
+
+    const marketplace = data.registrationMarketplaceId
+      ? normalizeMarketplaceId(data.registrationMarketplaceId)
+      : null;
+
+    return {
+      username: data.username ?? null,
+      registrationMarketplaceId: marketplace,
+    };
   } catch {
-    return null;
+    return { username: null, registrationMarketplaceId: null };
   }
 }
 
@@ -252,19 +285,21 @@ export async function exchangeEbayCode(userId: string, code: string, _origin: st
     throw new Error(raw.error_description ?? "eBay OAuth code exchange failed.");
   }
 
-  await persistUserTokens(userId, raw, raw, null);
+  await persistUserTokens(userId, raw, raw, null, null);
 
   try {
-    const ebayUsername = await fetchEbayUsername(raw.access_token);
-    if (ebayUsername) {
-      const supabase = getSupabaseAdmin();
-      await supabase
-        .from("ebay_oauth_tokens")
-        .update({ ebay_username: ebayUsername })
-        .eq("user_id", userId);
+    const profile = await fetchEbayIdentityProfile(raw.access_token);
+    const supabase = getSupabaseAdmin();
+    const updates: Record<string, string> = {};
+    if (profile.username) updates.ebay_username = profile.username;
+    if (Object.keys(updates).length > 0) {
+      await supabase.from("ebay_oauth_tokens").update(updates).eq("user_id", userId);
+    }
+    if (profile.registrationMarketplaceId) {
+      await persistSellerMarketplaceId(userId, profile.registrationMarketplaceId);
     }
   } catch {
-    // Username is optional; OAuth tokens are already saved.
+    // Username and marketplace are optional; OAuth tokens are already saved.
   }
 }
 
@@ -289,8 +324,11 @@ async function refreshUserToken(userId: string, refreshToken: string): Promise<s
     throw new Error(raw.error_description ?? "Failed to refresh eBay token.");
   }
 
-  const ebayUsername = await fetchEbayUsername(raw.access_token);
-  await persistUserTokens(userId, raw, raw, ebayUsername);
+  const profile = await fetchEbayIdentityProfile(raw.access_token);
+  await persistUserTokens(userId, raw, raw, profile.username, profile.registrationMarketplaceId);
+  if (profile.registrationMarketplaceId) {
+    await persistSellerMarketplaceId(userId, profile.registrationMarketplaceId);
+  }
   return raw.access_token;
 }
 

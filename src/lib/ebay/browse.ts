@@ -1,10 +1,10 @@
 import "server-only";
 
 import { serverEnv } from "@/lib/env";
+import { resolveMarketplaceConfig, type EbayMarketplaceId } from "@/lib/ebay/marketplace";
 import type { EbayListing } from "@/types/ebay";
 
 const EBAY_API_BASE = "https://api.ebay.com";
-const MARKETPLACE_ID = "EBAY_GB";
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 50;
 const FETCH_BATCH = 6;
@@ -59,12 +59,13 @@ async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
 
-function ebayHeaders(token: string): HeadersInit {
+function ebayHeaders(token: string, marketplaceId?: EbayMarketplaceId): HeadersInit {
+  const config = resolveMarketplaceConfig(marketplaceId);
   return {
     Authorization: `Bearer ${token}`,
-    "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
-    "Accept-Language": "en-GB",
-    "X-EBAY-C-ENDUSERCTX": "contextualLocation=country=GB",
+    "X-EBAY-C-MARKETPLACE-ID": config.marketplaceId,
+    "Accept-Language": config.acceptLanguage,
+    "X-EBAY-C-ENDUSERCTX": `contextualLocation=country=${config.endUserCountry}`,
   };
 }
 
@@ -322,12 +323,16 @@ function mapSummaryToListing(summary: EbayItemSummary): EbayListing | null {
   };
 }
 
-async function fetchItemDetail(token: string, itemId: string): Promise<EbayItemDetail | null> {
+async function fetchItemDetail(
+  token: string,
+  itemId: string,
+  marketplaceId?: EbayMarketplaceId,
+): Promise<EbayItemDetail | null> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await fetch(
       `${EBAY_API_BASE}/buy/browse/v1/item/${encodeURIComponent(itemId)}`,
       {
-        headers: ebayHeaders(token),
+        headers: ebayHeaders(token, marketplaceId),
         next: { revalidate: 0 },
       },
     );
@@ -350,9 +355,10 @@ async function fetchItemDetail(token: string, itemId: string): Promise<EbayItemD
 async function fetchVariationItems(
   token: string,
   itemGroupHref: string,
+  marketplaceId?: EbayMarketplaceId,
 ): Promise<EbayItemDetail[]> {
   const response = await fetch(itemGroupHref, {
-    headers: ebayHeaders(token),
+    headers: ebayHeaders(token, marketplaceId),
     next: { revalidate: 0 },
   });
 
@@ -363,7 +369,7 @@ async function fetchVariationItems(
 
   const detailed = await runBatched(variants, FETCH_BATCH, async (variant) => {
     if (!variant.itemId) return null;
-    return fetchItemDetail(token, variant.itemId);
+    return fetchItemDetail(token, variant.itemId, marketplaceId);
   });
 
   return detailed.filter((item): item is EbayItemDetail => item !== null);
@@ -386,12 +392,13 @@ async function runBatched<T, R>(
 async function enrichSearchSummary(
   token: string,
   summary: EbayItemSummary,
+  marketplaceId?: EbayMarketplaceId,
 ): Promise<EbayListing[]> {
   const isVariationGroup =
     summary.itemGroupType === "SELLER_DEFINED_VARIATIONS" && summary.itemGroupHref;
 
   if (isVariationGroup) {
-    const variants = await fetchVariationItems(token, summary.itemGroupHref!);
+    const variants = await fetchVariationItems(token, summary.itemGroupHref!, marketplaceId);
     const siblingNetPrices = variants
       .map((variant) => Number.parseFloat(variant.price?.value ?? "0"))
       .filter((value) => value > 0);
@@ -415,7 +422,7 @@ async function enrichSearchSummary(
 
   if (!summary.itemId) return [];
 
-  const detail = await fetchItemDetail(token, summary.itemId);
+  const detail = await fetchItemDetail(token, summary.itemId, marketplaceId);
   if (!detail) return [];
 
   const row = mapDetailToListing(detail, false);
@@ -434,6 +441,7 @@ export async function searchEbayListings(params: {
   offset?: number;
   sort?: "asc" | "desc";
   enrichDetails?: boolean;
+  marketplaceId?: EbayMarketplaceId;
 }): Promise<{
   listings: EbayListing[];
   total: number;
@@ -450,6 +458,7 @@ export async function searchEbayListings(params: {
   const offset = Math.max(params.offset ?? 0, 0);
   const sort = params.sort === "desc" ? "desc" : "asc";
   const enrichDetails = params.enrichDetails !== false;
+  const marketplaceId = params.marketplaceId;
 
   const token = await getAccessToken();
   const url = new URL(`${EBAY_API_BASE}/buy/browse/v1/item_summary/search`);
@@ -459,7 +468,7 @@ export async function searchEbayListings(params: {
   url.searchParams.set("sort", sort === "desc" ? "-price" : "price");
 
   const response = await fetch(url.toString(), {
-    headers: ebayHeaders(token),
+    headers: ebayHeaders(token, marketplaceId),
     next: { revalidate: 0 },
   });
 
@@ -479,7 +488,7 @@ export async function searchEbayListings(params: {
     ? sortListings(
         (
           await runBatched(summaries, FETCH_BATCH, (summary) =>
-            enrichSearchSummary(token, summary),
+            enrichSearchSummary(token, summary, marketplaceId),
           )
         ).flat(),
         sort,

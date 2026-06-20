@@ -106,6 +106,7 @@ export async function fetchListingProductSource(url: string): Promise<ListingPro
         id: variant.id,
         label: variant.label,
         price: variant.price,
+        originalPrice: variant.originalPrice,
         currency: variant.currency,
         stock: variant.stock,
         imageUrl: variantFilter.allowed[0] ?? null,

@@ -494,7 +494,6 @@ export function ListingsShell() {
     setPricingBreakdown(saved.pricingBreakdown ?? null);
     setManualPriceOverride(saved.manualPriceOverride ?? null);
     let step = data.draft.currentStep ?? 0;
-    if (step >= 6 && !saved.ebayPolicies?.fulfillmentPolicyId) step += 1;
     setCurrentStep(step);
     setResumeOffer(null);
     generateStarted.current = true;

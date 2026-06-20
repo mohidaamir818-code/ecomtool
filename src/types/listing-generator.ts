@@ -2,6 +2,7 @@ export interface ListingProductVariant {
   id: string;
   label: string;
   price: number;
+  originalPrice?: number;
   currency: string;
   stock: number | null;
   imageUrl?: string | null;
@@ -134,6 +135,8 @@ export interface EbayBusinessPolicies {
   paymentPolicyId: string;
   returnPolicyId: string;
 }
+
+export type CreatePolicyType = "fulfillment" | "payment" | "return";
 
 export interface EbayPoliciesResponse {
   fulfillment: EbayPolicyOption[];

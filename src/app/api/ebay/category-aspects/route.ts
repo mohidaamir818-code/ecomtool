@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getSellerMarketplaceId } from "@/lib/ebay/marketplace";
 import { getItemAspectsForCategory } from "@/lib/ebay/sell-inventory";
 import { getEbayUserAccessToken } from "@/lib/ebay/oauth-user";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
@@ -32,7 +33,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "eBay account is not connected." }, { status: 400 });
     }
 
-    const aspectNames = await getItemAspectsForCategory(token, categoryId);
+    const marketplaceId = await getSellerMarketplaceId(userId);
+    const aspectNames = await getItemAspectsForCategory(token, categoryId, marketplaceId);
     return NextResponse.json({ success: true, aspectNames });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load category aspects.";

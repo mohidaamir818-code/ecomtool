@@ -2,6 +2,12 @@ import "server-only";
 
 import { buildDescriptionHtmlWithImages, getSelectedDescriptionPhotos } from "@/features/listings/lib/draft-utils";
 import { getAppOrigin } from "@/lib/env";
+import {
+  buildEbayListingUrl,
+  getSellerMarketplaceId,
+  resolveMarketplaceConfig,
+  type EbayMarketplaceId,
+} from "@/lib/ebay/marketplace";
 import { getEbayUserAccessToken } from "@/lib/ebay/oauth-user";
 import type {
   EbayBusinessPolicies,
@@ -14,16 +20,14 @@ import type {
 import { DEFAULT_PROMOTIONS } from "@/types/listing-generator";
 
 const EBAY_API_BASE = "https://api.ebay.com";
-const MARKETPLACE_ID = "EBAY_GB";
-const CATEGORY_TREE_ID = "3";
 const MAX_PHOTOS = 24;
 
-function sellHeaders(token: string): HeadersInit {
+function sellHeaders(token: string, contentLanguage: string): HeadersInit {
   return {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
     Accept: "application/json",
-    "Content-Language": "en-GB",
+    "Content-Language": contentLanguage,
   };
 }
 
@@ -91,14 +95,16 @@ function buildVolumePricing(promotions: VolumePromotionTier[]) {
 export async function getCategorySuggestions(
   token: string,
   query: string,
+  marketplaceId?: EbayMarketplaceId,
 ): Promise<EbayCategorySuggestion[]> {
+  const config = resolveMarketplaceConfig(marketplaceId);
   const url = new URL(
-    `${EBAY_API_BASE}/commerce/taxonomy/v1/category_tree/${CATEGORY_TREE_ID}/get_category_suggestions`,
+    `${EBAY_API_BASE}/commerce/taxonomy/v1/category_tree/${config.categoryTreeId}/get_category_suggestions`,
   );
   url.searchParams.set("q", query.slice(0, 80));
 
   const response = await fetch(url.toString(), {
-    headers: sellHeaders(token),
+    headers: sellHeaders(token, config.contentLanguage),
     cache: "no-store",
   });
 
@@ -134,14 +140,16 @@ export async function getCategorySuggestions(
 export async function getItemAspectsForCategory(
   token: string,
   categoryId: string,
+  marketplaceId?: EbayMarketplaceId,
 ): Promise<string[]> {
+  const config = resolveMarketplaceConfig(marketplaceId);
   const url = new URL(
-    `${EBAY_API_BASE}/commerce/taxonomy/v1/category_tree/${CATEGORY_TREE_ID}/get_item_aspects_for_category`,
+    `${EBAY_API_BASE}/commerce/taxonomy/v1/category_tree/${config.categoryTreeId}/get_item_aspects_for_category`,
   );
   url.searchParams.set("category_id", categoryId);
 
   const response = await fetch(url.toString(), {
-    headers: sellHeaders(token),
+    headers: sellHeaders(token, config.contentLanguage),
     cache: "no-store",
   });
 
@@ -156,12 +164,17 @@ export async function getItemAspectsForCategory(
     .filter((name): name is string => Boolean(name));
 }
 
-async function resolveCategoryId(token: string, listing: GeneratedListing): Promise<string> {
+async function resolveCategoryId(
+  token: string,
+  listing: GeneratedListing,
+  marketplaceId: EbayMarketplaceId,
+): Promise<string> {
   if (listing.categoryId) return listing.categoryId;
 
   const suggestions = await getCategorySuggestions(
     token,
     listing.categorySuggestion || listing.seoTitle,
+    marketplaceId,
   );
 
   const categoryId = suggestions[0]?.categoryId;
@@ -178,6 +191,7 @@ async function upsertInventoryItem(
   listing: GeneratedListing,
   imageUrls: string[],
   quantity: number,
+  contentLanguage: string,
   variantLabel?: string,
   gtin?: string,
 ): Promise<void> {
@@ -206,7 +220,7 @@ async function upsertInventoryItem(
 
   const response = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
     method: "PUT",
-    headers: sellHeaders(token),
+    headers: sellHeaders(token, contentLanguage),
     body: JSON.stringify(body),
     cache: "no-store",
   });
@@ -224,6 +238,7 @@ async function upsertInventoryItemGroup(
   imageUrls: string[],
   variantSkus: string[],
   variantLabels: string[],
+  contentLanguage: string,
 ): Promise<void> {
   const body = {
     inventoryItemGroupKey: groupKey,
@@ -246,7 +261,7 @@ async function upsertInventoryItemGroup(
     `${EBAY_API_BASE}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupKey)}`,
     {
       method: "PUT",
-      headers: sellHeaders(token),
+      headers: sellHeaders(token, contentLanguage),
       body: JSON.stringify(body),
       cache: "no-store",
     },
@@ -265,8 +280,10 @@ async function createOffer(
   quantity: number,
   promotions: VolumePromotionTier[],
   policyIds: EbayBusinessPolicies,
+  marketplaceId: EbayMarketplaceId,
   options: { sku?: string; inventoryItemGroupKey?: string; priceOverride?: number },
 ): Promise<string> {
+  const config = resolveMarketplaceConfig(marketplaceId);
   const { fulfillmentPolicyId, paymentPolicyId, returnPolicyId } = policyIds;
 
   if (!fulfillmentPolicyId || !paymentPolicyId || !returnPolicyId) {
@@ -280,7 +297,7 @@ async function createOffer(
   const pricingSummary: Record<string, unknown> = {
     price: {
       value: priceValue.toFixed(2),
-      currency: listing.currency === "USD" ? "GBP" : listing.currency,
+      currency: listing.currency || config.currency,
     },
   };
 
@@ -289,7 +306,7 @@ async function createOffer(
   }
 
   const body: Record<string, unknown> = {
-    marketplaceId: MARKETPLACE_ID,
+    marketplaceId: config.marketplaceId,
     format: "FIXED_PRICE",
     listingDescription: listing.descriptionHtml,
     availableQuantity: quantity,
@@ -311,7 +328,7 @@ async function createOffer(
 
   const response = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/offer`, {
     method: "POST",
-    headers: sellHeaders(token),
+    headers: sellHeaders(token, config.contentLanguage),
     body: JSON.stringify(body),
     cache: "no-store",
   });
@@ -328,15 +345,17 @@ async function createOffer(
 async function publishOfferByGroup(
   token: string,
   groupKey: string,
+  marketplaceId: EbayMarketplaceId,
 ): Promise<{ listingId: string | null }> {
+  const config = resolveMarketplaceConfig(marketplaceId);
   const response = await fetch(
     `${EBAY_API_BASE}/sell/inventory/v1/offer/publish_by_inventory_item_group`,
     {
       method: "POST",
-      headers: sellHeaders(token),
+      headers: sellHeaders(token, config.contentLanguage),
       body: JSON.stringify({
         inventoryItemGroupKey: groupKey,
-        marketplaceId: MARKETPLACE_ID,
+        marketplaceId: config.marketplaceId,
       }),
       cache: "no-store",
     },
@@ -354,12 +373,16 @@ async function publishOfferByGroup(
   return { listingId: data.listingId ?? null };
 }
 
-async function publishOffer(token: string, offerId: string): Promise<{ listingId: string | null }> {
+async function publishOffer(
+  token: string,
+  offerId: string,
+  contentLanguage: string,
+): Promise<{ listingId: string | null }> {
   const response = await fetch(
     `${EBAY_API_BASE}/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/publish`,
     {
       method: "POST",
-      headers: sellHeaders(token),
+      headers: sellHeaders(token, contentLanguage),
       cache: "no-store",
     },
   );
@@ -382,6 +405,9 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
     throw new Error("eBay account is not connected. Connect your eBay account first.");
   }
 
+  const marketplaceId = await getSellerMarketplaceId(userId);
+  const marketplaceConfig = resolveMarketplaceConfig(marketplaceId);
+
   if (draft.listing.brand !== "Unbranded") {
     throw new Error("Brand must remain Unbranded for this listing.");
   }
@@ -400,12 +426,13 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
   }
 
   const policyIds = draft.ebayPolicies;
-  const categoryId = await resolveCategoryId(token, draft.listing);
+  const categoryId = await resolveCategoryId(token, draft.listing, marketplaceId);
   const selectedDescriptionPhotos = getSelectedDescriptionPhotos(draft.descriptionPhotos);
   const appOrigin = selectedDescriptionPhotos.length > 0 ? getAppOrigin() : "";
   const listing = {
     ...draft.listing,
     categoryId,
+    currency: draft.listing.currency || marketplaceConfig.currency,
     brand: "Unbranded" as const,
     descriptionHtml: buildDescriptionHtmlWithImages(
       draft.listing.descriptionHtml,
@@ -433,17 +460,29 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
       listing,
       images,
       quantity,
+      marketplaceConfig.contentLanguage,
       variant?.label,
       variant?.ean,
     );
-    const offerId = await createOffer(token, listing, categoryId, quantity, draft.promotions, policyIds, { sku });
-    const published = await publishOffer(token, offerId);
+    const offerId = await createOffer(
+      token,
+      listing,
+      categoryId,
+      quantity,
+      draft.promotions,
+      policyIds,
+      marketplaceId,
+      { sku },
+    );
+    const published = await publishOffer(token, offerId, marketplaceConfig.contentLanguage);
 
     return {
       sku,
       offerId,
       listingId: published.listingId,
-      listingUrl: published.listingId ? `https://www.ebay.co.uk/itm/${published.listingId}` : null,
+      listingUrl: published.listingId
+        ? buildEbayListingUrl(published.listingId, marketplaceId)
+        : null,
     };
   }
 
@@ -467,15 +506,25 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
       variantListing,
       images,
       quantity,
+      marketplaceConfig.contentLanguage,
       variant.label,
       variant.ean,
     );
 
-    const offerId = await createOffer(token, listing, categoryId, quantity, draft.promotions, policyIds, {
-      sku,
-      inventoryItemGroupKey: groupKey,
-      priceOverride: variant.price,
-    });
+    const offerId = await createOffer(
+      token,
+      listing,
+      categoryId,
+      quantity,
+      draft.promotions,
+      policyIds,
+      marketplaceId,
+      {
+        sku,
+        inventoryItemGroupKey: groupKey,
+        priceOverride: variant.price,
+      },
+    );
 
     if (!firstOfferId) firstOfferId = offerId;
   }
@@ -487,15 +536,18 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
     selectedPhotos,
     variantSkus,
     variantLabels,
+    marketplaceConfig.contentLanguage,
   );
 
-  const published = await publishOfferByGroup(token, groupKey);
+  const published = await publishOfferByGroup(token, groupKey, marketplaceId);
 
   return {
     sku: groupKey,
     offerId: firstOfferId,
     listingId: published.listingId,
-    listingUrl: published.listingId ? `https://www.ebay.co.uk/itm/${published.listingId}` : null,
+    listingUrl: published.listingId
+      ? buildEbayListingUrl(published.listingId, marketplaceId)
+      : null,
   };
 }
 

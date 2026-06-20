@@ -106,6 +106,26 @@ function extractSkuImage(properties: Array<Record<string, unknown>> | undefined)
   return null;
 }
 
+function buildVariantLabelFromSkuProperties(
+  properties: Array<Record<string, unknown>> | undefined,
+  fallback: string,
+): string {
+  if (!properties?.length) return fallback;
+
+  const parts = properties
+    .map((prop) => {
+      const value =
+        prop.property_value_definition_name ??
+        prop.property_value ??
+        prop.sku_property_value ??
+        prop.property_value_id;
+      return value != null ? String(value).trim() : "";
+    })
+    .filter(Boolean);
+
+  return parts.length > 0 ? parts.join(" / ") : fallback;
+}
+
 function parseCookies(setCookieHeaders: string[]): Record<string, string> {
   const cookies: Record<string, string> = {};
   for (const header of setCookieHeaders) {
@@ -989,10 +1009,11 @@ function parseDsProductPayload(
   if (!title) return null;
 
   const skus = normalizeDsSkuList(result.ae_item_sku_info_dtos);
-  const variants = skus
+  const mappedVariants = skus
     .map((sku) => {
-      const price = parseNumber(sku.offer_sale_price ?? sku.sku_price);
-      if (price == null) return null;
+      const salePrice = parseNumber(sku.offer_sale_price ?? sku.sku_price);
+      if (salePrice == null) return null;
+      const originalPrice = parseNumber(sku.sku_price);
       const stock = parseNumber(
         sku.sku_available_stock ?? sku.s_k_u_available_stock ?? sku.ipm_sku_stock,
       );
@@ -1000,22 +1021,34 @@ function parseDsProductPayload(
       const properties = sku.ae_sku_property_dtos as
         | Array<Record<string, unknown>>
         | undefined;
-      const labelFromProp = properties?.[0]?.property_value_definition_name;
-      const fallbackLabel = sku.sku_attr ?? sku.id ?? sku.sku_id ?? "Variant";
+      const fallbackLabel = String(sku.sku_attr ?? sku.id ?? sku.sku_id ?? "Variant");
       const skuImage = extractSkuImage(properties);
 
-      return {
+      const variant: HandlingProductVariant = {
         id: String(sku.sku_id ?? sku.id ?? fallbackLabel),
-        label: String(labelFromProp ?? fallbackLabel),
-        price,
+        label: buildVariantLabelFromSkuProperties(properties, fallbackLabel),
+        price: salePrice,
         currency: String(sku.currency_code ?? base?.currency_code ?? "GBP"),
         stock,
         imageUrl: skuImage ?? null,
-      } satisfies HandlingProductVariant;
-    })
-    .filter((value) => value !== null) as HandlingProductVariant[];
+      };
 
-  const defaultVariant = variants[0];
+      if (
+        originalPrice != null &&
+        originalPrice > salePrice
+      ) {
+        variant.originalPrice = originalPrice;
+      }
+
+      return variant;
+    })
+    .filter((value): value is HandlingProductVariant => value !== null);
+
+  const variants = mappedVariants.filter(
+    (variant) => variant.stock != null && variant.stock > 0,
+  );
+
+  const defaultVariant = variants[0] ?? mappedVariants[0];
   if (!defaultVariant) return null;
 
   const multimedia = result.ae_multimedia_info_dto as Record<string, unknown> | undefined;
@@ -1038,6 +1071,7 @@ function parseDsProductPayload(
     selectedSkuId: defaultVariant.id,
     selectedSkuLabel: defaultVariant.label,
     variantsCount: variants.length,
+    mappedVariantsCount: mappedVariants.length,
     baseCurrencyCode: base?.currency_code ?? null,
   });
 
@@ -1054,7 +1088,7 @@ function parseDsProductPayload(
     orders:
       soldCount != null ? `${soldCount.toLocaleString()} sold` : base?.sales_count ? String(base.sales_count) : null,
     rating: ratingValue != null && ratingValue > 0 ? ratingValue : null,
-    variants,
+    variants: variants.length > 0 ? variants : undefined,
     selectedVariantId: defaultVariant.id,
     descriptionImages,
   };

@@ -4,6 +4,7 @@ export interface HandlingProductVariant {
   id: string;
   label: string;
   price: number;
+  originalPrice?: number;
   currency: string;
   stock: number | null;
   imageUrl?: string | null;

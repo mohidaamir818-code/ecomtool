@@ -1,13 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { EbayBusinessPolicies, EbayPoliciesResponse, ListingDraft } from "@/types/listing-generator";
+import type {
+  CreatePolicyType,
+  EbayBusinessPolicies,
+  EbayPoliciesResponse,
+  ListingDraft,
+} from "@/types/listing-generator";
 
 interface ListingShippingReturnsStepProps {
   userId: string;
   draft: ListingDraft;
   onChange: (patch: Partial<ListingDraft>) => void;
 }
+
+type CreatingPolicyType = CreatePolicyType | null;
 
 export function ListingShippingReturnsStep({
   userId,
@@ -17,6 +24,7 @@ export function ListingShippingReturnsStep({
   const [policies, setPolicies] = useState<EbayPoliciesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [creatingPolicy, setCreatingPolicy] = useState<CreatingPolicyType>(null);
   const initialPoliciesSet = useRef(false);
   const draftPoliciesRef = useRef(draft.ebayPolicies);
 
@@ -24,11 +32,14 @@ export function ListingShippingReturnsStep({
     draftPoliciesRef.current = draft.ebayPolicies;
   }, [draft.ebayPolicies]);
 
-  const loadPolicies = useCallback(async () => {
+  const loadPolicies = useCallback(async (refresh = false) => {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`/api/ebay/policies?userId=${encodeURIComponent(userId)}`);
+      const refreshParam = refresh ? "&refresh=true" : "";
+      const response = await fetch(
+        `/api/ebay/policies?userId=${encodeURIComponent(userId)}${refreshParam}`,
+      );
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error ?? "Failed to load eBay policies.");
@@ -57,6 +68,47 @@ export function ListingShippingReturnsStep({
     onChange({ ebayPolicies: { ...current, ...patch } });
   }
 
+  async function handleCreatePolicy(policyType: CreatePolicyType) {
+    setCreatingPolicy(policyType);
+    setError("");
+    try {
+      const response = await fetch("/api/ebay/policies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, policyType }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error ?? "Failed to create eBay policy.");
+      }
+
+      const snapshot = data as EbayPoliciesResponse & { success?: boolean };
+      setPolicies(snapshot);
+
+      const createdPolicy =
+        policyType === "fulfillment"
+          ? snapshot.fulfillment[snapshot.fulfillment.length - 1]
+          : policyType === "payment"
+            ? snapshot.payment[snapshot.payment.length - 1]
+            : snapshot.return[snapshot.return.length - 1];
+
+      const current = draft.ebayPolicies ?? snapshot.selected;
+      if (createdPolicy) {
+        if (policyType === "fulfillment") {
+          onChange({ ebayPolicies: { ...current, fulfillmentPolicyId: createdPolicy.policyId } });
+        } else if (policyType === "payment") {
+          onChange({ ebayPolicies: { ...current, paymentPolicyId: createdPolicy.policyId } });
+        } else {
+          onChange({ ebayPolicies: { ...current, returnPolicyId: createdPolicy.policyId } });
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create eBay policy.");
+    } finally {
+      setCreatingPolicy(null);
+    }
+  }
+
   const selected = draft.ebayPolicies ?? policies?.selected;
 
   if (loading) {
@@ -83,7 +135,7 @@ export function ListingShippingReturnsStep({
         <p className="rounded border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>
         <button
           type="button"
-          onClick={() => void loadPolicies()}
+          onClick={() => void loadPolicies(true)}
           className="rounded border border-[#C5C5C5] bg-white px-4 py-2 text-sm font-medium text-[#191919] hover:bg-[#F7F7F7]"
         >
           Retry
@@ -99,6 +151,9 @@ export function ListingShippingReturnsStep({
   const selectClassName =
     "mt-2 w-full rounded border border-[#C5C5C5] bg-white px-3 py-2 text-sm text-[#191919] outline-none focus:border-[#3665F3]";
 
+  const createButtonClassName =
+    "mt-2 text-sm font-semibold text-[#3665F3] hover:underline disabled:cursor-not-allowed disabled:text-[#9CA3AF]";
+
   return (
     <div className="space-y-4">
       <div>
@@ -107,6 +162,10 @@ export function ListingShippingReturnsStep({
           Choose the business policies eBay will use when this listing goes live.
         </p>
       </div>
+
+      {creatingPolicy ? (
+        <p className="text-sm text-[#6B7280]">Creating new policy…</p>
+      ) : null}
 
       <div className="space-y-4 rounded border border-[#E5E5E5] bg-white px-4 py-4">
         <label className="block">
@@ -122,6 +181,14 @@ export function ListingShippingReturnsStep({
               </option>
             ))}
           </select>
+          <button
+            type="button"
+            disabled={creatingPolicy !== null}
+            onClick={() => void handleCreatePolicy("fulfillment")}
+            className={createButtonClassName}
+          >
+            + Create New Policy
+          </button>
         </label>
 
         <label className="block">
@@ -137,6 +204,14 @@ export function ListingShippingReturnsStep({
               </option>
             ))}
           </select>
+          <button
+            type="button"
+            disabled={creatingPolicy !== null}
+            onClick={() => void handleCreatePolicy("payment")}
+            className={createButtonClassName}
+          >
+            + Create New Policy
+          </button>
         </label>
 
         <label className="block">
@@ -152,6 +227,14 @@ export function ListingShippingReturnsStep({
               </option>
             ))}
           </select>
+          <button
+            type="button"
+            disabled={creatingPolicy !== null}
+            onClick={() => void handleCreatePolicy("return")}
+            className={createButtonClassName}
+          >
+            + Create New Policy
+          </button>
         </label>
       </div>
     </div>
