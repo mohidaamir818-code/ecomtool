@@ -4,6 +4,7 @@ import type {
   ListingVariantDraft,
   PricingBreakdown,
 } from "@/types/listing-generator";
+import { buildPreviewSku } from "@/features/listings/lib/ebay-ui";
 
 export function calculatePricingBreakdown(
   aliExpressPrice: number,
@@ -54,6 +55,9 @@ export function buildVariantPrices(
         imageUrl: defaultImage,
         price: baseEbayPrice,
         stock: product.stock ?? 1,
+        sku: buildPreviewSku(product.externalId, "default"),
+        ean: "",
+        quantity: 1,
         aliExpressPrice: product.price,
       },
     ];
@@ -72,6 +76,9 @@ export function buildVariantPrices(
       imageUrl: variantImage,
       price: Number((baseEbayPrice * ratio).toFixed(2)),
       stock: variant.stock ?? 1,
+      sku: buildPreviewSku(product.externalId, variant.id),
+      ean: "",
+      quantity: 1,
       aliExpressPrice: variant.price,
     };
   });

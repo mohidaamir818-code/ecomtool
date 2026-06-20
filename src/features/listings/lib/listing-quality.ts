@@ -58,7 +58,9 @@ export function computeListingQualityScore(draft: ListingDraft): ListingQualityS
   });
   if (!specificsPassed) tips.push("Fill in more item specifics — eBay uses these for search ranking.");
 
-  const variantsOk = draft.variants.every((v) => v.price > 0 && v.stock >= 0 && v.imageUrl);
+  const variantsOk = draft.variants.every(
+    (v) => v.price > 0 && v.quantity >= 1 && v.imageUrl,
+  );
   checks.push({
     id: "variants",
     label: "Variants",

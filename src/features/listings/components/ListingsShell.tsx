@@ -4,17 +4,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { DashboardLayout } from "@/features/dashboard/components/DashboardLayout";
 import { useUserBlock } from "@/features/dashboard/context/UserBlockContext";
-import { buildInitialDraft, recalculateDraftPricing } from "@/features/listings/lib/draft-utils";
+import { buildInitialDraft, normalizeDraftVariants, recalculateDraftPricing } from "@/features/listings/lib/draft-utils";
 import { fetchSellerPreferences, persistSellerPreferences } from "@/features/listings/lib/seller-preferences-client";
 import { sellerPreferencesToPromotions, promotionsToSellerPreferences } from "@/lib/listings/seller-preferences-mappers";
 import { AiListingGenerator } from "./AiListingGenerator";
 import { EbayConnect } from "./EbayConnect";
 import { ListingConfirmStep } from "./ListingConfirmStep";
-import { ListingPhotosStep } from "./ListingPhotosStep";
+import { ListingPhotosVariantsStep } from "./ListingPhotosVariantsStep";
 import { ListingProfitCalculatorStep } from "./ListingProfitCalculatorStep";
 import { ListingPromotionsStep } from "./ListingPromotionsStep";
 import { ListingQualityScoreStep } from "./ListingQualityScoreStep";
-import { ListingVariantsStep } from "./ListingVariantsStep";
 import { ListingWizardNav } from "./ListingWizardNav";
 import { ListingWizardProgress } from "./ListingWizardProgress";
 import { VeroBlockModal } from "./VeroBlockModal";
@@ -30,7 +29,7 @@ import type {
 } from "@/types/listing-generator";
 import { defaultSellerPreferences } from "@/types/listing-generator";
 
-const MAX_STEP = 9;
+const MAX_STEP = 8;
 
 export function ListingsShell() {
   const searchParams = useSearchParams();
@@ -56,6 +55,7 @@ export function ListingsShell() {
   const [sellerPrefs, setSellerPrefs] = useState<SellerPreferences | null>(null);
   const [sellerPrefsLoading, setSellerPrefsLoading] = useState(true);
   const [showSavedToast, setShowSavedToast] = useState(false);
+  const [photosVariantsError, setPhotosVariantsError] = useState<string | null>(null);
   const generateStarted = useRef(false);
   const savedToastTimer = useRef<number | null>(null);
 
@@ -297,12 +297,12 @@ export function ListingsShell() {
       if (listing.seoTitle.length > 80) return "Title must be 80 characters or less.";
       if ((listing?.suggestedPrice ?? 0) <= 0) return "Price must be greater than 0.";
     }
-    if (step === 5 && !draft?.photos.some((photo) => photo.selected)) {
-      return "Select at least one photo.";
-    }
-    if (step === 6) {
+    if (step === 5) {
+      if (!draft?.photos.length) return "Add at least one photo.";
       for (const variant of draft?.variants ?? []) {
         if (variant.price <= 0) return "All variant prices must be greater than 0.";
+        if (variant.quantity < 1) return "All variant quantities must be at least 1.";
+        if (!variant.imageUrl) return "Each variant must have a photo.";
       }
     }
     return null;
@@ -346,7 +346,7 @@ export function ListingsShell() {
 
     if (currentStep === 3 && generateLoading) return;
 
-    if (currentStep === 7 && draft && userId && sellerPrefs) {
+    if (currentStep === 6 && draft && userId && sellerPrefs) {
       const merged = promotionsToSellerPreferences(draft.promotions, sellerPrefs);
       try {
         await persistSellerPreferences(userId, merged);
@@ -370,7 +370,7 @@ export function ListingsShell() {
     const data = await response.json();
     if (!response.ok || !data.draft?.draftJson) return;
 
-    const saved = data.draft.draftJson as ListingDraft;
+    const saved = normalizeDraftVariants(data.draft.draftJson as ListingDraft);
     setUrl(data.draft.productUrl ?? "");
     setDraft(saved);
     setProduct(saved.product);
@@ -378,9 +378,41 @@ export function ListingsShell() {
     setPricingPrefs(saved.pricing ?? null);
     setPricingBreakdown(saved.pricingBreakdown ?? null);
     setManualPriceOverride(saved.manualPriceOverride ?? null);
-    setCurrentStep(data.draft.currentStep ?? 0);
+    let step = data.draft.currentStep ?? 0;
+    if (step >= 6) step -= 1;
+    setCurrentStep(step);
     setResumeOffer(null);
     generateStarted.current = true;
+  }
+
+  async function handlePhotosVariantsSaveAndClose() {
+    const error = validateStep(5);
+    if (error) {
+      setPhotosVariantsError(error);
+      setNotice(error);
+      setIsError(true);
+      return;
+    }
+    setPhotosVariantsError(null);
+    setNotice("");
+    setIsError(false);
+    await saveDraft();
+    setCurrentStep(6);
+  }
+
+  async function handlePhotosVariantsSaveAndPreview(): Promise<boolean> {
+    const error = validateStep(5);
+    if (error) {
+      setPhotosVariantsError(error);
+      setNotice(error);
+      setIsError(true);
+      return false;
+    }
+    setPhotosVariantsError(null);
+    setNotice("");
+    setIsError(false);
+    await saveDraft();
+    return true;
   }
 
   const busy = veroLoading || generateLoading;
@@ -393,7 +425,7 @@ export function ListingsShell() {
           <div>
             <h1 className="text-2xl font-bold text-[#111827]">AI Listing Generator</h1>
             <p className="mt-1 text-sm text-[#6B7280]">
-              Professional 10-step wizard to create optimized eBay listings from AliExpress.
+              Professional 9-step wizard to create optimized eBay listings from AliExpress.
             </p>
           </div>
 
@@ -477,17 +509,17 @@ export function ListingsShell() {
           ) : null}
 
           {currentStep === 5 && draft ? (
-            <ListingPhotosStep
-              photos={draft.photos}
-              onChange={(photos) => updateDraft({ photos })}
+            <ListingPhotosVariantsStep
+              draft={draft}
+              onChange={updateDraft}
+              onSaveAndClose={() => handlePhotosVariantsSaveAndClose()}
+              onSaveAndPreview={() => handlePhotosVariantsSaveAndPreview()}
+              onCancel={() => setCurrentStep(4)}
+              validationError={photosVariantsError}
             />
           ) : null}
 
-          {currentStep === 6 && draft ? (
-            <ListingVariantsStep draft={draft} onChange={(variants) => updateDraft({ variants })} />
-          ) : null}
-
-          {currentStep === 7 && draft && userId && sellerPrefs ? (
+          {currentStep === 6 && draft && userId && sellerPrefs ? (
             <ListingPromotionsStep
               userId={userId}
               promotions={draft.promotions}
@@ -498,9 +530,9 @@ export function ListingsShell() {
             />
           ) : null}
 
-          {currentStep === 8 && draft ? <ListingQualityScoreStep draft={draft} /> : null}
+          {currentStep === 7 && draft ? <ListingQualityScoreStep draft={draft} /> : null}
 
-          {currentStep === 9 && draft && userId ? (
+          {currentStep === 8 && draft && userId ? (
             <>
               <EbayConnect userId={userId} refreshKey={oauthRefreshKey} />
               <ListingConfirmStep
@@ -536,7 +568,7 @@ export function ListingsShell() {
           ) : null}
         </div>
 
-        {currentStep < MAX_STEP ? (
+        {currentStep < MAX_STEP && currentStep !== 5 ? (
           <ListingWizardNav
             currentStep={currentStep}
             maxStep={MAX_STEP}

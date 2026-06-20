@@ -36,6 +36,16 @@ function buildSku(externalId: string, suffix?: string): string {
   return base.replace(/[^a-zA-Z0-9-_]/g, "-").slice(0, 50);
 }
 
+function resolveVariantSku(externalId: string, variant: ListingDraft["variants"][number]): string {
+  const custom = variant.sku?.trim();
+  if (custom) return custom.replace(/[^a-zA-Z0-9-_]/g, "-").slice(0, 50);
+  return buildSku(externalId, variant.id);
+}
+
+function resolveVariantQuantity(variant: ListingDraft["variants"][number]): number {
+  return variant.quantity >= 1 ? variant.quantity : 1;
+}
+
 function normalizeImageUrls(urls: string[]): string[] {
   return urls
     .slice(0, MAX_PHOTOS)
@@ -161,10 +171,14 @@ async function upsertInventoryItem(
   imageUrls: string[],
   quantity: number,
   variantLabel?: string,
+  gtin?: string,
 ): Promise<void> {
   const aspects = aspectsFromListing(listing);
   if (variantLabel) {
     aspects.Variant = [variantLabel];
+  }
+  if (gtin?.trim()) {
+    aspects.GTIN = [gtin.trim()];
   }
 
   const body = {
@@ -378,15 +392,23 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
 
   if (!isMultiVariant) {
     const variant = activeVariants[0];
-    const sku = buildSku(draft.product.externalId);
+    const sku = variant ? resolveVariantSku(draft.product.externalId, variant) : buildSku(draft.product.externalId);
     const images = variant?.imageUrl ? [variant.imageUrl, ...selectedPhotos] : selectedPhotos;
-    const quantity = variant?.stock ?? 1;
+    const quantity = variant ? resolveVariantQuantity(variant) : 1;
 
     if (variant && variant.price > 0) {
       listing.suggestedPrice = variant.price;
     }
 
-    await upsertInventoryItem(token, sku, listing, images, quantity, variant?.label);
+    await upsertInventoryItem(
+      token,
+      sku,
+      listing,
+      images,
+      quantity,
+      variant?.label,
+      variant?.ean,
+    );
     const offerId = await createOffer(token, listing, categoryId, quantity, draft.promotions, { sku });
     const published = await publishOffer(token, offerId);
 
@@ -404,16 +426,25 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
   let firstOfferId = "";
 
   for (const variant of activeVariants) {
-    const sku = buildSku(draft.product.externalId, variant.id);
+    const sku = resolveVariantSku(draft.product.externalId, variant);
     variantSkus.push(sku);
     variantLabels.push(variant.label);
 
     const images = variant.imageUrl ? [variant.imageUrl, ...selectedPhotos] : selectedPhotos;
     const variantListing = { ...listing, suggestedPrice: variant.price };
+    const quantity = resolveVariantQuantity(variant);
 
-    await upsertInventoryItem(token, sku, variantListing, images, variant.stock, variant.label);
+    await upsertInventoryItem(
+      token,
+      sku,
+      variantListing,
+      images,
+      quantity,
+      variant.label,
+      variant.ean,
+    );
 
-    const offerId = await createOffer(token, listing, categoryId, variant.stock, draft.promotions, {
+    const offerId = await createOffer(token, listing, categoryId, quantity, draft.promotions, {
       sku,
       inventoryItemGroupKey: groupKey,
       priceOverride: variant.price,
@@ -461,6 +492,9 @@ export async function listProductOnEbay(
         imageUrl: product.imageUrl ?? product.images[0] ?? "",
         price: listing.suggestedPrice,
         stock: quantity,
+        sku: buildSku(product.externalId, "default"),
+        ean: "",
+        quantity,
       },
     ],
     promotions: DEFAULT_PROMOTIONS.map((tier) => ({ ...tier })),

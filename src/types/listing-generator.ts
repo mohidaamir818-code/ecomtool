@@ -59,8 +59,13 @@ export interface ListingVariantDraft {
   imageUrl: string;
   price: number;
   stock: number;
+  sku: string;
+  ean: string;
+  quantity: number;
   aliExpressPrice?: number;
 }
+
+export type VariationPhotoAttribute = "default" | "color";
 
 export interface ListingPhotoDraft {
   url: string;
@@ -118,6 +123,7 @@ export interface ListingDraft {
   photos: ListingPhotoDraft[];
   variants: ListingVariantDraft[];
   promotions: VolumePromotionTier[];
+  variationPhotoAttribute?: VariationPhotoAttribute;
   pricing?: ListingPricingPreferences;
   pricingBreakdown?: PricingBreakdown;
   manualPriceOverride?: number | null;
@@ -204,8 +210,7 @@ export const LISTING_WIZARD_STEPS = [
   "Profit & Fees",
   "AI Generate",
   "Edit Listing",
-  "Photos",
-  "Variants",
+  "Photos & Variations",
   "Volume Discounts",
   "Quality Score",
   "Confirm & List",

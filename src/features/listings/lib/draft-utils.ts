@@ -4,11 +4,35 @@ import type {
   ListingPhotoDraft,
   ListingPricingPreferences,
   ListingProductSource,
+  ListingVariantDraft,
   PricingBreakdown,
   VolumePromotionTier,
 } from "@/types/listing-generator";
 import { DEFAULT_PROMOTIONS } from "@/types/listing-generator";
 import { buildVariantPrices, calculatePricingBreakdown } from "@/lib/listings/pricing";
+import { buildPreviewSku } from "@/features/listings/lib/ebay-ui";
+
+export function normalizeVariantDraft(
+  variant: ListingVariantDraft,
+  externalId: string,
+): ListingVariantDraft {
+  return {
+    ...variant,
+    sku: variant.sku || buildPreviewSku(externalId, variant.id),
+    ean: variant.ean ?? "",
+    quantity: variant.quantity ?? 1,
+  };
+}
+
+export function normalizeDraftVariants(draft: ListingDraft): ListingDraft {
+  return {
+    ...draft,
+    variationPhotoAttribute: draft.variationPhotoAttribute ?? "default",
+    variants: draft.variants.map((variant) =>
+      normalizeVariantDraft(variant, draft.product.externalId),
+    ),
+  };
+}
 
 export function buildInitialDraft(
   product: ListingProductSource,
@@ -50,6 +74,7 @@ export function buildInitialDraft(
     photos,
     variants,
     promotions: (options?.promotions ?? DEFAULT_PROMOTIONS).map((tier) => ({ ...tier })),
+    variationPhotoAttribute: "default",
     pricing: options?.pricing,
     pricingBreakdown: options?.pricingBreakdown,
     manualPriceOverride: options?.manualPriceOverride ?? null,
@@ -57,7 +82,9 @@ export function buildInitialDraft(
 }
 
 export function getSelectedPhotos(draft: ListingDraft): string[] {
-  return draft.photos.filter((photo) => photo.selected).map((photo) => photo.url);
+  const selected = draft.photos.filter((photo) => photo.selected).map((photo) => photo.url);
+  if (selected.length > 0) return selected;
+  return draft.photos.map((photo) => photo.url);
 }
 
 export function getEnabledPromotions(promotions: ListingDraft["promotions"]) {

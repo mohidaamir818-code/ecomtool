@@ -16,7 +16,7 @@ export function ListingWizardProgress({ currentStep }: ListingWizardProgressProp
         <span className="hidden sm:inline">{LISTING_WIZARD_STEPS[currentStep]}</span>
       </div>
 
-      <div className="grid grid-cols-5 gap-1 sm:grid-cols-10 sm:gap-2">
+      <div className="grid grid-cols-5 gap-1 sm:grid-cols-9 sm:gap-2">
         {LISTING_WIZARD_STEPS.map((label, index) => {
           const active = index === currentStep;
           const complete = index < currentStep;
