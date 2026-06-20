@@ -109,7 +109,24 @@ export function HandlingProductCard({
         </div>
         <div>
           <p className="text-[10px] font-medium uppercase text-[#9CA3AF]">Max qty</p>
-          <p className="text-sm font-bold text-[#111827]">{displayStock ?? "—"}</p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <p className="text-sm font-bold text-[#111827]">{displayStock ?? "—"}</p>
+            {product.stockChangeDirection === "up" ? (
+              <span className="text-sm font-bold text-emerald-600" aria-label="Stock increased">
+                ↑
+              </span>
+            ) : null}
+            {product.stockChangeDirection === "down" ? (
+              <span className="text-sm font-bold text-red-600" aria-label="Stock decreased">
+                ↓
+              </span>
+            ) : null}
+            {displayStock === 0 ? (
+              <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold uppercase text-red-700">
+                OUT OF STOCK
+              </span>
+            ) : null}
+          </div>
         </div>
         <div>
           <p className="text-[10px] font-medium uppercase text-[#9CA3AF]">Orders</p>

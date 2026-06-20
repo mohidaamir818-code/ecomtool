@@ -1,7 +1,13 @@
 import "server-only";
 
 import { fetchAliExpressProduct } from "@/lib/aliexpress/client";
+import { serverEnv } from "@/lib/env";
 import { sendEmail } from "@/lib/email/send-email";
+import {
+  sendStockAlertEmail,
+  type StockAlertPriority,
+  type StockChange,
+} from "@/lib/handling/stock-alert-email";
 import { QuotaExceededError } from "@/lib/quota/errors";
 import { enqueueOverflow } from "@/lib/quota/queue-service";
 import { consumeQuota } from "@/lib/quota/service";
@@ -10,7 +16,6 @@ import type {
   HandlingAddPayload,
   HandlingProduct,
   HandlingProductData,
-  HandlingProductLog,
   HandlingProductVariant,
   HandlingUpdateMode,
 } from "@/types/handling";
@@ -93,12 +98,133 @@ function resolveSelectedVariant(
   return variants[0];
 }
 
-function mapRowToProduct(row: Record<string, unknown>): HandlingProduct {
+function normalizeStock(stock: number | null | undefined): number {
+  return stock ?? 0;
+}
+
+function stocksDiffer(
+  previous: number | null | undefined,
+  current: number | null | undefined,
+): boolean {
+  return normalizeStock(previous) !== normalizeStock(current);
+}
+
+function resolveStockPriority(
+  previousStock: number,
+  currentStock: number,
+): StockAlertPriority {
+  if (currentStock === 0) return "urgent";
+  if (currentStock > previousStock) return "info";
+  if (currentStock < previousStock && currentStock < 10) return "warning";
+  if (currentStock < previousStock) return "warning";
+  return "info";
+}
+
+function detectStockChange(
+  previous: Record<string, unknown>,
+  latest: HandlingProductData,
+): StockChange | null {
+  const selectedVariantId = previous.selected_variant_id
+    ? String(previous.selected_variant_id)
+    : null;
+  const previousVariants = parseStoredVariants(previous.variants_json);
+  const currentVariants = latest.variants;
+
+  let previousStock: number | null | undefined;
+  let currentStock: number | null | undefined;
+  let variantLabel: string;
+
+  if (previousVariants?.length && currentVariants?.length) {
+    const previousVariant = resolveSelectedVariant(previousVariants, selectedVariantId);
+    const currentVariant = resolveSelectedVariant(currentVariants, selectedVariantId);
+    if (!previousVariant || !currentVariant) return null;
+
+    previousStock = previousVariant.stock;
+    currentStock = currentVariant.stock;
+    variantLabel = currentVariant.label;
+  } else {
+    previousStock = previous.stock != null ? Number(previous.stock) : null;
+    currentStock = latest.stock;
+    variantLabel = "Default";
+  }
+
+  if (!stocksDiffer(previousStock, currentStock)) return null;
+
+  const prev = normalizeStock(previousStock);
+  const curr = normalizeStock(currentStock);
+
+  return {
+    variantLabel,
+    previousStock: prev,
+    currentStock: curr,
+    direction: curr > prev ? "up" : "down",
+    priority: resolveStockPriority(prev, curr),
+  };
+}
+
+function isStockChangeLine(change: string): boolean {
+  return /max qty|stock/i.test(change);
+}
+
+function filterStockFromChanges(changes: string[]): string[] {
+  return changes.filter((change) => !isStockChangeLine(change));
+}
+
+function resolveStockChangeDirection(
+  currentStock: number | null,
+  previousStock: number | null | undefined,
+): "up" | "down" | null {
+  if (previousStock == null || currentStock == null) return null;
+  const prev = normalizeStock(previousStock);
+  const curr = normalizeStock(currentStock);
+  if (prev === curr) return null;
+  return curr > prev ? "up" : "down";
+}
+
+async function loadRecentStockByProduct(
+  productIds: string[],
+): Promise<Map<string, number | null>> {
+  const previousStockByProduct = new Map<string, number | null>();
+  if (productIds.length === 0) return previousStockByProduct;
+
+  const supabase = getSupabaseAdmin();
+  const { data: logs } = await supabase
+    .from("handling_product_logs")
+    .select("product_id, stock, created_at")
+    .in("product_id", productIds)
+    .order("created_at", { ascending: false });
+
+  const grouped = new Map<string, Array<{ stock: number | null }>>();
+
+  for (const log of logs ?? []) {
+    const productId = String(log.product_id);
+    const list = grouped.get(productId) ?? [];
+    if (list.length < 2) {
+      list.push({ stock: log.stock != null ? Number(log.stock) : null });
+      grouped.set(productId, list);
+    }
+  }
+
+  for (const [productId, entries] of grouped) {
+    if (entries.length >= 2) {
+      previousStockByProduct.set(productId, entries[1].stock);
+    }
+  }
+
+  return previousStockByProduct;
+}
+
+function mapRowToProduct(
+  row: Record<string, unknown>,
+  previousStock?: number | null,
+): HandlingProduct {
   const currency = String(row.currency ?? "GBP");
   const price = row.price != null ? Number(row.price) : null;
   const variants = parseStoredVariants(row.variants_json);
   const selectedVariantId = row.selected_variant_id ? String(row.selected_variant_id) : null;
   const selectedVariant = resolveSelectedVariant(variants, selectedVariantId);
+
+  const stock = selectedVariant?.stock ?? (row.stock != null ? Number(row.stock) : null);
 
   return {
     id: String(row.id),
@@ -109,7 +235,7 @@ function mapRowToProduct(row: Record<string, unknown>): HandlingProduct {
     imageUrl: row.image_url ? String(row.image_url) : null,
     price: formatPrice(selectedVariant?.price ?? price, selectedVariant?.currency ?? currency),
     currency: selectedVariant?.currency ?? currency,
-    stock: selectedVariant?.stock ?? (row.stock != null ? Number(row.stock) : null),
+    stock,
     orders: row.orders_count ? String(row.orders_count) : null,
     rating: row.rating != null ? Number(row.rating) : null,
     variants,
@@ -121,6 +247,8 @@ function mapRowToProduct(row: Record<string, unknown>): HandlingProduct {
     lastCheckedAt: formatRelativeTime(row.last_checked_at ? String(row.last_checked_at) : null),
     status: String(row.status ?? "active"),
     addedAt: formatRelativeTime(String(row.created_at)) ?? "",
+    previousStock: previousStock ?? null,
+    stockChangeDirection: resolveStockChangeDirection(stock, previousStock),
   };
 }
 
@@ -147,7 +275,14 @@ export async function getHandlingProducts(userId: string): Promise<HandlingProdu
     throw new Error(error.message);
   }
 
-  return (data ?? []).map(mapRowToProduct);
+  const rows = data ?? [];
+  const previousStockByProduct = await loadRecentStockByProduct(rows.map((row) => String(row.id)));
+
+  return rows.map((row) => {
+    const productId = String(row.id);
+    const previousStock = previousStockByProduct.get(productId);
+    return mapRowToProduct(row, previousStock);
+  });
 }
 
 export async function countHandlingProducts(userId: string): Promise<number> {
@@ -247,8 +382,7 @@ function buildVariantChangeSummary(
     if (!current) continue;
 
     const priceChanged = previous.price !== current.price;
-    const stockChanged =
-      previous.stock != null && current.stock != null && previous.stock !== current.stock;
+    const stockChanged = stocksDiffer(previous.stock, current.stock);
     const parts: string[] = [];
 
     if (priceChanged) {
@@ -258,7 +392,9 @@ function buildVariantChangeSummary(
     }
 
     if (stockChanged) {
-      parts.push(`max qty changed from ${previous.stock} to ${current.stock}`);
+      parts.push(
+        `max qty changed from ${normalizeStock(previous.stock)} to ${normalizeStock(current.stock)}`,
+      );
     }
 
     if (parts.length > 0) {
@@ -297,8 +433,10 @@ function buildChangeSummary(
       );
     }
 
-    if (previousStock != null && current.stock != null && previousStock !== current.stock) {
-      changes.push(`Max qty changed from ${previousStock} to ${current.stock}.`);
+    if (stocksDiffer(previousStock, current.stock)) {
+      changes.push(
+        `Max qty changed from ${normalizeStock(previousStock)} to ${normalizeStock(current.stock)}.`,
+      );
     }
   }
 
@@ -339,6 +477,7 @@ export async function checkHandlingProductUpdate(
   }
 
   const latest = await fetchAliExpressProduct(String(existing.product_url));
+  const stockChange = detectStockChange(existing, latest);
   const changes = buildChangeSummary(existing, latest);
   const now = new Date().toISOString();
   const intervalHours =
@@ -390,20 +529,41 @@ export async function checkHandlingProductUpdate(
     change_summary: summary,
   });
 
-  if (options?.sendEmail !== false && changes.length > 0) {
+  if (options?.sendEmail !== false) {
     const email = await getUserEmail(userId);
     if (email) {
-      await sendEmail({
-        to: email,
-        subject: `Product update: ${latest.title}`,
-        text: `Your handled product "${latest.title}" has updates:\n\n${changes.join("\n")}\n\nView product: ${latest.productUrl}`,
-        html: `<p>Your handled product <strong>${latest.title}</strong> has updates:</p><ul>${changes.map((change) => `<li>${change}</li>`).join("")}</ul><p><a href="${latest.productUrl}">View on AliExpress</a></p>`,
-      });
+      const appOrigin = serverEnv.appUrl();
+
+      if (stockChange) {
+        await sendStockAlertEmail(
+          email,
+          {
+            title: latest.title,
+            imageUrl: latest.imageUrl,
+            productUrl: latest.productUrl,
+          },
+          stockChange,
+          appOrigin,
+        );
+      }
+
+      const nonStockChanges = stockChange ? filterStockFromChanges(changes) : changes;
+      if (nonStockChanges.length > 0) {
+        await sendEmail({
+          to: email,
+          subject: `Product update: ${latest.title}`,
+          text: `Your handled product "${latest.title}" has updates:\n\n${nonStockChanges.join("\n")}\n\nView product: ${latest.productUrl}`,
+          html: `<p>Your handled product <strong>${latest.title}</strong> has updates:</p><ul>${nonStockChanges.map((change) => `<li>${change}</li>`).join("")}</ul><p><a href="${latest.productUrl}">View on AliExpress</a></p>`,
+        });
+      }
     }
   }
 
+  const previousStockForCard = stockChange?.previousStock ?? null;
+  const product = mapRowToProduct(updated, previousStockForCard);
+
   return {
-    product: mapRowToProduct(updated),
+    product,
     changes,
     message: summary,
   };

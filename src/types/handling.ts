@@ -47,6 +47,8 @@ export interface HandlingProduct {
   lastCheckedAt: string | null;
   status: string;
   addedAt: string;
+  previousStock?: number | null;
+  stockChangeDirection?: "up" | "down" | null;
 }
 
 export interface HandlingProductLog {
