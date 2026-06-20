@@ -1,5 +1,6 @@
 import "server-only";
 
+import { refreshUserAccessToken } from "@/lib/ebay/oauth-user";
 import {
   resolveMarketplaceConfig,
   type EbayMarketplaceId,
@@ -13,6 +14,14 @@ const EMPTY_POLICY_MESSAGE =
   "No policies found on your eBay account. Please create shipping, return and payment policies on eBay Seller Hub first, then come back here.";
 
 type PolicyType = "fulfillment_policy" | "payment_policy" | "return_policy";
+
+interface RawPolicyRecord {
+  fulfillmentPolicyId?: string;
+  paymentPolicyId?: string;
+  returnPolicyId?: string;
+  name?: string;
+  description?: string;
+}
 
 interface PolicyCacheEntry {
   data: EbayPoliciesResponse;
@@ -29,12 +38,11 @@ export function invalidatePolicyCache(userId: string, marketplaceId: string): vo
   policyCache.delete(cacheKey(userId, marketplaceId));
 }
 
-function accountHeaders(token: string, contentLanguage: string): HeadersInit {
+function policyHeaders(token: string): HeadersInit {
   return {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
     Accept: "application/json",
-    "Content-Language": contentLanguage,
   };
 }
 
@@ -59,24 +67,62 @@ function parsePolicyError(
   return `eBay policy request failed (${response.status}).`;
 }
 
+function mapPolicyOption(type: PolicyType, raw: RawPolicyRecord): EbayPolicyOption | null {
+  const policyId =
+    type === "fulfillment_policy"
+      ? raw.fulfillmentPolicyId
+      : type === "payment_policy"
+        ? raw.paymentPolicyId
+        : raw.returnPolicyId;
+
+  if (!policyId || !raw.name) return null;
+
+  return {
+    policyId,
+    name: raw.name,
+    ...(raw.description ? { description: raw.description } : {}),
+  };
+}
+
 async function listPolicies(
   token: string,
   type: PolicyType,
   marketplaceId: EbayMarketplaceId,
+  userId: string,
+  isRetry = false,
 ): Promise<EbayPolicyOption[]> {
   const config = resolveMarketplaceConfig(marketplaceId);
-  const url = new URL(`${EBAY_API_BASE}/sell/account/v1/${type}`);
-  url.searchParams.set("marketplace_id", config.marketplaceId);
+  const url = `${EBAY_API_BASE}/sell/account/v1/${type}?marketplace_id=${config.marketplaceId}`;
 
-  const response = await fetch(url.toString(), {
-    headers: accountHeaders(token, config.contentLanguage),
+  const response = await fetch(url, {
+    method: "GET",
+    headers: policyHeaders(token),
     cache: "no-store",
   });
 
-  const data = (await response.json()) as Record<
-    string,
-    Array<{ policyId?: string; name?: string }> | undefined
-  > & { errors?: Array<{ message?: string; longMessage?: string }> };
+  const responseText = await response.text();
+  console.log("[eBay Policies] eBay response status:", response.status);
+  console.log(`[eBay Policies] ${type} response body:`, responseText);
+
+  if (response.status === 401 && !isRetry) {
+    console.info("[eBay Policies] Token expired (401), refreshing and retrying", { userId, type });
+    invalidatePolicyCache(userId, marketplaceId);
+    const newToken = await refreshUserAccessToken(userId);
+    if (newToken) {
+      return listPolicies(newToken, type, marketplaceId, userId, true);
+    }
+    throw new Error("eBay account is not connected or token expired. Reconnect eBay.");
+  }
+
+  let data: Record<string, unknown> & {
+    errors?: Array<{ message?: string; longMessage?: string }>;
+  };
+
+  try {
+    data = JSON.parse(responseText) as typeof data;
+  } catch {
+    throw new Error(`eBay policy response was not valid JSON (${response.status}).`);
+  }
 
   if (!response.ok) {
     console.error("[eBay Policies] Fetch failed", {
@@ -88,20 +134,17 @@ async function listPolicies(
     throw new Error(parsePolicyError(response, data));
   }
 
-  console.log(`[eBay Policies] ${type} response:`, JSON.stringify(data));
-
   const key = policyResponseKey(type);
-  const policies = (data[key] ?? [])
-    .filter((policy) => policy.policyId && policy.name)
-    .map((policy) => ({
-      policyId: policy.policyId!,
-      name: policy.name!,
-    }));
+  const rawPolicies = (data[key] as RawPolicyRecord[] | undefined) ?? [];
+  const policies = rawPolicies
+    .map((policy) => mapPolicyOption(type, policy))
+    .filter((policy): policy is EbayPolicyOption => policy !== null);
 
   console.info("[eBay Policies] Fetch succeeded", {
     type,
     marketplaceId: config.marketplaceId,
     count: policies.length,
+    total: data.total ?? rawPolicies.length,
   });
 
   return policies;
@@ -117,7 +160,7 @@ function buildSelected(
   const returnPolicyId = returns[0]?.policyId ?? "";
 
   const noPoliciesFound =
-    fulfillment.length === 0 || payment.length === 0 || returns.length === 0;
+    fulfillment.length === 0 && payment.length === 0 && returns.length === 0;
 
   return {
     selected: { fulfillmentPolicyId, paymentPolicyId, returnPolicyId },
@@ -128,11 +171,12 @@ function buildSelected(
 async function loadAllPolicies(
   token: string,
   marketplaceId: EbayMarketplaceId,
+  userId: string,
 ): Promise<{ fulfillment: EbayPolicyOption[]; payment: EbayPolicyOption[]; returns: EbayPolicyOption[] }> {
   const [fulfillment, payment, returns] = await Promise.all([
-    listPolicies(token, "fulfillment_policy", marketplaceId),
-    listPolicies(token, "payment_policy", marketplaceId),
-    listPolicies(token, "return_policy", marketplaceId),
+    listPolicies(token, "fulfillment_policy", marketplaceId, userId),
+    listPolicies(token, "payment_policy", marketplaceId, userId),
+    listPolicies(token, "return_policy", marketplaceId, userId),
   ]);
 
   return { fulfillment, payment, returns };
@@ -156,7 +200,11 @@ export async function fetchSellerPolicies(
     }
   }
 
-  const { fulfillment, payment, returns } = await loadAllPolicies(token, marketplaceId);
+  const { fulfillment, payment, returns } = await loadAllPolicies(
+    token,
+    marketplaceId,
+    options.userId,
+  );
 
   console.info("[eBay Policies] Loaded seller policies", {
     userId: options.userId,

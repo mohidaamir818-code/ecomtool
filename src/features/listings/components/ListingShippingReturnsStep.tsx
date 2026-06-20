@@ -164,7 +164,7 @@ export function ListingShippingReturnsStep({
       <div className="space-y-4 rounded border border-[#E5E5E5] bg-white px-4 py-4">
         {policies.fulfillment.length > 0 ? (
           <label className="block">
-            <span className="text-sm font-medium text-[#191919]">Shipping Policy</span>
+            <span className="text-sm font-medium text-[#191919]">Postage Policy</span>
             <select
               value={selected.fulfillmentPolicyId}
               onChange={(event) => updatePolicy({ fulfillmentPolicyId: event.target.value })}

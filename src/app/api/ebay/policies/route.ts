@@ -18,7 +18,12 @@ async function resolveSellerContext(userId: string) {
 
   const token = await getEbayUserAccessToken(userId);
   if (!token) {
-    return { error: NextResponse.json({ error: "eBay account is not connected." }, { status: 400 }) };
+    return {
+      error: NextResponse.json(
+        { error: "eBay account is not connected or token expired. Reconnect eBay." },
+        { status: 400 },
+      ),
+    };
   }
 
   const marketplaceId = await getSellerMarketplaceId(userId);
@@ -36,6 +41,11 @@ export async function GET(request: NextRequest) {
 
     const context = await resolveSellerContext(userId);
     if ("error" in context) return context.error;
+
+    console.log("[eBay Policies API] User ID:", userId);
+    console.log("[eBay Policies API] Token exists:", !!context.token);
+    console.log("[eBay Policies API] Token value:", context.token.substring(0, 20));
+    console.log("[eBay Policies API] Marketplace ID:", context.marketplaceId);
 
     const policies = await fetchSellerPolicies(context.token, context.marketplaceId, {
       userId,

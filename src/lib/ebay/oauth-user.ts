@@ -332,6 +332,23 @@ async function refreshUserToken(userId: string, refreshToken: string): Promise<s
   return raw.access_token;
 }
 
+export async function refreshUserAccessToken(userId: string): Promise<string | null> {
+  const supabase = getSupabaseAdmin();
+  const { data } = await supabase
+    .from("ebay_oauth_tokens")
+    .select("refresh_token")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (!data?.refresh_token) return null;
+
+  try {
+    return await refreshUserToken(userId, data.refresh_token);
+  } catch {
+    return null;
+  }
+}
+
 export async function getEbayUserAccessToken(userId: string): Promise<string | null> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase

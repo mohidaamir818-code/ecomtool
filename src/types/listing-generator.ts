@@ -128,6 +128,7 @@ export interface PricingBreakdown {
 export interface EbayPolicyOption {
   policyId: string;
   name: string;
+  description?: string;
 }
 
 export interface EbayBusinessPolicies {
