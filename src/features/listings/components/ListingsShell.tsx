@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { DashboardLayout } from "@/features/dashboard/components/DashboardLayout";
 import { useUserBlock } from "@/features/dashboard/context/UserBlockContext";
 import { buildInitialDraft, normalizeDraftVariants, recalculateDraftPricing } from "@/features/listings/lib/draft-utils";
@@ -9,6 +9,9 @@ import { fetchSellerPreferences, persistSellerPreferences } from "@/features/lis
 import { sellerPreferencesToPromotions, promotionsToSellerPreferences } from "@/lib/listings/seller-preferences-mappers";
 import { AiListingGenerator } from "./AiListingGenerator";
 import { EbayConnect } from "./EbayConnect";
+import { EbayConnectedBanner } from "./EbayConnectedBanner";
+import { EbayOAuthSuccess } from "./EbayOAuthSuccess";
+import { EbayStoreConnectGate } from "./EbayStoreConnectGate";
 import { ListingConfirmStep } from "./ListingConfirmStep";
 import { ListingPhotosVariantsStep } from "./ListingPhotosVariantsStep";
 import { ListingProfitCalculatorStep } from "./ListingProfitCalculatorStep";
@@ -19,6 +22,7 @@ import { ListingWizardProgress } from "./ListingWizardProgress";
 import { VeroBlockModal } from "./VeroBlockModal";
 import { VeroChecker } from "./VeroChecker";
 import type {
+  EbayConnectionStatus,
   GeneratedListing,
   ListingDraft,
   ListingPricingPreferences,
@@ -33,6 +37,7 @@ const MAX_STEP = 8;
 
 export function ListingsShell() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { isBlocked } = useUserBlock();
 
   const [userId, setUserId] = useState<string | null>(null);
@@ -56,11 +61,39 @@ export function ListingsShell() {
   const [sellerPrefsLoading, setSellerPrefsLoading] = useState(true);
   const [showSavedToast, setShowSavedToast] = useState(false);
   const [photosVariantsError, setPhotosVariantsError] = useState<string | null>(null);
+  const [ebayStatus, setEbayStatus] = useState<EbayConnectionStatus>({
+    connected: false,
+    ebayUsername: null,
+    accessTokenExpiresAt: null,
+  });
+  const [ebayStatusLoading, setEbayStatusLoading] = useState(true);
+  const [showOAuthSuccess, setShowOAuthSuccess] = useState(false);
   const generateStarted = useRef(false);
   const savedToastTimer = useRef<number | null>(null);
 
   const oauthRefreshKey =
     searchParams.get("connected") ?? searchParams.get("ebay") ?? undefined;
+
+  const loadEbayStatus = useCallback(async () => {
+    if (!userId) return null;
+    setEbayStatusLoading(true);
+    try {
+      const response = await fetch(`/api/ebay/status?userId=${encodeURIComponent(userId)}`);
+      const data = await response.json();
+      if (response.ok) {
+        const nextStatus: EbayConnectionStatus = {
+          connected: Boolean(data.connected),
+          ebayUsername: data.ebayUsername ?? null,
+          accessTokenExpiresAt: data.accessTokenExpiresAt ?? null,
+        };
+        setEbayStatus(nextStatus);
+        return nextStatus;
+      }
+      return null;
+    } finally {
+      setEbayStatusLoading(false);
+    }
+  }, [userId]);
 
   useEffect(() => {
     const id = sessionStorage.getItem("ecomtools_user_id");
@@ -89,14 +122,26 @@ export function ListingsShell() {
   }, []);
 
   useEffect(() => {
-    if (searchParams.get("connected") === "true" || searchParams.get("ebay") === "connected") {
-      setNotice("eBay Connected ✓");
-      setIsError(false);
+    void loadEbayStatus();
+  }, [loadEbayStatus, oauthRefreshKey]);
+
+  useEffect(() => {
+    const connectedParam =
+      searchParams.get("connected") === "true" ||
+      searchParams.get("ebay") === "connected";
+
+    if (connectedParam && userId) {
+      void loadEbayStatus().then((status) => {
+        if (status?.connected) {
+          setShowOAuthSuccess(true);
+          router.replace("/dashboard/listings");
+        }
+      });
     } else if (searchParams.get("ebay") === "error") {
       setNotice(searchParams.get("message") ?? "eBay connection failed.");
       setIsError(true);
     }
-  }, [searchParams]);
+  }, [searchParams, userId, loadEbayStatus, router]);
 
   const saveDraft = useCallback(async () => {
     if (!userId || !draft) return;
@@ -417,6 +462,24 @@ export function ListingsShell() {
 
   const busy = veroLoading || generateLoading;
   const wizardStarted = currentStep > 0 || Boolean(vero) || Boolean(draft);
+  const showConnectGate =
+    !ebayStatusLoading &&
+    !showOAuthSuccess &&
+    !ebayStatus.connected &&
+    !wizardStarted &&
+    !resumeOffer;
+
+  function handleEbayDisconnected() {
+    setEbayStatus({
+      connected: false,
+      ebayUsername: null,
+      accessTokenExpiresAt: null,
+    });
+  }
+
+  function handleOAuthSuccessComplete() {
+    setShowOAuthSuccess(false);
+  }
 
   return (
     <DashboardLayout>
@@ -440,7 +503,44 @@ export function ListingsShell() {
           ) : null}
         </div>
 
-        {resumeOffer && !wizardStarted ? (
+        {ebayStatusLoading ? (
+          <div className="flex justify-center py-16">
+            <svg
+              className="h-8 w-8 animate-spin text-brand"
+              viewBox="0 0 24 24"
+              fill="none"
+              aria-label="Loading"
+            >
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+              />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+              />
+            </svg>
+          </div>
+        ) : showOAuthSuccess ? (
+          <EbayOAuthSuccess onComplete={handleOAuthSuccessComplete} />
+        ) : showConnectGate && userId ? (
+          <EbayStoreConnectGate userId={userId} />
+        ) : (
+          <>
+            {ebayStatus.connected && userId ? (
+              <EbayConnectedBanner
+                userId={userId}
+                ebayUsername={ebayStatus.ebayUsername}
+                onDisconnected={handleEbayDisconnected}
+              />
+            ) : null}
+
+            {resumeOffer && !wizardStarted ? (
           <div className="mb-6 rounded-xl border border-brand/20 bg-brand-light/30 p-4">
             <p className="text-sm text-[#374151]">You have a listing in progress.</p>
             <button
@@ -577,6 +677,8 @@ export function ListingsShell() {
             nextDisabled={busy || (currentStep === 3 && generateLoading)}
           />
         ) : null}
+          </>
+        )}
       </div>
 
       {showVeroModal && vero && !vero.safe ? (

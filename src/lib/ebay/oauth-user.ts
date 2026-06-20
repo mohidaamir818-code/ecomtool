@@ -226,3 +226,12 @@ export async function getEbayConnectionStatus(userId: string): Promise<EbayConne
 export function createEbayOAuthState(): string {
   return crypto.randomUUID();
 }
+
+export async function disconnectEbayAccount(userId: string): Promise<void> {
+  const supabase = getSupabaseAdmin();
+  const { error } = await supabase.from("ebay_oauth_tokens").delete().eq("user_id", userId);
+
+  if (error) {
+    throw new Error(`Failed to disconnect eBay account: ${error.message}`);
+  }
+}
