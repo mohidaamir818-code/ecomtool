@@ -37,8 +37,8 @@ async function resolveSellerContext(userId: string) {
 }
 
 export async function GET(request: NextRequest) {
+  const userId = request.nextUrl.searchParams.get("userId")?.trim();
   try {
-    const userId = request.nextUrl.searchParams.get("userId")?.trim();
     const refresh = request.nextUrl.searchParams.get("refresh") === "true";
 
     if (!userId) {
@@ -60,18 +60,20 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load eBay policies.";
+    console.error("[eBay Policies API] GET failed", { userId, error });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
 export async function POST(request: NextRequest) {
+  let userId: string | undefined;
   try {
     const body = (await request.json()) as {
       userId?: string;
       policyType?: string;
     };
 
-    const userId = body.userId?.trim();
+    userId = body.userId?.trim();
     const policyType = parsePolicyType(body.policyType);
 
     if (!userId) {
@@ -102,6 +104,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to create eBay policy.";
+    console.error("[eBay Policies API] POST failed", { userId, error });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -132,7 +132,9 @@ export function ListingShippingReturnsStep({
             Select shipping, payment, and return policies for this listing.
           </p>
         </div>
-        <p className="rounded border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>
+        <p className="break-words rounded border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
+        </p>
         <button
           type="button"
           onClick={() => void loadPolicies(true)}

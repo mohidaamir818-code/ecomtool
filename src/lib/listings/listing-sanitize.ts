@@ -70,6 +70,30 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const CHINA_LABEL_PATTERNS: RegExp[] = [
+  /\bChina Mainland\b/gi,
+  /\bMainland China\b/gi,
+  /\bShips from China\b/gi,
+  /\bMade in China\b/gi,
+  /\bChina\b/gi,
+];
+
+/** Remove China-related origin text from listing-facing labels and attributes. */
+export function cleanLabel(text: string): string {
+  let result = text;
+  for (const pattern of CHINA_LABEL_PATTERNS) {
+    result = result.replace(pattern, " ");
+  }
+
+  return result
+    .replace(/\s*\/\s*\/+\s*/g, " / ")
+    .replace(/(?:^|\s)\/\s*(?:\/\s*)+/g, " ")
+    .replace(/\s*,\s*,+/g, ", ")
+    .replace(/^\s*[\/,]\s*|\s*[\/,]\s*$/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function decodeUrlSafe(url: string): string {
   try {
     return decodeURIComponent(url);
@@ -84,7 +108,7 @@ export function sanitizeListingText(text: string): string {
     const pattern = new RegExp(`\\b${escapeRegex(term)}\\b`, "gi");
     result = result.replace(pattern, " ");
   }
-  return result.replace(/\s{2,}/g, " ").trim();
+  return cleanLabel(result.replace(/\s{2,}/g, " ").trim());
 }
 
 export function sanitizeListingHtml(html: string): string {
@@ -153,8 +177,8 @@ export function sanitizeListingContent(input: {
     seoTitle: sanitizeListingText(input.seoTitle),
     descriptionHtml: sanitizeListingHtml(input.descriptionHtml),
     itemSpecifics: input.itemSpecifics.map((specific) => ({
-      name: specific.name,
-      value: sanitizeListingText(specific.value),
+      name: cleanLabel(sanitizeListingText(specific.name)),
+      value: cleanLabel(sanitizeListingText(specific.value)),
     })),
   };
 }

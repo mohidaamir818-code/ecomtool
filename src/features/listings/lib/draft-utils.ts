@@ -11,15 +11,14 @@ import type {
 import { DEFAULT_PROMOTIONS } from "@/types/listing-generator";
 import { buildVariantPrices, calculatePricingBreakdown } from "@/lib/listings/pricing";
 import { filterListingImages } from "@/lib/listings/listing-sanitize";
-import { buildPreviewSku } from "@/features/listings/lib/ebay-ui";
 
 export function normalizeVariantDraft(
   variant: ListingVariantDraft,
-  externalId: string,
+  _externalId: string,
 ): ListingVariantDraft {
   return {
     ...variant,
-    sku: variant.sku || buildPreviewSku(externalId, variant.id),
+    sku: variant.sku?.trim() || "N/A",
     ean: variant.ean ?? "",
     quantity: variant.quantity ?? 1,
   };

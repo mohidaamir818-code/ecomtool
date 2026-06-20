@@ -41,8 +41,19 @@ function policyResponseKey(type: PolicyType): string {
   return "returnPolicies";
 }
 
-function parsePolicyError(response: Response, data: { errors?: Array<{ message?: string }> }): string {
-  return data.errors?.[0]?.message ?? `eBay policy request failed (${response.status}).`;
+function parsePolicyError(
+  response: Response,
+  data: { errors?: Array<{ message?: string; longMessage?: string }> },
+): string {
+  const messages = (data.errors ?? [])
+    .map((entry) => entry.longMessage ?? entry.message)
+    .filter((message): message is string => Boolean(message));
+
+  if (messages.length > 0) {
+    return messages.join("; ");
+  }
+
+  return `eBay policy request failed (${response.status}).`;
 }
 
 async function listPolicies(
@@ -59,23 +70,36 @@ async function listPolicies(
     cache: "no-store",
   });
 
-  if (!response.ok) {
-    const data = (await response.json()) as { errors?: Array<{ message?: string }> };
-    throw new Error(parsePolicyError(response, data));
-  }
-
   const data = (await response.json()) as Record<
     string,
     Array<{ policyId?: string; name?: string }> | undefined
-  >;
-  const key = policyResponseKey(type);
+  > & { errors?: Array<{ message?: string; longMessage?: string }> };
 
-  return (data[key] ?? [])
+  if (!response.ok) {
+    console.error("[eBay Policies] Fetch failed", {
+      type,
+      marketplaceId: config.marketplaceId,
+      status: response.status,
+      response: data,
+    });
+    throw new Error(parsePolicyError(response, data));
+  }
+
+  const key = policyResponseKey(type);
+  const policies = (data[key] ?? [])
     .filter((policy) => policy.policyId && policy.name)
     .map((policy) => ({
       policyId: policy.policyId!,
       name: policy.name!,
     }));
+
+  console.info("[eBay Policies] Fetch succeeded", {
+    type,
+    marketplaceId: config.marketplaceId,
+    count: policies.length,
+  });
+
+  return policies;
 }
 
 async function createDefaultFulfillmentPolicy(
@@ -122,6 +146,11 @@ async function createDefaultFulfillmentPolicy(
   };
 
   if (!response.ok) {
+    console.error("[eBay Policies] Create fulfillment policy failed", {
+      marketplaceId: config.marketplaceId,
+      status: response.status,
+      response: data,
+    });
     throw new Error(parsePolicyError(response, data));
   }
 
@@ -162,6 +191,11 @@ async function createDefaultPaymentPolicy(
   };
 
   if (!response.ok) {
+    console.error("[eBay Policies] Create payment policy failed", {
+      marketplaceId: config.marketplaceId,
+      status: response.status,
+      response: data,
+    });
     throw new Error(parsePolicyError(response, data));
   }
 
@@ -204,6 +238,11 @@ async function createDefaultReturnPolicy(
   };
 
   if (!response.ok) {
+    console.error("[eBay Policies] Create return policy failed", {
+      marketplaceId: config.marketplaceId,
+      status: response.status,
+      response: data,
+    });
     throw new Error(parsePolicyError(response, data));
   }
 
@@ -280,17 +319,28 @@ export async function ensureSellerPolicies(
 
   let { fulfillment, payment, returns } = await loadAllPolicies(token, marketplaceId);
 
+  console.info("[eBay Policies] Loaded seller policies", {
+    userId: options.userId,
+    marketplaceId,
+    fulfillment: fulfillment.length,
+    payment: payment.length,
+    returns: returns.length,
+  });
+
   if (fulfillment.length === 0) {
+    console.info("[eBay Policies] No fulfillment policies found; creating default");
     await createDefaultFulfillmentPolicy(token, marketplaceId);
     fulfillment = await listPolicies(token, "fulfillment_policy", marketplaceId);
   }
 
   if (payment.length === 0) {
+    console.info("[eBay Policies] No payment policies found; creating default");
     await createDefaultPaymentPolicy(token, marketplaceId);
     payment = await listPolicies(token, "payment_policy", marketplaceId);
   }
 
   if (returns.length === 0) {
+    console.info("[eBay Policies] No return policies found; creating default");
     await createDefaultReturnPolicy(token, marketplaceId);
     returns = await listPolicies(token, "return_policy", marketplaceId);
   }

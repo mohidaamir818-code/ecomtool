@@ -1,7 +1,7 @@
 import "server-only";
 
 import { fetchAliExpressProduct, fetchDescriptionHtmlFromPage, extractImagesFromHtml } from "@/lib/aliexpress/client";
-import { filterListingImages, sanitizeListingText } from "@/lib/listings/listing-sanitize";
+import { cleanLabel, filterListingImages, sanitizeListingText } from "@/lib/listings/listing-sanitize";
 import type { ListingProductSource } from "@/types/listing-generator";
 
 const BROWSER_HEADERS = {
@@ -104,13 +104,19 @@ export async function fetchListingProductSource(url: string): Promise<ListingPro
 
       return {
         id: variant.id,
-        label: variant.label,
+        label: cleanLabel(variant.label),
         price: variant.price,
         originalPrice: variant.originalPrice,
         currency: variant.currency,
         stock: variant.stock,
         imageUrl: variantFilter.allowed[0] ?? null,
       };
+    })
+    .sort((a, b) => {
+      const [aFirst, aSecond] = a.label.split(" / ");
+      const [bFirst, bSecond] = b.label.split(" / ");
+      if (aFirst !== bFirst) return aFirst.localeCompare(bFirst);
+      return (aSecond ?? "").localeCompare(bSecond ?? "");
     });
 
   return {

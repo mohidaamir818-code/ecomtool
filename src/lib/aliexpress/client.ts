@@ -3,6 +3,7 @@ import "server-only";
 import crypto from "crypto";
 import { serverEnv } from "@/lib/env";
 import { getAliExpressAccessToken } from "@/lib/aliexpress/oauth";
+import { cleanLabel } from "@/lib/listings/listing-sanitize";
 import type { HandlingProductData, HandlingProductVariant } from "@/types/handling";
 
 const MTOP_APP_KEY = "12574478";
@@ -106,24 +107,63 @@ function extractSkuImage(properties: Array<Record<string, unknown>> | undefined)
   return null;
 }
 
+const ORIGIN_PROPERTY_PATTERN = /ship|origin|mainland|warehouse|from/i;
+const COLOR_PROPERTY_PATTERN = /color|colour|style|pattern|farbe|couleur/i;
+const SIZE_PROPERTY_PATTERN = /size|taille|größe|tamaño|quantity|qty|pcs|capacity/i;
+const SIZE_VALUE_PATTERN =
+  /^(xxs|xs|s|m|l|xl|xxl|xxxl|2xl|3xl|4xl|5xl|\d+\s*(pcs|pc|pack|pairs?|cm|mm|inch|in))$/i;
+
+function propertyRank(name: string, value: string): number {
+  const normalizedName = name.toLowerCase();
+  const normalizedValue = value.trim();
+
+  if (ORIGIN_PROPERTY_PATTERN.test(normalizedName)) return 999;
+  if (cleanLabel(normalizedValue).length === 0) return 999;
+  if (COLOR_PROPERTY_PATTERN.test(normalizedName)) return 0;
+  if (SIZE_PROPERTY_PATTERN.test(normalizedName)) return 1;
+  if (SIZE_VALUE_PATTERN.test(normalizedValue)) return 1;
+  return 0;
+}
+
 function buildVariantLabelFromSkuProperties(
   properties: Array<Record<string, unknown>> | undefined,
   fallback: string,
 ): string {
-  if (!properties?.length) return fallback;
+  if (!properties?.length) return cleanLabel(fallback);
 
   const parts = properties
     .map((prop) => {
-      const value =
+      const name = String(
+        prop.sku_property_name ?? prop.property_name ?? prop.property_name_id ?? "",
+      ).trim();
+      const rawValue =
         prop.property_value_definition_name ??
         prop.property_value ??
         prop.sku_property_value ??
         prop.property_value_id;
-      return value != null ? String(value).trim() : "";
-    })
-    .filter(Boolean);
+      const value = rawValue != null ? cleanLabel(String(rawValue).trim()) : "";
+      if (!value) return null;
 
-  return parts.length > 0 ? parts.join(" / ") : fallback;
+      const rank = propertyRank(name, value);
+      if (rank >= 999) return null;
+
+      return { rank, value };
+    })
+    .filter((part): part is { rank: number; value: string } => part !== null)
+    .sort((a, b) => a.rank - b.rank || a.value.localeCompare(b.value))
+    .map((part) => part.value);
+
+  const label = parts.length > 0 ? parts.join(" / ") : cleanLabel(fallback);
+  return cleanLabel(label);
+}
+
+function sortVariantsByLabel(variants: HandlingProductVariant[]): HandlingProductVariant[] {
+  return [...variants].sort((a, b) => {
+    const [aFirst, aSecond] = a.label.split(" / ");
+    const [bFirst, bSecond] = b.label.split(" / ");
+    if (aFirst !== bFirst) return aFirst.localeCompare(bFirst);
+    return (aSecond ?? "").localeCompare(bSecond ?? "");
+  });
 }
 
 function parseCookies(setCookieHeaders: string[]): Record<string, string> {
@@ -1044,9 +1084,10 @@ function parseDsProductPayload(
     })
     .filter((value): value is HandlingProductVariant => value !== null);
 
-  const variants = mappedVariants.filter(
+  const inStockVariants = mappedVariants.filter(
     (variant) => variant.stock != null && variant.stock > 0,
   );
+  const variants = sortVariantsByLabel(inStockVariants);
 
   const defaultVariant = variants[0] ?? mappedVariants[0];
   if (!defaultVariant) return null;
