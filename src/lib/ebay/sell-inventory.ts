@@ -427,6 +427,109 @@ function applyNuclearColourSizeFallback(
   return aspects;
 }
 
+function resolveGroupColourSizeArrays(
+  aspectOptions: EbayAspectBuildOptions,
+  marketplaceId: EbayMarketplaceId,
+): { colourKey: "Colour" | "Color"; colours: string[]; sizes: string[] } {
+  const colourKey = marketplaceId === "EBAY_GB" ? "Colour" : "Color";
+  const variants = getAspectVariantSources(aspectOptions);
+  const labels = variants.map((variant) => String(variant.label ?? variant.name ?? ""));
+
+  let { colors: colours, sizes } = extractColoursAndSizesFromLabels(labels);
+
+  if (colours.length === 0 && aspectOptions.extractedAspects?.colours.length) {
+    colours = aspectOptions.extractedAspects.colours;
+  }
+  if (sizes.length === 0 && aspectOptions.extractedAspects?.sizes.length) {
+    sizes = aspectOptions.extractedAspects.sizes;
+  }
+
+  if (colours.length === 0) {
+    colours = [
+      ...new Set(
+        variants
+          .map((variant) => String(variant.label ?? variant.name ?? "").split("/")[0]?.trim())
+          .filter(Boolean),
+      ),
+    ];
+  }
+
+  if (sizes.length === 0) {
+    sizes = [
+      ...new Set(
+        variants
+          .map((variant) => {
+            const parts = String(variant.label ?? variant.name ?? "")
+              .split("/")
+              .map((part) => part.trim());
+            return parts[parts.length - 1];
+          })
+          .filter(Boolean),
+      ),
+    ];
+  }
+
+  return {
+    colourKey,
+    colours: colours.length > 0 ? colours : ["Multicolor"],
+    sizes: sizes.length > 0 ? sizes : ["One Size"],
+  };
+}
+
+function buildInventoryItemGroupBody(
+  groupKey: string,
+  listing: GeneratedListing,
+  imageUrls: string[],
+  variantSkus: string[],
+  aspectOptions: EbayAspectBuildOptions,
+  marketplaceId: EbayMarketplaceId,
+): {
+  inventoryItemGroupKey: string;
+  variantSKUs: string[];
+  title: string;
+  description: string;
+  imageUrls: string[];
+  aspects: Record<string, string[]>;
+  variesBy: {
+    aspectsImageVariesBy: string[];
+    specifications: Array<{ name: string; values: string[] }>;
+  };
+} {
+  const { colourKey, colours, sizes } = resolveGroupColourSizeArrays(aspectOptions, marketplaceId);
+  const alternateColourKey = colourKey === "Colour" ? "Color" : "Colour";
+  const variants = getAspectVariantSources(aspectOptions);
+
+  const aspects = buildEbayAspects(listing, aspectOptions);
+  applyNuclearColourSizeFallback(aspects, variants, marketplaceId);
+
+  aspects[colourKey] = colours;
+  delete aspects[alternateColourKey];
+  aspects.Size = sizes;
+
+  const variesBy = {
+    aspectsImageVariesBy: [colourKey],
+    specifications: [
+      { name: colourKey, values: colours },
+      { name: "Size", values: sizes },
+    ],
+  };
+
+  const body = {
+    inventoryItemGroupKey: groupKey,
+    variantSKUs: variantSkus,
+    title: listing.seoTitle,
+    description: resolveEbayDescription(listing.descriptionHtml),
+    imageUrls: normalizeImageUrls(imageUrls),
+    aspects,
+    variesBy,
+  };
+
+  console.log("GROUP aspects:", JSON.stringify(body.aspects));
+  console.log("GROUP variesBy:", JSON.stringify(body.variesBy));
+
+  return body;
+}
+
 export interface EbayAspectBuildOptions {
   marketplaceId: EbayMarketplaceId;
   product?: ListingProductSource;
@@ -660,7 +763,7 @@ async function upsertInventoryItemGroup(
   listing: GeneratedListing,
   imageUrls: string[],
   variantSkus: string[],
-  variantLabels: string[],
+  _variantLabels: string[],
   aspectOptions: EbayAspectBuildOptions,
 ): Promise<void> {
   const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupKey)}`;
@@ -668,30 +771,14 @@ async function upsertInventoryItemGroup(
   await executeWithMissingAspectRetry(
     aspectOptions,
     async () => {
-      const aspects = buildEbayAspects(listing, aspectOptions);
-      applyNuclearColourSizeFallback(
-        aspects,
-        getAspectVariantSources(aspectOptions),
+      const body = buildInventoryItemGroupBody(
+        groupKey,
+        listing,
+        imageUrls,
+        variantSkus,
+        aspectOptions,
         marketplaceId,
       );
-      console.log("Final aspects being sent to eBay (group):", JSON.stringify(aspects, null, 2));
-
-      const body = {
-        inventoryItemGroupKey: groupKey,
-        variantSKUs: variantSkus,
-        title: listing.seoTitle,
-        description: resolveEbayDescription(listing.descriptionHtml),
-        imageUrls: normalizeImageUrls(imageUrls),
-        variesBy: {
-          specifications: [
-            {
-              name: "Variant",
-              values: variantLabels,
-            },
-          ],
-        },
-        aspects,
-      };
 
       const { response, bodyText } = await ebayFetch("inventory_item_group PUT", requestUrl, {
         method: "PUT",
