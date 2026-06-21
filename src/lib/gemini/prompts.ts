@@ -63,6 +63,9 @@ RULES FOR itemSpecifics:
 - Number of Items: default "1"
 - Color: use variant colors when available (${colors.join(", ") || "infer from product"})
 - Size: use variant sizes when available (${sizes.join(", ") || "infer from product"})
+- Department: detect from title, description, and variants — use Men's, Women's, Unisex, Boys, or Girls
+- Size Type: Regular unless Plus or Petite is clearly indicated
+- Age Group: Adult unless Kids, Children, Boys, or Girls is indicated
 - For any field you cannot determine confidently, use "${SEE_DESCRIPTION}" — NEVER use "Unknown"
 - NEVER include Country/Region of Manufacture
 - Do NOT include Condition in itemSpecifics (condition is a separate field)

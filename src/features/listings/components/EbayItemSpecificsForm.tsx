@@ -7,6 +7,7 @@ import {
   getFieldDef,
   ITEM_SPECIFIC_FIELD_DEFS,
   MPN_DOES_NOT_APPLY,
+  sortClothingSpecificsFirst,
   UNBRANDED,
 } from "@/lib/listings/item-specifics";
 
@@ -49,7 +50,11 @@ export function EbayItemSpecificsForm({
   }, [userId, categoryId]);
 
   const visibleSpecifics = useMemo(
-    () => filterSpecificsForCategory(itemSpecifics, categoryAspectNames),
+    () =>
+      sortClothingSpecificsFirst(
+        filterSpecificsForCategory(itemSpecifics, categoryAspectNames),
+        categoryAspectNames,
+      ),
     [itemSpecifics, categoryAspectNames],
   );
 

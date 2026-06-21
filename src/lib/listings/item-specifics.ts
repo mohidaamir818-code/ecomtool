@@ -14,10 +14,22 @@ export const DEFAULT_EBAY_CONDITION: EbayConditionOption = "New with tags";
 export const SEE_DESCRIPTION = "See Description";
 export const UNBRANDED = "Unbranded";
 export const MPN_DOES_NOT_APPLY = "DoesNotApply";
+export const MPN_DOES_NOT_APPLY_EBAY = "Does Not Apply";
+
+export const DEPARTMENT_OPTIONS = ["Men's", "Women's", "Unisex", "Boys", "Girls"] as const;
+export const SIZE_TYPE_OPTIONS = ["Regular", "Plus", "Petite"] as const;
+export const AGE_GROUP_OPTIONS = ["Adult", "Kids"] as const;
+
+export type DepartmentValue = (typeof DEPARTMENT_OPTIONS)[number];
+
+export const CLOTHING_ITEM_SPECIFIC_NAMES = ["Department", "Size Type", "Age Group"] as const;
 
 export const CANONICAL_ITEM_SPECIFIC_NAMES = [
   "Brand",
   "Type",
+  "Department",
+  "Size Type",
+  "Age Group",
   "Color",
   "Material",
   "Size",
@@ -82,6 +94,24 @@ const STYLE_OPTIONS = ["Modern", "Classic", "Minimalist", "Contemporary", SEE_DE
 export const ITEM_SPECIFIC_FIELD_DEFS: ItemSpecificFieldDef[] = [
   { name: "Brand", defaultValue: UNBRANDED, locked: true, kind: "select", options: [UNBRANDED] },
   { name: "Type", defaultValue: SEE_DESCRIPTION, kind: "select", options: TYPE_OPTIONS },
+  {
+    name: "Department",
+    defaultValue: "Unisex",
+    kind: "select",
+    options: [...DEPARTMENT_OPTIONS],
+  },
+  {
+    name: "Size Type",
+    defaultValue: "Regular",
+    kind: "select",
+    options: [...SIZE_TYPE_OPTIONS],
+  },
+  {
+    name: "Age Group",
+    defaultValue: "Adult",
+    kind: "select",
+    options: [...AGE_GROUP_OPTIONS],
+  },
   { name: "Color", defaultValue: SEE_DESCRIPTION, kind: "text" },
   { name: "Material", defaultValue: SEE_DESCRIPTION, kind: "select", options: MATERIAL_OPTIONS },
   { name: "Size", defaultValue: SEE_DESCRIPTION, kind: "text" },
@@ -109,6 +139,72 @@ const COLOR_WORDS =
 
 const SIZE_PATTERN =
   /^(xxs|xs|s|m|l|xl|xxl|xxxl|\d+\s*(cm|mm|in|inch|inches|"|'))$|^\d+(\.\d+)?\s*(cm|mm|in|inch|inches|kg|g|lb|lbs|oz)$/i;
+
+function stripHtml(text: string): string {
+  return text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function combineProductText(title: string, description?: string): string {
+  return `${title} ${stripHtml(description ?? "")}`.replace(/\s+/g, " ").trim();
+}
+
+export function detectDepartmentFromText(title: string, description?: string): DepartmentValue {
+  const text = combineProductText(title, description).toLowerCase();
+
+  if (/\bwomen'?s?\b|\bladies\b|\blady'?s\b|\bfor women\b|\bwomens\b/.test(text)) {
+    return "Women's";
+  }
+  if (/\bmen'?s?\b|\bfor men\b|\bmens\b/.test(text) && !/\bwomen/.test(text)) {
+    return "Men's";
+  }
+  if (/\bgirls?\b|\bfor girls\b/.test(text)) {
+    return "Girls";
+  }
+  if (/\bboys?\b|\bfor boys\b/.test(text)) {
+    return "Boys";
+  }
+  if (/\bkids?\b|\bchildren'?s?\b|\btoddler\b|\binfant\b|\bbaby\b/.test(text)) {
+    if (/\bgirl/.test(text)) return "Girls";
+    if (/\bboy/.test(text)) return "Boys";
+    return "Unisex";
+  }
+
+  return "Unisex";
+}
+
+export function detectAgeGroupFromText(title: string, description?: string): string {
+  const text = combineProductText(title, description).toLowerCase();
+
+  if (
+    /\bkids?\b|\bchildren'?s?\b|\btoddler\b|\binfant\b|\bbaby\b|\bboys?\b|\bgirls?\b/.test(text)
+  ) {
+    return "Kids";
+  }
+
+  return "Adult";
+}
+
+export function detectSizeTypeFromText(title: string, description?: string): string {
+  const text = combineProductText(title, description).toLowerCase();
+
+  if (/\bplus size\b|\bplus-size\b|\bsize plus\b|\bplus\b/.test(text)) {
+    return "Plus";
+  }
+  if (/\bpetite\b/.test(text)) {
+    return "Petite";
+  }
+
+  return "Regular";
+}
+
+export function findItemSpecificValue(
+  specifics: GeneratedListingItemSpecific[],
+  name: string,
+): string | undefined {
+  const match = specifics.find((specific) => specific.name.toLowerCase() === name.toLowerCase());
+  const value = match?.value?.trim();
+  return value || undefined;
+}
 
 export function extractVariantAttributes(variants?: ListingProductSource["variants"]): {
   colors: string[];
@@ -230,6 +326,13 @@ export function enforceItemSpecifics(
   const values: Record<CanonicalItemSpecificName, string> = {
     Brand: UNBRANDED,
     Type: pickAiValue(ai, ["Type", "Product Type"], SEE_DESCRIPTION),
+    Department: pickAiValue(
+      ai,
+      ["Department"],
+      detectDepartmentFromText(product.title, product.description ?? undefined),
+    ),
+    "Size Type": pickAiValue(ai, ["Size Type"], detectSizeTypeFromText(product.title, product.description ?? undefined)),
+    "Age Group": pickAiValue(ai, ["Age Group"], detectAgeGroupFromText(product.title, product.description ?? undefined)),
     Color: colorValue,
     Material: pickAiValue(ai, ["Material"], SEE_DESCRIPTION),
     Size: sizeValue,
@@ -264,11 +367,23 @@ export function filterSpecificsForCategory(
     features: ["feature"],
     "compatible model": ["compatibility"],
     "number of items": ["number in pack"],
+    department: ["department"],
+    "size type": ["size type"],
+    "age group": ["age group"],
   };
 
   const allowed = new Set(categoryAspectNames.map((name) => name.toLowerCase()));
   allowed.add("brand");
   allowed.add("mpn");
+
+  const isClothingCategory = categoryAspectNames.some(
+    (name) => name.toLowerCase() === "department",
+  );
+  if (isClothingCategory) {
+    allowed.add("department");
+    allowed.add("size type");
+    allowed.add("age group");
+  }
 
   return specifics.filter((specific) => {
     if (/^unknown$/i.test(specific.value)) return false;
@@ -277,6 +392,25 @@ export function filterSpecificsForCategory(
     const aliasList = aliases[nameLower] ?? [];
     return aliasList.some((alias) => allowed.has(alias));
   });
+}
+
+const CLOTHING_FIELD_ORDER = ["Department", "Size Type", "Age Group"];
+
+export function sortClothingSpecificsFirst(
+  specifics: GeneratedListingItemSpecific[],
+  categoryAspectNames: string[],
+): GeneratedListingItemSpecific[] {
+  const isClothingCategory = categoryAspectNames.some(
+    (name) => name.toLowerCase() === "department",
+  );
+  if (!isClothingCategory) return specifics;
+
+  const clothing = specifics.filter((specific) =>
+    CLOTHING_FIELD_ORDER.includes(specific.name),
+  );
+  const rest = specifics.filter((specific) => !CLOTHING_FIELD_ORDER.includes(specific.name));
+
+  return [...clothing, ...rest];
 }
 
 export function syncConditionInSpecifics(

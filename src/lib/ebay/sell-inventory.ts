@@ -9,6 +9,15 @@ import {
   resolveVariantSkuForEbay,
 } from "@/lib/listings/internal-sku";
 import {
+  detectAgeGroupFromText,
+  detectDepartmentFromText,
+  detectSizeTypeFromText,
+  findItemSpecificValue,
+  MPN_DOES_NOT_APPLY,
+  MPN_DOES_NOT_APPLY_EBAY,
+  UNBRANDED,
+} from "@/lib/listings/item-specifics";
+import {
   buildEbayListingUrl,
   getSellerMarketplaceId,
   resolveMarketplaceConfig,
@@ -155,15 +164,39 @@ function aspectsFromListing(listing: GeneratedListing): Record<string, string[]>
   for (const specific of listing.itemSpecifics) {
     const nameLower = specific.name.toLowerCase();
     if (nameLower === "brand") {
-      aspects.Brand = ["Unbranded"];
+      aspects.Brand = [UNBRANDED];
       continue;
     }
     if (nameLower === "condition") continue;
     aspects[specific.name] = [specific.value];
   }
 
+  const department =
+    findItemSpecificValue(listing.itemSpecifics, "Department") ??
+    detectDepartmentFromText(listing.seoTitle, listing.descriptionHtml);
+  const sizeType =
+    findItemSpecificValue(listing.itemSpecifics, "Size Type") ??
+    detectSizeTypeFromText(listing.seoTitle, listing.descriptionHtml);
+  const ageGroup =
+    findItemSpecificValue(listing.itemSpecifics, "Age Group") ??
+    detectAgeGroupFromText(listing.seoTitle, listing.descriptionHtml);
+
   if (!aspects.Brand) {
-    aspects.Brand = ["Unbranded"];
+    aspects.Brand = [UNBRANDED];
+  }
+  if (!aspects.MPN) {
+    aspects.MPN = [MPN_DOES_NOT_APPLY_EBAY];
+  } else if (aspects.MPN[0] === MPN_DOES_NOT_APPLY) {
+    aspects.MPN = [MPN_DOES_NOT_APPLY_EBAY];
+  }
+  if (!aspects.Department) {
+    aspects.Department = [department];
+  }
+  if (!aspects["Size Type"]) {
+    aspects["Size Type"] = [sizeType];
+  }
+  if (!aspects["Age Group"]) {
+    aspects["Age Group"] = [ageGroup];
   }
 
   return aspects;
