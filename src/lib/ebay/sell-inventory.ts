@@ -323,6 +323,30 @@ function normalizeImageUrls(urls: string[]): string[] {
     .filter(Boolean);
 }
 
+const EBAY_DESCRIPTION_MAX_LENGTH = 3999;
+
+const EBAY_DESCRIPTION_FALLBACK = "Please see product images for details.";
+
+const EBAY_DESCRIPTION_EMPTY_FALLBACK =
+  "Quality product. Please see images for full details. Contact us with any questions.";
+
+function cleanDescription(html: string): string {
+  const withoutTags = html.replace(/<[^>]*>/g, " ");
+  const cleaned = withoutTags.replace(/\s+/g, " ").trim();
+  return cleaned.substring(0, EBAY_DESCRIPTION_MAX_LENGTH);
+}
+
+function resolveEbayDescription(html: string | null | undefined): string {
+  const raw = html?.trim();
+  let description = raw ? cleanDescription(raw) : EBAY_DESCRIPTION_FALLBACK;
+
+  if (!description || description.length === 0) {
+    description = EBAY_DESCRIPTION_EMPTY_FALLBACK;
+  }
+
+  return description;
+}
+
 export interface EbayAspectBuildOptions {
   marketplaceId: EbayMarketplaceId;
   product?: ListingProductSource;
@@ -517,7 +541,7 @@ async function upsertInventoryItem(
       const body = {
         product: {
           title: listing.seoTitle,
-          description: listing.descriptionHtml,
+          description: resolveEbayDescription(listing.descriptionHtml),
           imageUrls: normalizeImageUrls(imageUrls),
           aspects,
         },
@@ -565,7 +589,7 @@ async function upsertInventoryItemGroup(
         inventoryItemGroupKey: groupKey,
         variantSKUs: variantSkus,
         title: listing.seoTitle,
-        description: listing.descriptionHtml,
+        description: resolveEbayDescription(listing.descriptionHtml),
         imageUrls: normalizeImageUrls(imageUrls),
         variesBy: {
           specifications: [
@@ -656,7 +680,7 @@ function buildOfferBody(
   const body: Record<string, unknown> = {
     marketplaceId: config.marketplaceId,
     format: "FIXED_PRICE",
-    listingDescription: listing.descriptionHtml,
+    listingDescription: resolveEbayDescription(listing.descriptionHtml),
     availableQuantity: quantity,
     categoryId,
     merchantLocationKey: options.merchantLocationKey,
