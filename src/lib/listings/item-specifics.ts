@@ -397,6 +397,175 @@ function pickSpecificValue(
   return fallback;
 }
 
+const MATERIAL_KEYWORDS = [
+  "Cotton",
+  "Polyester",
+  "Nylon",
+  "Spandex",
+  "Elastane",
+  "Leather",
+  "Wool",
+  "Silk",
+  "Denim",
+  "Linen",
+  "Rayon",
+  "Viscose",
+  "Acrylic",
+  "Fleece",
+  "Suede",
+  "Canvas",
+  "Mesh",
+  "Velvet",
+  "Satin",
+  "Chiffon",
+  "Rubber",
+  "Plastic",
+  "Metal",
+  "Wood",
+  "Glass",
+  "Silicone",
+  "Fabric",
+] as const;
+
+export function detectMaterialFromText(title: string, description?: string): string | null {
+  const text = combineProductText(title, description).toLowerCase();
+
+  for (const material of MATERIAL_KEYWORDS) {
+    if (text.includes(material.toLowerCase())) {
+      return material;
+    }
+  }
+
+  const labelled = text.match(/material\s*[:\-]?\s*([a-zA-Z][\w\s-]*)/i)?.[1]?.trim();
+  if (labelled && labelled.length > 1 && labelled.length < 40) {
+    return labelled.charAt(0).toUpperCase() + labelled.slice(1);
+  }
+
+  return null;
+}
+
+function resolveMaterialValue(context: EbayAspectSourceContext): string {
+  const { listing, product } = context;
+  const title = product?.title ?? listing.seoTitle;
+  const description = product?.description ?? listing.descriptionHtml;
+  const specifics = listing.itemSpecifics;
+
+  const fromAi = pickSpecificValue(specifics, ["Material", "Fabric Type"], SEE_DESCRIPTION);
+  if (fromAi !== SEE_DESCRIPTION) return fromAi;
+
+  return detectMaterialFromText(title, description) ?? SEE_DESCRIPTION;
+}
+
+export function buildDefaultEbayUkAspects(
+  context: EbayAspectSourceContext,
+): Record<string, string[]> {
+  const { listing, product } = context;
+  const title = product?.title ?? listing.seoTitle;
+  const description = product?.description ?? listing.descriptionHtml;
+  const specifics = listing.itemSpecifics;
+  const material = resolveMaterialValue(context);
+
+  return {
+    Brand: [UNBRANDED],
+    MPN: [MPN_DOES_NOT_APPLY_EBAY],
+    Department: [
+      pickSpecificValue(specifics, ["Department"], detectDepartmentFromText(title, description)),
+    ],
+    Colour: resolveColourValues(context),
+    Size: resolveSizeValues(context),
+    Material: [material],
+    Pattern: [pickSpecificValue(specifics, ["Pattern"], SEE_DESCRIPTION)],
+    Occasion: [pickSpecificValue(specifics, ["Occasion"], "Casual")],
+    Season: [pickSpecificValue(specifics, ["Season"], "All Seasons")],
+    Type: [pickSpecificValue(specifics, ["Type", "Product Type"], SEE_DESCRIPTION)],
+    Fit: [pickSpecificValue(specifics, ["Fit"], "Regular")],
+    "Sleeve Length": [pickSpecificValue(specifics, ["Sleeve Length"], SEE_DESCRIPTION)],
+    Neckline: [pickSpecificValue(specifics, ["Neckline"], SEE_DESCRIPTION)],
+    Features: [pickSpecificValue(specifics, ["Features", "Feature"], "Lightweight")],
+    "Age Group": [
+      pickSpecificValue(specifics, ["Age Group"], detectAgeGroupFromText(title, description)),
+    ],
+    "Size Type": [
+      pickSpecificValue(specifics, ["Size Type"], detectSizeTypeFromText(title, description)),
+    ],
+    Style: [pickSpecificValue(specifics, ["Style"], "Casual")],
+    Theme: [pickSpecificValue(specifics, ["Theme"], "Fashion")],
+    "Fabric Type": [material],
+    "Care Instructions": [
+      pickSpecificValue(specifics, ["Care Instructions"], "Machine Wash"),
+    ],
+    "Country/Region of Manufacture": [MPN_DOES_NOT_APPLY_EBAY],
+  };
+}
+
+export function aspectsFromListingSpecifics(
+  listing: GeneratedListing,
+  marketplaceId: string,
+): Record<string, string[]> {
+  const aspects: Record<string, string[]> = {};
+
+  for (const specific of listing.itemSpecifics) {
+    const nameLower = specific.name.toLowerCase();
+    if (nameLower === "brand") {
+      aspects.Brand = [UNBRANDED];
+      continue;
+    }
+    if (nameLower === "condition") continue;
+
+    const normalizedName = normalizeAspectNameForMarketplace(specific.name, marketplaceId);
+    const values = splitAspectValues(specific.value);
+    if (values.length === 0) continue;
+
+    if (normalizedName === "MPN" && values[0] === MPN_DOES_NOT_APPLY) {
+      aspects.MPN = [MPN_DOES_NOT_APPLY_EBAY];
+      continue;
+    }
+
+    aspects[normalizedName] = values;
+  }
+
+  const colourKey = marketplaceId === "EBAY_GB" ? "Colour" : "Color";
+  if (aspects.Color && colourKey === "Colour") {
+    if (!aspects.Colour) aspects.Colour = aspects.Color;
+    delete aspects.Color;
+  } else if (aspects.Colour && colourKey === "Color") {
+    if (!aspects.Color) aspects.Color = aspects.Colour;
+    delete aspects.Colour;
+  }
+
+  return aspects;
+}
+
+export function mergeEbayAspects(
+  defaults: Record<string, string[]>,
+  aiAspects: Record<string, string[]>,
+  overrides?: Record<string, string[]>,
+): Record<string, string[]> {
+  const merged: Record<string, string[]> = { ...defaults };
+
+  for (const [name, values] of Object.entries(aiAspects)) {
+    const meaningful = values.filter((value) => !isPlaceholderAspectValue(value));
+    if (meaningful.length > 0) {
+      merged[name] = meaningful;
+    }
+  }
+
+  for (const [name, values] of Object.entries(overrides ?? {})) {
+    if (values.length > 0) {
+      merged[name] = values;
+    }
+  }
+
+  if (!merged.Brand?.length) merged.Brand = [UNBRANDED];
+  if (!merged.MPN?.length) {
+    merged.MPN = [MPN_DOES_NOT_APPLY_EBAY];
+  } else if (merged.MPN[0] === MPN_DOES_NOT_APPLY) {
+    merged.MPN = [MPN_DOES_NOT_APPLY_EBAY];
+  }
+
+  return merged;
+}
+
 export function resolveRequiredEbayAspects(
   context: EbayAspectSourceContext,
 ): Record<string, string[]> {

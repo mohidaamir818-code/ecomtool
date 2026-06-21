@@ -9,13 +9,12 @@ import {
   resolveVariantSkuForEbay,
 } from "@/lib/listings/internal-sku";
 import {
+  aspectsFromListingSpecifics,
+  buildDefaultEbayUkAspects,
   filterAspectsForCategory,
-  MPN_DOES_NOT_APPLY,
-  MPN_DOES_NOT_APPLY_EBAY,
-  normalizeAspectNameForMarketplace,
+  mergeEbayAspects,
   resolveRequiredEbayAspects,
-  splitAspectValues,
-  UNBRANDED,
+  SEE_DESCRIPTION,
 } from "@/lib/listings/item-specifics";
 import {
   buildEbayListingUrl,
@@ -128,26 +127,100 @@ export function parseEbayErrorDetails(
 ): {
   message: string;
   missingField?: string;
+  errorId?: number;
   errors?: unknown[];
 } {
   try {
     const data = JSON.parse(bodyText) as {
       errors?: Array<{
+        errorId?: number;
         message?: string;
         longMessage?: string;
         parameters?: Array<{ name?: string; value?: string }>;
       }>;
     };
     const first = data.errors?.[0];
-    const missingField = first?.parameters?.find((param) => param.name === "2")?.value?.trim();
+    const missingField = extractMissingAspectField(bodyText) ?? undefined;
     const message = first?.longMessage ?? first?.message ?? fallback;
     return {
       message,
-      missingField: missingField || undefined,
+      missingField,
+      errorId: first?.errorId,
       errors: data.errors,
     };
   } catch {
     return { message: bodyText || fallback };
+  }
+}
+
+export function extractMissingAspectField(bodyText: string): string | null {
+  try {
+    const data = JSON.parse(bodyText) as {
+      errors?: Array<{
+        errorId?: number;
+        message?: string;
+        longMessage?: string;
+        parameters?: Array<{ name?: string; value?: string }>;
+      }>;
+    };
+    const first = data.errors?.[0];
+    if (!first) return null;
+
+    const combined = `${first.message ?? ""} ${first.longMessage ?? ""}`.toLowerCase();
+    const hasOfferId = first.parameters?.some(
+      (param) => param.name === "offerId" && param.value,
+    );
+    if (combined.includes("already exists") || hasOfferId) return null;
+
+    const isMissingAspect =
+      first.errorId === 25002 ||
+      combined.includes("item specific") ||
+      (combined.includes("missing") && combined.includes("specific"));
+
+    if (!isMissingAspect) return null;
+
+    const field = first.parameters?.find((param) => param.name === "2")?.value?.trim();
+    return field || null;
+  } catch {
+    return null;
+  }
+}
+
+function patchMissingAspectOverride(
+  aspectOptions: EbayAspectBuildOptions,
+  missingField: string,
+): void {
+  if (!aspectOptions.aspectOverrides) {
+    aspectOptions.aspectOverrides = {};
+  }
+  aspectOptions.aspectOverrides[missingField] = [SEE_DESCRIPTION];
+}
+
+async function executeWithMissingAspectRetry(
+  aspectOptions: EbayAspectBuildOptions,
+  execute: () => Promise<{ url: string; response: Response; bodyText: string }>,
+  fallbackMessage: string,
+  label: string,
+): Promise<void> {
+  let retried = false;
+
+  while (true) {
+    const { url, response, bodyText } = await execute();
+    if (response.ok) return;
+
+    if (!retried) {
+      const missingField = extractMissingAspectField(bodyText);
+      if (missingField) {
+        console.log(
+          `[eBay ${label}] Missing aspect "${missingField}", retrying with "${SEE_DESCRIPTION}"`,
+        );
+        patchMissingAspectOverride(aspectOptions, missingField);
+        retried = true;
+        continue;
+      }
+    }
+
+    throwEbayApiError(url, response, bodyText, fallbackMessage);
   }
 }
 
@@ -167,7 +240,7 @@ function throwEbayApiError(url: string, response: Response, bodyText: string, fa
     response.status,
     bodyText,
     url,
-    details.missingField,
+    details.missingField ?? extractMissingAspectField(bodyText) ?? undefined,
   );
 }
 
@@ -197,71 +270,38 @@ export interface EbayAspectBuildOptions {
   product?: ListingProductSource;
   variantDrafts?: ListingDraft["variants"];
   categoryAspectNames?: string[];
+  aspectOverrides?: Record<string, string[]>;
 }
 
 function buildEbayAspects(
   listing: GeneratedListing,
   options: EbayAspectBuildOptions,
 ): Record<string, string[]> {
-  const { marketplaceId, product, variantDrafts, categoryAspectNames = [] } = options;
-  const aspects: Record<string, string[]> = {};
+  const {
+    marketplaceId,
+    product,
+    variantDrafts,
+    categoryAspectNames = [],
+    aspectOverrides,
+  } = options;
 
-  for (const specific of listing.itemSpecifics) {
-    const nameLower = specific.name.toLowerCase();
-    if (nameLower === "brand") {
-      aspects.Brand = [UNBRANDED];
-      continue;
-    }
-    if (nameLower === "condition") continue;
-
-    const normalizedName = normalizeAspectNameForMarketplace(specific.name, marketplaceId);
-    const values = splitAspectValues(specific.value);
-    if (values.length === 0) continue;
-
-    if (normalizedName === "MPN" && values[0] === MPN_DOES_NOT_APPLY) {
-      aspects.MPN = [MPN_DOES_NOT_APPLY_EBAY];
-      continue;
-    }
-
-    aspects[normalizedName] = values;
-  }
-
-  const colourKey = marketplaceId === "EBAY_GB" ? "Colour" : "Color";
-  if (aspects.Color && colourKey === "Colour") {
-    if (!aspects.Colour) {
-      aspects.Colour = aspects.Color;
-    }
-    delete aspects.Color;
-  } else if (aspects.Colour && colourKey === "Color") {
-    if (!aspects.Color) {
-      aspects.Color = aspects.Colour;
-    }
-    delete aspects.Colour;
-  }
-
-  const required = resolveRequiredEbayAspects({
+  const context = {
     listing,
     product,
     variantDrafts,
     marketplaceId,
-  });
+  };
 
-  for (const [name, values] of Object.entries(required)) {
-    if (!aspects[name]?.length) {
-      aspects[name] = values;
-    }
+  if (marketplaceId === "EBAY_GB") {
+    const defaults = buildDefaultEbayUkAspects(context);
+    const aiAspects = aspectsFromListingSpecifics(listing, marketplaceId);
+    return mergeEbayAspects(defaults, aiAspects, aspectOverrides);
   }
 
-  if (!aspects.Brand) {
-    aspects.Brand = [UNBRANDED];
-  }
-  if (!aspects.MPN) {
-    aspects.MPN = [MPN_DOES_NOT_APPLY_EBAY];
-  } else if (aspects.MPN[0] === MPN_DOES_NOT_APPLY) {
-    aspects.MPN = [MPN_DOES_NOT_APPLY_EBAY];
-  }
-
-  return filterAspectsForCategory(aspects, categoryAspectNames);
+  const defaults = resolveRequiredEbayAspects(context);
+  const aiAspects = aspectsFromListingSpecifics(listing, marketplaceId);
+  const merged = mergeEbayAspects(defaults, aiAspects, aspectOverrides);
+  return filterAspectsForCategory(merged, categoryAspectNames);
 }
 
 function buildVolumePricing(promotions: VolumePromotionTier[]) {
@@ -381,40 +421,46 @@ async function upsertInventoryItem(
   variantLabel?: string,
   gtin?: string,
 ): Promise<void> {
-  const aspects = buildEbayAspects(listing, aspectOptions);
-  if (variantLabel) {
-    aspects.Variant = [variantLabel];
-  }
-  if (gtin?.trim()) {
-    aspects.GTIN = [gtin.trim()];
-  }
-
-  const body = {
-    product: {
-      title: listing.seoTitle,
-      description: listing.descriptionHtml,
-      imageUrls: normalizeImageUrls(imageUrls),
-      aspects,
-    },
-    condition: mapCondition(listing.condition),
-    availability: {
-      shipToLocationAvailability: {
-        quantity,
-      },
-    },
-  };
-
   const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`;
-  const { response, bodyText } = await ebayFetch("inventory_item PUT", requestUrl, {
-    method: "PUT",
-    headers: inventoryHeaders(token, marketplaceId),
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
 
-  if (!response.ok) {
-    throwEbayApiError(requestUrl, response, bodyText, "Failed to create eBay inventory item.");
-  }
+  await executeWithMissingAspectRetry(
+    aspectOptions,
+    async () => {
+      const aspects = buildEbayAspects(listing, aspectOptions);
+      if (variantLabel) {
+        aspects.Variant = [variantLabel];
+      }
+      if (gtin?.trim()) {
+        aspects.GTIN = [gtin.trim()];
+      }
+
+      const body = {
+        product: {
+          title: listing.seoTitle,
+          description: listing.descriptionHtml,
+          imageUrls: normalizeImageUrls(imageUrls),
+          aspects,
+        },
+        condition: mapCondition(listing.condition),
+        availability: {
+          shipToLocationAvailability: {
+            quantity,
+          },
+        },
+      };
+
+      const { response, bodyText } = await ebayFetch("inventory_item PUT", requestUrl, {
+        method: "PUT",
+        headers: inventoryHeaders(token, marketplaceId),
+        body: JSON.stringify(body),
+        cache: "no-store",
+      });
+
+      return { url: requestUrl, response, bodyText };
+    },
+    "Failed to create eBay inventory item.",
+    "inventory_item PUT",
+  );
 }
 
 async function upsertInventoryItemGroup(
@@ -427,34 +473,40 @@ async function upsertInventoryItemGroup(
   variantLabels: string[],
   aspectOptions: EbayAspectBuildOptions,
 ): Promise<void> {
-  const body = {
-    inventoryItemGroupKey: groupKey,
-    variantSKUs: variantSkus,
-    title: listing.seoTitle,
-    description: listing.descriptionHtml,
-    imageUrls: normalizeImageUrls(imageUrls),
-    variesBy: {
-      specifications: [
-        {
-          name: "Variant",
-          values: variantLabels,
-        },
-      ],
-    },
-    aspects: buildEbayAspects(listing, aspectOptions),
-  };
-
   const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupKey)}`;
-  const { response, bodyText } = await ebayFetch("inventory_item_group PUT", requestUrl, {
-    method: "PUT",
-    headers: inventoryHeaders(token, marketplaceId),
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
 
-  if (!response.ok) {
-    throwEbayApiError(requestUrl, response, bodyText, "Failed to create eBay inventory item group.");
-  }
+  await executeWithMissingAspectRetry(
+    aspectOptions,
+    async () => {
+      const body = {
+        inventoryItemGroupKey: groupKey,
+        variantSKUs: variantSkus,
+        title: listing.seoTitle,
+        description: listing.descriptionHtml,
+        imageUrls: normalizeImageUrls(imageUrls),
+        variesBy: {
+          specifications: [
+            {
+              name: "Variant",
+              values: variantLabels,
+            },
+          ],
+        },
+        aspects: buildEbayAspects(listing, aspectOptions),
+      };
+
+      const { response, bodyText } = await ebayFetch("inventory_item_group PUT", requestUrl, {
+        method: "PUT",
+        headers: inventoryHeaders(token, marketplaceId),
+        body: JSON.stringify(body),
+        cache: "no-store",
+      });
+
+      return { url: requestUrl, response, bodyText };
+    },
+    "Failed to create eBay inventory item group.",
+    "inventory_item_group PUT",
+  );
 }
 
 function parseOfferIdFromErrorBody(bodyText: string): string | null {
@@ -613,53 +665,91 @@ async function publishOfferByGroup(
   token: string,
   groupKey: string,
   marketplaceId: EbayMarketplaceId,
+  aspectOptions: EbayAspectBuildOptions,
+  reupsertInventory: () => Promise<void>,
 ): Promise<{ listingId: string | null }> {
   const config = resolveMarketplaceConfig(marketplaceId);
   const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/offer/publish_by_inventory_item_group`;
-  const { response, bodyText } = await ebayFetch("publish_by_group POST", requestUrl, {
-    method: "POST",
-    headers: inventoryHeaders(token, marketplaceId),
-    body: JSON.stringify({
-      inventoryItemGroupKey: groupKey,
-      marketplaceId: config.marketplaceId,
-    }),
-    cache: "no-store",
-  });
+  let retried = false;
 
-  const data = parseJsonSafe(bodyText, {} as {
-    listingId?: string;
-    errors?: Array<{ message?: string }>;
-  });
+  while (true) {
+    const { response, bodyText } = await ebayFetch("publish_by_group POST", requestUrl, {
+      method: "POST",
+      headers: inventoryHeaders(token, marketplaceId),
+      body: JSON.stringify({
+        inventoryItemGroupKey: groupKey,
+        marketplaceId: config.marketplaceId,
+      }),
+      cache: "no-store",
+    });
 
-  if (!response.ok) {
+    const data = parseJsonSafe(bodyText, {} as {
+      listingId?: string;
+      errors?: Array<{ message?: string }>;
+    });
+
+    if (response.ok) {
+      return { listingId: data.listingId ?? null };
+    }
+
+    if (!retried) {
+      const missingField = extractMissingAspectField(bodyText);
+      if (missingField) {
+        console.log(
+          `[eBay publish_by_group] Missing aspect "${missingField}", re-upserting and retrying`,
+        );
+        patchMissingAspectOverride(aspectOptions, missingField);
+        await reupsertInventory();
+        retried = true;
+        continue;
+      }
+    }
+
     throwEbayApiError(requestUrl, response, bodyText, "Failed to publish eBay listing group.");
   }
-
-  return { listingId: data.listingId ?? null };
 }
 
 async function publishOffer(
   token: string,
   marketplaceId: EbayMarketplaceId,
   offerId: string,
+  aspectOptions: EbayAspectBuildOptions,
+  reupsertInventory: () => Promise<void>,
 ): Promise<{ listingId: string | null }> {
   const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/publish`;
-  const { response, bodyText } = await ebayFetch("publish POST", requestUrl, {
-    method: "POST",
-    headers: inventoryHeaders(token, marketplaceId),
-    cache: "no-store",
-  });
+  let retried = false;
 
-  const data = parseJsonSafe(bodyText, {} as {
-    listingId?: string;
-    errors?: Array<{ message?: string }>;
-  });
+  while (true) {
+    const { response, bodyText } = await ebayFetch("publish POST", requestUrl, {
+      method: "POST",
+      headers: inventoryHeaders(token, marketplaceId),
+      cache: "no-store",
+    });
 
-  if (!response.ok) {
+    const data = parseJsonSafe(bodyText, {} as {
+      listingId?: string;
+      errors?: Array<{ message?: string }>;
+    });
+
+    if (response.ok) {
+      return { listingId: data.listingId ?? null };
+    }
+
+    if (!retried) {
+      const missingField = extractMissingAspectField(bodyText);
+      if (missingField) {
+        console.log(
+          `[eBay publish] Missing aspect "${missingField}", re-upserting and retrying`,
+        );
+        patchMissingAspectOverride(aspectOptions, missingField);
+        await reupsertInventory();
+        retried = true;
+        continue;
+      }
+    }
+
     throwEbayApiError(requestUrl, response, bodyText, "Failed to publish eBay listing.");
   }
-
-  return { listingId: data.listingId ?? null };
 }
 
 export async function listDraftOnEbay(userId: string, draft: ListingDraft): Promise<ListOnEbayResult> {
@@ -698,6 +788,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
     product: draft.product,
     variantDrafts: draft.variants,
     categoryAspectNames,
+    aspectOverrides: {},
   };
   const selectedDescriptionPhotos = getSelectedDescriptionPhotos(draft.descriptionPhotos);
   const appOrigin = selectedDescriptionPhotos.length > 0 ? getAppOrigin() : "";
@@ -760,7 +851,26 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
       { sku, merchantLocationKey },
     );
     await requireConfirmedLocation(userId);
-    const published = await publishOffer(token, marketplaceId, offerId);
+    const reupsertSingleInventory = async () => {
+      await upsertInventoryItem(
+        token,
+        marketplaceId,
+        sku,
+        listing,
+        images,
+        quantity,
+        aspectOptions,
+        variant?.label,
+        variant?.ean,
+      );
+    };
+    const published = await publishOffer(
+      token,
+      marketplaceId,
+      offerId,
+      aspectOptions,
+      reupsertSingleInventory,
+    );
 
     return {
       sku,
@@ -830,7 +940,45 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
   );
 
   await requireConfirmedLocation(userId);
-  const published = await publishOfferByGroup(token, groupKey, marketplaceId);
+  const reupsertAllInventory = async () => {
+    await Promise.all(
+      activeVariants.map(async (variant) => {
+        const sku = resolveVariantSkuForEbay(variant);
+        const images = variant.imageUrl ? [variant.imageUrl, ...selectedPhotos] : selectedPhotos;
+        const variantListing = { ...listing, suggestedPrice: variant.price };
+        const quantity = resolveVariantQuantity(variant);
+
+        await upsertInventoryItem(
+          token,
+          marketplaceId,
+          sku,
+          variantListing,
+          images,
+          quantity,
+          aspectOptions,
+          variant.label,
+          variant.ean,
+        );
+      }),
+    );
+    await upsertInventoryItemGroup(
+      token,
+      marketplaceId,
+      groupKey,
+      listing,
+      selectedPhotos,
+      variantSkus,
+      variantLabels,
+      aspectOptions,
+    );
+  };
+  const published = await publishOfferByGroup(
+    token,
+    groupKey,
+    marketplaceId,
+    aspectOptions,
+    reupsertAllInventory,
+  );
 
   return {
     sku: groupKey,
