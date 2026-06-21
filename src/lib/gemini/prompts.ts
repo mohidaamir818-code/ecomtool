@@ -52,7 +52,7 @@ RULES FOR descriptionHtml:
 - Include Compatibility section if relevant
 - Include "What's in the box" section
 - Include a professional seller guarantee statement
-- 200-450 words, professional English, no grammar errors
+- Concise HTML, max ~400 words, professional English, no grammar errors
 - NEVER mention: AliExpress, Alibaba, China, dropshipping, supplier, wholesale, DHgate, Temu, Made in China, Ships from China, processing time, warehouse
 
 RULES FOR itemSpecifics:
@@ -80,6 +80,13 @@ IMPORTANT VERo SAFETY:
 - If this product appears to be a counterfeit or replica of a branded product, or if it shows any brand logos in images, you MUST flag it as a VeRO violation.
 - Never generate a listing for branded products (Nike, Adidas, Apple, Samsung, Louis Vuitton, etc.).
 - If branded content is detected, do not produce listing copy — the listing must be blocked.
+
+CRITICAL JSON RULES:
+- Response must be valid JSON only — no markdown, no code fences, no extra text
+- Must start with { and end with }
+- No trailing commas, no comments inside JSON
+- Escape quotes and newlines inside string values
+- Keep descriptionHtml and all string values under 500 characters where possible
 
 Return ONLY valid JSON with this exact shape:
 {

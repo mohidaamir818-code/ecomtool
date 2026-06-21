@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { AiProviderError } from "@/lib/gemini/client";
 import { generateEbayListing } from "@/lib/gemini/generate-listing";
 import { fetchListingProductSource } from "@/lib/listings/product-source";
 import { logUserApiRequest } from "@/lib/requests/tracker";
@@ -50,6 +51,10 @@ export async function POST(request: NextRequest) {
     if (blocked) return blocked;
 
     const message = error instanceof Error ? error.message : "Failed to generate listing.";
+    const isAiJsonFailure =
+      error instanceof AiProviderError ||
+      (error instanceof Error && /json|parse/i.test(error.message));
+
     if (userId) {
       void logUserApiRequest({
         userId,
@@ -58,6 +63,14 @@ export async function POST(request: NextRequest) {
         status: "failed",
       });
     }
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: isAiJsonFailure
+          ? "AI generation failed. Please try again."
+          : message,
+        retryable: isAiJsonFailure,
+      },
+      { status: 500 },
+    );
   }
 }

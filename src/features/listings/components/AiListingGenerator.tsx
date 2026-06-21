@@ -9,6 +9,8 @@ interface AiListingGeneratorProps {
   product: ListingProductSource | null;
   listing: GeneratedListing | null;
   loading?: boolean;
+  errorMessage?: string;
+  onRetry?: () => void;
   onListingChange?: (listing: GeneratedListing) => void;
   descriptionPhotos?: ListingPhotoDraft[];
 }
@@ -18,6 +20,8 @@ export function AiListingGenerator({
   product,
   listing,
   loading = false,
+  errorMessage,
+  onRetry,
   onListingChange,
   descriptionPhotos,
 }: AiListingGeneratorProps) {
@@ -36,6 +40,23 @@ export function AiListingGenerator({
   }
 
   if (!product || !listing) {
+    if (product && errorMessage) {
+      return (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-6">
+          <p className="text-sm text-red-800">{errorMessage}</p>
+          {onRetry ? (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="mt-4 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+            >
+              Retry
+            </button>
+          ) : null}
+        </div>
+      );
+    }
+
     return (
       <div className="rounded-xl border border-dashed border-gray-200 bg-white p-6 text-sm text-[#6B7280]">
         Complete the VeRO check to generate your editable listing preview.

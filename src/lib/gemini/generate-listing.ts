@@ -1,6 +1,6 @@
 import "server-only";
 
-import { generateAiJson } from "@/lib/gemini/client";
+import { AiProviderError, generateAiJson } from "@/lib/gemini/client";
 import { buildListingPrompt } from "@/lib/gemini/prompts";
 import {
   DEFAULT_EBAY_CONDITION,
@@ -64,9 +64,28 @@ export async function generateEbayListing(
   const fallbackPrice = recommendedPrice ?? Number((product.price * 2.5).toFixed(2));
   const currency = product.currency === "USD" ? "GBP" : product.currency;
 
-  const raw = await generateAiJson<AiListingResponse>(
-    buildListingPrompt(product, recommendedPrice ?? fallbackPrice),
-  );
+  let raw: AiListingResponse | null = null;
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      raw = await generateAiJson<AiListingResponse>(
+        buildListingPrompt(product, recommendedPrice ?? fallbackPrice),
+        { maxTokens: 4096 },
+      );
+      break;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error("AI request failed.");
+    }
+  }
+
+  if (!raw) {
+    throw new AiProviderError(
+      lastError?.message?.includes("JSON")
+        ? "AI failed to generate valid listing after 3 attempts."
+        : lastError?.message ?? "AI failed to generate listing after 3 attempts.",
+    );
+  }
 
   const condition = normalizeCondition(raw.condition);
   let itemSpecifics = syncConditionInSpecifics(enforceItemSpecifics(raw.itemSpecifics, product));

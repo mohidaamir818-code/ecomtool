@@ -1,6 +1,7 @@
 import "server-only";
 
 import Anthropic from "@anthropic-ai/sdk";
+import { safeParseJSON } from "@/lib/gemini/safe-parse-json";
 import { serverEnv } from "@/lib/env";
 
 const ANTHROPIC_MODEL = "claude-haiku-4-5";
@@ -30,23 +31,28 @@ function extractTextContent(content: Anthropic.Messages.ContentBlock[]): string 
 
 function parseJsonResponse<T>(text: string): T {
   try {
-    return JSON.parse(text) as T;
-  } catch {
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new AiProviderError("Anthropic response was not valid JSON.");
-    }
-    return JSON.parse(jsonMatch[0]) as T;
+    return safeParseJSON<T>(text);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Anthropic response was not valid JSON.";
+    throw new AiProviderError(message);
   }
 }
 
-export async function generateAiJson<T>(prompt: string): Promise<T> {
+export interface GenerateAiJsonOptions {
+  maxTokens?: number;
+}
+
+export async function generateAiJson<T>(
+  prompt: string,
+  options?: GenerateAiJsonOptions,
+): Promise<T> {
   const client = getClient();
+  const maxTokens = options?.maxTokens ?? 1024;
 
   try {
     const message = await client.messages.create({
       model: ANTHROPIC_MODEL,
-      max_tokens: 1024,
+      max_tokens: maxTokens,
       messages: [{ role: "user", content: prompt }],
     });
 

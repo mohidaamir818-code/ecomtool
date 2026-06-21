@@ -371,6 +371,15 @@ export function ListingsShell() {
     }
   }
 
+  function retryGenerateListing() {
+    if (!product) return;
+    generateStarted.current = false;
+    setListing(null);
+    setIsError(false);
+    setNotice("");
+    void generateListing(product);
+  }
+
   useEffect(() => {
     if (currentStep !== 3 || !product || generateStarted.current || listing) return;
     generateStarted.current = true;
@@ -697,6 +706,8 @@ export function ListingsShell() {
               product={product}
               listing={listing}
               loading={generateLoading}
+              errorMessage={isError && currentStep === 3 ? notice : undefined}
+              onRetry={retryGenerateListing}
               onListingChange={updateListing}
             />
           ) : null}
