@@ -526,7 +526,7 @@ function buildInventoryItemGroupBody(
     ],
   };
 
-  return {
+  const groupBody = {
     inventoryItemGroupKey: groupKey,
     variantSKUs: variantSkus,
     title: listing.seoTitle,
@@ -535,6 +535,42 @@ function buildInventoryItemGroupBody(
     aspects,
     variesBy,
   };
+
+  if (!groupBody.aspects[colourKey]?.length) {
+    const emergencyColours = [
+      ...new Set(
+        aspectOptions.variantDrafts
+          ?.map((v) => v.label?.split("/")[0]?.trim())
+          .filter((c): c is string => !!c && c.length > 0) ?? [],
+      ),
+    ];
+    groupBody.aspects[colourKey] =
+      emergencyColours.length > 0 ? emergencyColours : ["Multicolor"];
+  }
+
+  if (!groupBody.aspects.Size?.length) {
+    const emergencySizes = [
+      ...new Set(
+        aspectOptions.variantDrafts
+          ?.map((v) => {
+            const parts = v.label?.split("/") ?? [];
+            return parts[parts.length - 1]?.trim();
+          })
+          .filter((s): s is string => !!s && s.length > 0) ?? [],
+      ),
+    ];
+    groupBody.aspects.Size = emergencySizes.length > 0 ? emergencySizes : ["One Size"];
+  }
+
+  groupBody.variesBy = {
+    aspectsImageVariesBy: [colourKey],
+    specifications: [
+      { name: colourKey, values: groupBody.aspects[colourKey] },
+      { name: "Size", values: groupBody.aspects.Size },
+    ],
+  };
+
+  return groupBody;
 }
 
 function ensureGroupBodyHasAspects(

@@ -343,35 +343,58 @@ export function extractColoursAndSizesFromLabels(labels: string[]): {
   colors: string[];
   sizes: string[];
 } {
-  const colors = new Set<string>();
-  const sizes = new Set<string>();
+  const colors: string[] = [];
+  const sizes: string[] = [];
+
+  const sizePatterns = [
+    /^(XXS|XS|S|M|L|XL|2XL|3XL|4XL|5XL|XXL|XXXL|XXXXL)$/i,
+    /^\d+$/,
+    /^\d+\s*-\s*\d+$/,
+    /^(small|medium|large|extra\s*large)$/i,
+    /^(one size|free size|universal)$/i,
+    /^\d+(cm|mm|inch|inches|kg|g|oz|ml|l)$/i,
+    /^(EU|UK|US)\s*\d+$/i,
+    /^\d+\/\d+$/,
+  ];
 
   for (const label of labels) {
-    const trimmed = label.trim();
-    if (!trimmed) continue;
+    if (!label?.trim()) continue;
 
-    const parts = splitVariantLabelParts(trimmed);
+    const parts = label
+      .split("/")
+      .map((p) => p.trim())
+      .filter(Boolean);
 
-    for (const part of parts) {
-      if (isVariantSizePart(part)) {
-        sizes.add(part);
-      } else if (part.length > 0 && part.length < 30) {
-        colors.add(capitalizeColorWord(part));
+    if (parts.length === 0) continue;
+
+    const firstPart = parts[0];
+    const isFirstSize = sizePatterns.some((p) => p.test(firstPart));
+
+    if (!isFirstSize && firstPart) {
+      if (!colors.includes(firstPart)) {
+        colors.push(firstPart);
+      }
+    }
+
+    if (parts.length > 1) {
+      const lastPart = parts[parts.length - 1];
+      const isLastSize = sizePatterns.some((p) => p.test(lastPart));
+      if (isLastSize && !sizes.includes(lastPart)) {
+        sizes.push(lastPart);
+      } else if (!isLastSize && !colors.includes(lastPart)) {
+        sizes.push(lastPart);
+      }
+    } else if (isFirstSize) {
+      if (!sizes.includes(firstPart)) {
+        sizes.push(firstPart);
       }
     }
   }
 
-  const result = {
-    colors: [...colors].slice(0, 10),
-    sizes: [...sizes].slice(0, 20),
+  return {
+    colors: colors.length > 0 ? colors : ["Multicolor"],
+    sizes: sizes.length > 0 ? sizes : ["One Size"],
   };
-
-  if (labels.length > 0) {
-    console.log("Extracted colours:", result.colors);
-    console.log("Extracted sizes:", result.sizes);
-  }
-
-  return result;
 }
 
 export const EBAY_ASPECT_SAFE_DEFAULTS: Record<string, string[]> = {
