@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { EbayCategorySuggestion, GeneratedListing } from "@/types/listing-generator";
+import type { EbayCategorySuggestion, GeneratedListing, ListingPhotoDraft } from "@/types/listing-generator";
 import type { EbayConditionOption } from "@/lib/listings/item-specifics";
 import { ListingDescriptionEditor } from "./ListingDescriptionEditor";
 import { EbayConditionSelector } from "./EbayConditionSelector";
@@ -11,9 +11,15 @@ interface ListingPreviewEditorProps {
   userId: string;
   listing: GeneratedListing;
   onChange: (listing: GeneratedListing) => void;
+  descriptionPhotos?: ListingPhotoDraft[];
 }
 
-export function ListingPreviewEditor({ userId, listing, onChange }: ListingPreviewEditorProps) {
+export function ListingPreviewEditor({
+  userId,
+  listing,
+  onChange,
+  descriptionPhotos,
+}: ListingPreviewEditorProps) {
   const [categoryQuery, setCategoryQuery] = useState(listing.categorySuggestion);
   const [categories, setCategories] = useState<EbayCategorySuggestion[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(false);
@@ -68,6 +74,7 @@ export function ListingPreviewEditor({ userId, listing, onChange }: ListingPrevi
           <ListingDescriptionEditor
             value={listing.descriptionHtml}
             onChange={(descriptionHtml) => onChange({ ...listing, descriptionHtml })}
+            descriptionPhotos={descriptionPhotos}
           />
         </div>
       </div>

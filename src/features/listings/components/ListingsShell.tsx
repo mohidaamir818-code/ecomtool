@@ -668,6 +668,7 @@ export function ListingsShell() {
               listing={listing}
               loading={false}
               onListingChange={updateListing}
+              descriptionPhotos={draft?.descriptionPhotos}
             />
           ) : null}
 

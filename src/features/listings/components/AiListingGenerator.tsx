@@ -1,6 +1,6 @@
 "use client";
 
-import type { GeneratedListing, ListingProductSource } from "@/types/listing-generator";
+import type { GeneratedListing, ListingPhotoDraft, ListingProductSource } from "@/types/listing-generator";
 import { ListingPreviewEditor } from "./ListingPreviewEditor";
 import { ProxiedImage } from "./ProxiedImage";
 
@@ -10,6 +10,7 @@ interface AiListingGeneratorProps {
   listing: GeneratedListing | null;
   loading?: boolean;
   onListingChange?: (listing: GeneratedListing) => void;
+  descriptionPhotos?: ListingPhotoDraft[];
 }
 
 export function AiListingGenerator({
@@ -18,6 +19,7 @@ export function AiListingGenerator({
   listing,
   loading = false,
   onListingChange,
+  descriptionPhotos,
 }: AiListingGeneratorProps) {
   if (loading) {
     return (
@@ -66,6 +68,7 @@ export function AiListingGenerator({
           userId={userId}
           listing={listing}
           onChange={(next) => onListingChange?.(next)}
+          descriptionPhotos={descriptionPhotos}
         />
       </div>
     </div>

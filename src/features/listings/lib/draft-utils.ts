@@ -10,7 +10,7 @@ import type {
 } from "@/types/listing-generator";
 import { DEFAULT_PROMOTIONS } from "@/types/listing-generator";
 import { buildVariantPrices, calculatePricingBreakdown } from "@/lib/listings/pricing";
-import { filterListingImages } from "@/lib/listings/listing-sanitize";
+import { filterDescriptionImageUrls, filterListingImages } from "@/lib/listings/listing-sanitize";
 
 export function normalizeVariantDraft(
   variant: ListingVariantDraft,
@@ -62,7 +62,7 @@ export function buildInitialDraft(
     selected: true,
   }));
 
-  const descriptionFilter = filterListingImages(product.descriptionImages ?? []);
+  const descriptionFilter = filterDescriptionImageUrls(product.descriptionImages ?? []);
   const descriptionPhotos: ListingPhotoDraft[] = descriptionFilter.allowed.map((url) => ({
     url,
     selected: true,
@@ -149,11 +149,11 @@ export function buildDescriptionHtmlWithImages(
   const imagesHtml = urls
     .map(
       (url) =>
-        `<img src="${proxyImageUrl(url, appOrigin)}" alt="" style="max-width:100%;" />`,
+        `<img src="${proxyImageUrl(url, appOrigin)}" alt="" style="max-width:100%;margin-bottom:10px;display:block" />`,
     )
     .join("\n");
 
-  return `${descriptionHtml}\n<div class="description-images">\n${imagesHtml}\n</div>`;
+  return `${descriptionHtml}\n<div style="margin-top:20px">\n${imagesHtml}\n</div>`;
 }
 
 export function recalculateDraftPricing(

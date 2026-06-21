@@ -31,7 +31,7 @@ export function EbayDescriptionImagesPanel({
       <div className="border-b border-[#E5E5E5] px-4 py-3">
         <h3 className="text-sm font-semibold text-[#191919]">Description Images</h3>
         <p className="mt-1 text-sm text-[#707070]">
-          These images appear in your listing description to help buyers understand the product
+          These images will appear at the bottom of your listing description
         </p>
         <p className="mt-2 text-xs font-medium text-[#707070]">
           {descriptionPhotos.length} description image{descriptionPhotos.length === 1 ? "" : "s"}{" "}

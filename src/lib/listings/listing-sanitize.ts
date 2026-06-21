@@ -138,6 +138,49 @@ export function isSupplierImageUrl(url: string): boolean {
   return isRestrictedImageUrl(url);
 }
 
+const DESCRIPTION_IMAGE_URL_KEYWORDS = [
+  "aliexpress",
+  "alibaba",
+  "dropship",
+  "china",
+  "supplier",
+  "wholesale",
+];
+
+export function isDescriptionImageUrlRestricted(url: string): boolean {
+  if (!url.trim()) return true;
+
+  const decoded = decodeUrlSafe(url).toLowerCase();
+
+  for (const keyword of DESCRIPTION_IMAGE_URL_KEYWORDS) {
+    if (decoded.includes(keyword)) return true;
+  }
+
+  return /[\u4e00-\u9fff]/.test(decoded);
+}
+
+export function filterDescriptionImageUrls(urls: string[]): {
+  allowed: string[];
+  removedCount: number;
+} {
+  const allowed: string[] = [];
+  let removedCount = 0;
+
+  for (const url of urls) {
+    if (!url?.trim()) {
+      removedCount += 1;
+      continue;
+    }
+    if (isDescriptionImageUrlRestricted(url)) {
+      removedCount += 1;
+    } else {
+      allowed.push(url);
+    }
+  }
+
+  return { allowed, removedCount };
+}
+
 export function filterListingImages(urls: string[]): {
   allowed: string[];
   removedCount: number;

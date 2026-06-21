@@ -1,10 +1,14 @@
 import "server-only";
 
 import crypto from "crypto";
+import sharp from "sharp";
 import { serverEnv } from "@/lib/env";
 import { getAliExpressAccessToken } from "@/lib/aliexpress/oauth";
-import { cleanLabel } from "@/lib/listings/listing-sanitize";
+import { cleanLabel, filterDescriptionImageUrls } from "@/lib/listings/listing-sanitize";
 import type { HandlingProductData, HandlingProductVariant } from "@/types/handling";
+
+export const MAX_DESCRIPTION_IMAGES = 20;
+const DESCRIPTION_IMAGE_FETCH_TIMEOUT_MS = 8000;
 
 const MTOP_APP_KEY = "12574478";
 const MTOP_HOST = "https://acs.aliexpress.com";
@@ -955,6 +959,32 @@ function collectHtmlStrings(value: unknown, keyHint: string, output: string[]): 
   }
 }
 
+function extractImageUrlsFromArrays(sources: Array<Record<string, unknown> | undefined>): string[] {
+  const urls: string[] = [];
+
+  for (const source of sources) {
+    if (!source) continue;
+    const images = source.images;
+    if (!Array.isArray(images)) continue;
+
+    for (const item of images) {
+      if (typeof item === "string") {
+        urls.push(item);
+        continue;
+      }
+      if (!item || typeof item !== "object") continue;
+
+      const record = item as Record<string, unknown>;
+      for (const key of ["url", "imageUrl", "image_url", "imgUrl"]) {
+        const value = record[key];
+        if (typeof value === "string") urls.push(value);
+      }
+    }
+  }
+
+  return dedupeUrls(urls);
+}
+
 export function extractDescriptionImagesFromDsResult(result: Record<string, unknown>): string[] {
   const htmlChunks: string[] = [];
   const base = result.ae_item_base_info_dto as Record<string, unknown> | undefined;
@@ -972,7 +1002,109 @@ export function extractDescriptionImagesFromDsResult(result: Record<string, unkn
 
   collectHtmlStrings(result, "", htmlChunks);
 
-  return dedupeUrls(htmlChunks.flatMap((chunk) => extractImagesFromHtml(chunk)));
+  const htmlImages = dedupeUrls(htmlChunks.flatMap((chunk) => extractImagesFromHtml(chunk)));
+  const arrayImages = extractImageUrlsFromArrays([descriptionDto, result]);
+
+  return dedupeUrls([...htmlImages, ...arrayImages]);
+}
+
+async function fetchImagesFromRemoteDescriptionUrl(url: string): Promise<string[]> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), DESCRIPTION_IMAGE_FETCH_TIMEOUT_MS);
+    const response = await fetch(url, {
+      headers: BROWSER_HEADERS,
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) return [];
+
+    const body = await response.text();
+    return extractImagesFromHtml(body);
+  } catch {
+    return [];
+  }
+}
+
+async function collectDescriptionImagesFromDsResult(
+  result: Record<string, unknown>,
+): Promise<string[]> {
+  const urls = extractDescriptionImagesFromDsResult(result);
+  const descriptionDto = result.ae_item_description_dto as Record<string, unknown> | undefined;
+  const remoteUrls: string[] = [];
+
+  for (const source of [descriptionDto, result]) {
+    if (!source) continue;
+    for (const key of ["description_url", "web_detail_url", "detail_url", "descriptionUrl"]) {
+      const value = source[key];
+      if (typeof value === "string" && /^https?:\/\//i.test(value)) {
+        remoteUrls.push(value);
+      }
+    }
+  }
+
+  for (const remoteUrl of dedupeUrls(remoteUrls)) {
+    urls.push(...(await fetchImagesFromRemoteDescriptionUrl(remoteUrl)));
+  }
+
+  return dedupeUrls(urls);
+}
+
+export async function filterDescriptionImagesByMinSize(
+  urls: string[],
+  minSize = 200,
+): Promise<string[]> {
+  const kept: string[] = [];
+
+  for (const url of urls) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), DESCRIPTION_IMAGE_FETCH_TIMEOUT_MS);
+      const response = await fetch(url, {
+        headers: BROWSER_HEADERS,
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        kept.push(url);
+        continue;
+      }
+
+      const metadata = await sharp(Buffer.from(await response.arrayBuffer())).metadata();
+      if (
+        metadata.width != null &&
+        metadata.height != null &&
+        (metadata.width < minSize || metadata.height < minSize)
+      ) {
+        continue;
+      }
+
+      kept.push(url);
+    } catch {
+      kept.push(url);
+    }
+  }
+
+  return kept;
+}
+
+export async function finalizeDescriptionImages(
+  rawUrls: string[],
+  galleryImages: string[],
+): Promise<{ allowed: string[]; removedCount: number }> {
+  const merged = excludeGalleryImages(dedupeUrls(rawUrls), galleryImages);
+  const urlFilter = filterDescriptionImageUrls(merged);
+  const sizeFiltered = await filterDescriptionImagesByMinSize(urlFilter.allowed);
+  const allowed = sizeFiltered.slice(0, MAX_DESCRIPTION_IMAGES);
+
+  return {
+    allowed,
+    removedCount: merged.length - allowed.length,
+  };
 }
 
 export async function fetchDescriptionHtmlFromPage(productUrl: string): Promise<string | null> {
@@ -1017,14 +1149,11 @@ function excludeGalleryImages(descriptionImages: string[], galleryImages: string
 
 async function enrichDescriptionImages(product: HandlingProductData): Promise<HandlingProductData> {
   const gallery = product.images?.filter(Boolean) ?? (product.imageUrl ? [product.imageUrl] : []);
-  let descriptionImages = excludeGalleryImages(product.descriptionImages ?? [], gallery);
+  const pageHtml = await fetchDescriptionHtmlFromPage(product.productUrl);
+  const pageImages = pageHtml ? extractImagesFromHtml(pageHtml) : [];
 
-  if (descriptionImages.length === 0) {
-    const html = await fetchDescriptionHtmlFromPage(product.productUrl);
-    if (html) {
-      descriptionImages = excludeGalleryImages(extractImagesFromHtml(html), gallery);
-    }
-  }
+  const rawUrls = dedupeUrls([...(product.descriptionImages ?? []), ...pageImages]);
+  const { allowed: descriptionImages } = await finalizeDescriptionImages(rawUrls, gallery);
 
   return {
     ...product,
@@ -1032,10 +1161,10 @@ async function enrichDescriptionImages(product: HandlingProductData): Promise<Ha
   };
 }
 
-function parseDsProductPayload(
+async function parseDsProductPayload(
   payload: Record<string, unknown>,
   productId: string,
-): HandlingProductData | null {
+): Promise<HandlingProductData | null> {
   const response = payload.aliexpress_ds_product_get_response as
     | { result?: Record<string, unknown> }
     | undefined;
@@ -1096,7 +1225,7 @@ function parseDsProductPayload(
   const parsedImages = parseMultimediaImages(multimedia);
   const imageUrl = parsedImages[0] ?? null;
   const descriptionImages = excludeGalleryImages(
-    extractDescriptionImagesFromDsResult(result),
+    await collectDescriptionImagesFromDsResult(result),
     parsedImages,
   );
 
@@ -1223,7 +1352,7 @@ async function callDropshipProductApi(productId: string): Promise<HandlingProduc
 
   if (!payload) return null;
 
-  return parseDsProductPayload(payload, productId);
+  return await parseDsProductPayload(payload, productId);
 }
 
 async function fetchViaOpenPlatform(productId: string): Promise<HandlingProductData | null> {

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { fetchAliExpressProduct, fetchDescriptionHtmlFromPage, extractImagesFromHtml } from "@/lib/aliexpress/client";
+import { fetchAliExpressProduct, fetchDescriptionHtmlFromPage, extractImagesFromHtml, finalizeDescriptionImages } from "@/lib/aliexpress/client";
 import { cleanLabel, filterListingImages, sanitizeListingText } from "@/lib/listings/listing-sanitize";
 import type { ListingProductSource } from "@/types/listing-generator";
 
@@ -68,10 +68,6 @@ async function fetchDescriptionFromHtml(url: string): Promise<{ text: string | n
   }
 }
 
-function dedupeAgainstGallery(urls: string[], gallery: string[]): string[] {
-  const gallerySet = new Set(gallery);
-  return urls.filter((url) => url && !gallerySet.has(url));
-}
 
 export async function fetchListingProductSource(url: string): Promise<ListingProductSource> {
   const product = await fetchAliExpressProduct(url);
@@ -86,14 +82,11 @@ export async function fetchListingProductSource(url: string): Promise<ListingPro
   const images = galleryFilter.allowed;
   const imageUrl = images[0] ?? null;
 
-  const rawDescriptionImages = dedupeAgainstGallery(
-    [
-      ...(product.descriptionImages ?? []),
-      ...(descriptionPayload.html ? extractImagesFromHtml(descriptionPayload.html) : []),
-    ],
-    images,
-  );
-  const descriptionFilter = filterListingImages(rawDescriptionImages);
+  const rawDescriptionImages = [
+    ...(product.descriptionImages ?? []),
+    ...(descriptionPayload.html ? extractImagesFromHtml(descriptionPayload.html) : []),
+  ];
+  const descriptionFilter = await finalizeDescriptionImages(rawDescriptionImages, images);
 
   const variants = product.variants
     ?.filter((variant) => variant.stock != null && variant.stock > 0)

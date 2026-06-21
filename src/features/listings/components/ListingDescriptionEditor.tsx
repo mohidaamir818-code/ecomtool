@@ -1,7 +1,9 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { buildDescriptionHtmlWithImages } from "@/features/listings/lib/draft-utils";
+import type { ListingPhotoDraft } from "@/types/listing-generator";
 import "react-quill-new/dist/quill.snow.css";
 
 const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false });
@@ -9,6 +11,7 @@ const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false });
 interface ListingDescriptionEditorProps {
   value: string;
   onChange: (value: string) => void;
+  descriptionPhotos?: ListingPhotoDraft[];
 }
 
 type DescriptionTab = "preview" | "editor";
@@ -33,6 +36,7 @@ const previewClassName = [
   "[&_ol]:mb-4 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:space-y-2",
   "[&_li]:mb-1 [&_li]:leading-relaxed",
   "[&_em]:italic",
+  "[&_img]:block [&_img]:max-w-full [&_img]:mb-2.5",
 ].join(" ");
 
 const quillEditorClassName = [
@@ -43,13 +47,27 @@ const quillEditorClassName = [
   "[&_.ql-editor_h2]:text-xl [&_.ql-editor_h2]:font-bold",
 ].join(" ");
 
-export function ListingDescriptionEditor({ value, onChange }: ListingDescriptionEditorProps) {
+export function ListingDescriptionEditor({
+  value,
+  onChange,
+  descriptionPhotos,
+}: ListingDescriptionEditorProps) {
   const [tab, setTab] = useState<DescriptionTab>("preview");
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  const previewHtml = useMemo(
+    () =>
+      buildDescriptionHtmlWithImages(
+        value,
+        descriptionPhotos,
+        typeof window !== "undefined" ? window.location.origin : "",
+      ),
+    [value, descriptionPhotos],
+  );
 
   return (
     <div className="space-y-3">
@@ -80,8 +98,8 @@ export function ListingDescriptionEditor({ value, onChange }: ListingDescription
 
       {tab === "preview" ? (
         <div>
-          {value.trim() ? (
-            <div className={previewClassName} dangerouslySetInnerHTML={{ __html: value }} />
+          {previewHtml.trim() ? (
+            <div className={previewClassName} dangerouslySetInnerHTML={{ __html: previewHtml }} />
           ) : (
             <div className={`${previewClassName} text-[#707070]`}>
               No description yet. Switch to Editor to add content.
