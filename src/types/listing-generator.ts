@@ -27,6 +27,7 @@ export interface ListingProductSource {
   description: string | null;
   stock: number | null;
   variants?: ListingProductVariant[];
+  internalProductSku?: string;
 }
 
 export interface GeneratedListingItemSpecific {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { EbayApiError, listDraftOnEbay } from "@/lib/ebay/sell-inventory";
-import { checkVeroSafetyForDraft } from "@/lib/gemini/vero-check";
+import { assertUniqueVariantSkus, resolveVariantSkuForEbay } from "@/lib/listings/internal-sku";
 import { logUserApiRequest } from "@/lib/requests/tracker";
 import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
 import type { ListingDraft } from "@/types/listing-generator";
@@ -20,9 +20,24 @@ function validateDraft(draft: ListingDraft): string | null {
     return "Shipping, payment, and return policies are required.";
   }
 
+  if (!draft.product.internalProductSku?.trim()) {
+    return "Internal product SKU is missing. Re-open the listing wizard to assign SKUs.";
+  }
+
   for (const variant of draft.variants) {
     if (variant.price <= 0) return "All variant prices must be greater than 0.";
     if (variant.stock < 0) return "Variant stock cannot be negative.";
+    try {
+      resolveVariantSkuForEbay(variant);
+    } catch (error) {
+      return error instanceof Error ? error.message : "Variant SKU is invalid.";
+    }
+  }
+
+  try {
+    assertUniqueVariantSkus(draft.variants);
+  } catch (error) {
+    return error instanceof Error ? error.message : "Variant SKUs must be unique.";
   }
 
   return null;
@@ -57,11 +72,6 @@ export async function POST(request: NextRequest) {
 
     const accessDenied = await requireActiveUser(userId);
     if (accessDenied) return accessDenied;
-
-    const vero = await checkVeroSafetyForDraft(body.draft);
-    if (!vero.safe) {
-      return NextResponse.json({ error: vero.summary }, { status: 403 });
-    }
 
     const result = await listDraftOnEbay(userId, body.draft);
 

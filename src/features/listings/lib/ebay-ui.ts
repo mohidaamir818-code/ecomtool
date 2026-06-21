@@ -1,3 +1,5 @@
+import type { ListingDraft } from "@/types/listing-generator";
+
 export const EBAY_BLUE = "#3665F3";
 export const EBAY_BLUE_DARK = "#2850D4";
 export const EBAY_BORDER = "#E5E5E5";
@@ -20,9 +22,8 @@ export const ebayInputClass =
 export const ebayTableHeaderClass =
   "border-b border-[#E5E5E5] bg-[#F7F7F7] px-3 py-2 text-left text-xs font-semibold text-[#191919]";
 
-export function buildPreviewSku(externalId: string, variantId: string): string {
-  const base = `ae-${externalId}-${variantId}`;
-  return base.replace(/[^a-zA-Z0-9-_]/g, "-").slice(0, 50);
+export function formatVariantSkuPreview(draft: ListingDraft, variant: ListingDraft["variants"][number]): string {
+  return variant.sku?.trim() || draft.product.internalProductSku?.trim() || "";
 }
 
 export function currencySymbol(currency: string): string {

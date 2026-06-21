@@ -3,6 +3,11 @@ import "server-only";
 import { buildDescriptionHtmlWithImages, getSelectedDescriptionPhotos } from "@/features/listings/lib/draft-utils";
 import { getAppOrigin } from "@/lib/env";
 import {
+  assertUniqueVariantSkus,
+  resolveGroupSkuKey,
+  resolveVariantSkuForEbay,
+} from "@/lib/listings/internal-sku";
+import {
   buildEbayListingUrl,
   getSellerMarketplaceId,
   resolveMarketplaceConfig,
@@ -130,17 +135,6 @@ function mapCondition(condition: string): string {
   if (normalized.includes("new with tags")) return "NEW";
   if (normalized.includes("new other")) return "NEW_OTHER";
   return "NEW";
-}
-
-function buildSku(externalId: string, suffix?: string): string {
-  const base = `ae-${externalId}${suffix ? `-${suffix}` : ""}`;
-  return base.replace(/[^a-zA-Z0-9-_]/g, "-").slice(0, 50);
-}
-
-function resolveVariantSku(externalId: string, variant: ListingDraft["variants"][number]): string {
-  const custom = variant.sku?.trim();
-  if (custom) return custom.replace(/[^a-zA-Z0-9-_]/g, "-").slice(0, 50);
-  return buildSku(externalId, variant.id);
 }
 
 function resolveVariantQuantity(variant: ListingDraft["variants"][number]): number {
@@ -445,25 +439,6 @@ function buildOfferBody(
   return body;
 }
 
-async function getOfferIdBySku(
-  token: string,
-  marketplaceId: EbayMarketplaceId,
-  sku: string,
-): Promise<string | null> {
-  const config = resolveMarketplaceConfig(marketplaceId);
-  const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${config.marketplaceId}`;
-
-  const { response, bodyText } = await ebayFetch("offer GET by sku", requestUrl, {
-    headers: inventoryHeaders(token, marketplaceId),
-    cache: "no-store",
-  });
-
-  if (!response.ok) return null;
-
-  const data = parseJsonSafe(bodyText, {} as { offers?: Array<{ offerId?: string }> });
-  return data.offers?.[0]?.offerId ?? null;
-}
-
 async function updateOffer(
   token: string,
   marketplaceId: EbayMarketplaceId,
@@ -502,14 +477,6 @@ async function createOffer(
     marketplaceId,
     options,
   );
-
-  if (options.sku) {
-    const existingId = await getOfferIdBySku(token, marketplaceId, options.sku);
-    if (existingId) {
-      await updateOffer(token, marketplaceId, existingId, body);
-      return existingId;
-    }
-  }
 
   const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/offer`;
   const { response, bodyText } = await ebayFetch("offer POST", requestUrl, {
@@ -630,10 +597,22 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
 
   const activeVariants = draft.variants.length > 0 ? draft.variants : [];
   const isMultiVariant = activeVariants.length > 1;
+  assertUniqueVariantSkus(activeVariants);
 
   if (!isMultiVariant) {
     const variant = activeVariants[0];
-    const sku = variant ? resolveVariantSku(draft.product.externalId, variant) : buildSku(draft.product.externalId);
+    const sku = variant
+      ? resolveVariantSkuForEbay(variant)
+      : resolveVariantSkuForEbay({
+          id: "default",
+          label: "Default",
+          imageUrl: "",
+          price: listing.suggestedPrice,
+          stock: 1,
+          sku: draft.product.internalProductSku ?? "",
+          ean: "",
+          quantity: 1,
+        });
     const images = variant?.imageUrl ? [variant.imageUrl, ...selectedPhotos] : selectedPhotos;
     const quantity = variant ? resolveVariantQuantity(variant) : 1;
 
@@ -673,48 +652,49 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
     };
   }
 
-  const groupKey = buildSku(draft.product.externalId, "group");
-  const variantSkus: string[] = [];
-  const variantLabels: string[] = [];
-  let firstOfferId = "";
+  const groupKey = resolveGroupSkuKey(draft);
 
-  for (const variant of activeVariants) {
-    const sku = resolveVariantSku(draft.product.externalId, variant);
-    variantSkus.push(sku);
-    variantLabels.push(variant.label);
+  const variantResults = await Promise.all(
+    activeVariants.map(async (variant) => {
+      const sku = resolveVariantSkuForEbay(variant);
 
-    const images = variant.imageUrl ? [variant.imageUrl, ...selectedPhotos] : selectedPhotos;
-    const variantListing = { ...listing, suggestedPrice: variant.price };
-    const quantity = resolveVariantQuantity(variant);
+      const images = variant.imageUrl ? [variant.imageUrl, ...selectedPhotos] : selectedPhotos;
+      const variantListing = { ...listing, suggestedPrice: variant.price };
+      const quantity = resolveVariantQuantity(variant);
 
-    await upsertInventoryItem(
-      token,
-      marketplaceId,
-      sku,
-      variantListing,
-      images,
-      quantity,
-      variant.label,
-      variant.ean,
-    );
-
-    const offerId = await createOffer(
-      token,
-      listing,
-      categoryId,
-      quantity,
-      draft.promotions,
-      policyIds,
-      marketplaceId,
-      {
+      await upsertInventoryItem(
+        token,
+        marketplaceId,
         sku,
-        inventoryItemGroupKey: groupKey,
-        priceOverride: variant.price,
-      },
-    );
+        variantListing,
+        images,
+        quantity,
+        variant.label,
+        variant.ean,
+      );
 
-    if (!firstOfferId) firstOfferId = offerId;
-  }
+      const offerId = await createOffer(
+        token,
+        listing,
+        categoryId,
+        quantity,
+        draft.promotions,
+        policyIds,
+        marketplaceId,
+        {
+          sku,
+          inventoryItemGroupKey: groupKey,
+          priceOverride: variant.price,
+        },
+      );
+
+      return { sku, offerId, label: variant.label };
+    }),
+  );
+
+  const variantSkus = variantResults.map((entry) => entry.sku);
+  const variantLabels = variantResults.map((entry) => entry.label);
+  const firstOfferId = variantResults[0]?.offerId ?? "";
 
   await upsertInventoryItemGroup(
     token,
@@ -745,6 +725,11 @@ export async function listProductOnEbay(
   product: ListingDraft["product"],
   quantity = 1,
 ): Promise<ListOnEbayResult> {
+  const baseSku = product.internalProductSku?.trim();
+  if (!baseSku) {
+    throw new Error("Internal product SKU is missing. Assign internal SKUs before listing.");
+  }
+
   const draft: ListingDraft = {
     product,
     listing: { ...listing, brand: "Unbranded" },
@@ -758,7 +743,7 @@ export async function listProductOnEbay(
         imageUrl: product.imageUrl ?? product.images[0] ?? "",
         price: listing.suggestedPrice,
         stock: quantity,
-        sku: buildSku(product.externalId, "default"),
+        sku: baseSku,
         ean: "",
         quantity,
       },

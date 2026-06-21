@@ -9,16 +9,17 @@ import type {
   VolumePromotionTier,
 } from "@/types/listing-generator";
 import { DEFAULT_PROMOTIONS } from "@/types/listing-generator";
+import {
+  draftNeedsSkuBackfill,
+  mergeInternalSkusIntoDraft,
+} from "@/lib/listings/internal-sku";
 import { buildVariantPrices, calculatePricingBreakdown } from "@/lib/listings/pricing";
 import { filterDescriptionImageUrls, filterListingImages } from "@/lib/listings/listing-sanitize";
 
-export function normalizeVariantDraft(
-  variant: ListingVariantDraft,
-  _externalId: string,
-): ListingVariantDraft {
+export function normalizeVariantDraft(variant: ListingVariantDraft): ListingVariantDraft {
   return {
     ...variant,
-    sku: variant.sku?.trim() || "N/A",
+    sku: variant.sku?.trim() ?? "",
     ean: variant.ean ?? "",
     quantity: variant.quantity ?? 1,
   };
@@ -33,10 +34,38 @@ export function normalizeDraftVariants(draft: ListingDraft): ListingDraft {
     },
     descriptionPhotos: draft.descriptionPhotos ?? [],
     variationPhotoAttribute: draft.variationPhotoAttribute ?? "default",
-    variants: draft.variants.map((variant) =>
-      normalizeVariantDraft(variant, draft.product.externalId),
-    ),
+    variants: draft.variants.map((variant) => normalizeVariantDraft(variant)),
   };
+}
+
+export async function assignInternalSkusToDraft(
+  userId: string,
+  productUrl: string,
+  draft: ListingDraft,
+): Promise<ListingDraft> {
+  if (!draftNeedsSkuBackfill(draft)) return draft;
+
+  const response = await fetch("/api/listings/internal-skus", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      userId,
+      productUrl,
+      variants: draft.variants.map((variant) => ({ id: variant.id, label: variant.label })),
+    }),
+  });
+
+  const data = (await response.json()) as {
+    error?: string;
+    baseSku?: string;
+    variantSkus?: Record<string, string>;
+  };
+
+  if (!response.ok || !data.baseSku || !data.variantSkus) {
+    throw new Error(data.error ?? "Failed to assign internal SKUs.");
+  }
+
+  return mergeInternalSkusIntoDraft(draft, data.baseSku, data.variantSkus);
 }
 
 export function buildInitialDraft(
@@ -167,6 +196,10 @@ export function recalculateDraftPricing(
 
   const breakdown = calculatePricingBreakdown(baseAliPrice, prefs);
   const finalPrice = manualPriceOverride ?? breakdown.recommendedPrice;
+  const nextVariants = buildVariantPrices(draft.product, finalPrice).map((variant) => {
+    const existing = draft.variants.find((entry) => entry.id === variant.id);
+    return existing?.sku ? { ...variant, sku: existing.sku } : variant;
+  });
 
   return {
     ...draft,
@@ -178,6 +211,6 @@ export function recalculateDraftPricing(
       suggestedPrice: finalPrice,
       currency: prefs.currency,
     },
-    variants: buildVariantPrices(draft.product, finalPrice),
+    variants: nextVariants,
   };
 }

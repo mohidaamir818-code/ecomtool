@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { DashboardLayout } from "@/features/dashboard/components/DashboardLayout";
 import { useUserBlock } from "@/features/dashboard/context/UserBlockContext";
-import { buildInitialDraft, normalizeDraftVariants, recalculateDraftPricing } from "@/features/listings/lib/draft-utils";
+import { assignInternalSkusToDraft, buildInitialDraft, normalizeDraftVariants, recalculateDraftPricing } from "@/features/listings/lib/draft-utils";
+import { draftNeedsSkuBackfill } from "@/lib/listings/internal-sku";
 import { fetchSellerPreferences, persistSellerPreferences } from "@/features/listings/lib/seller-preferences-client";
 import { sellerPreferencesToPromotions, promotionsToSellerPreferences } from "@/lib/listings/seller-preferences-mappers";
 import { AiListingGenerator } from "./AiListingGenerator";
@@ -347,7 +348,12 @@ export function ListingsShell() {
           manualPriceOverride,
           promotions,
         });
-        setDraft(initial);
+        const withSkus = await assignInternalSkusToDraft(
+          userId,
+          nextProduct.productUrl,
+          initial,
+        );
+        setDraft(withSkus);
       }
 
       setNotice("Listing generated. Review and edit before continuing.");
@@ -486,10 +492,18 @@ export function ListingsShell() {
     if (!response.ok || !data.draft?.draftJson) return;
 
     const saved = normalizeDraftVariants(data.draft.draftJson as ListingDraft);
+    let resolvedDraft = saved;
+    if (userId && draftNeedsSkuBackfill(saved)) {
+      resolvedDraft = await assignInternalSkusToDraft(
+        userId,
+        saved.product.productUrl,
+        saved,
+      );
+    }
     setUrl(data.draft.productUrl ?? "");
-    setDraft(saved);
-    setProduct(saved.product);
-    setListing(saved.listing);
+    setDraft(resolvedDraft);
+    setProduct(resolvedDraft.product);
+    setListing(resolvedDraft.listing);
     setPricingPrefs(saved.pricing ?? null);
     setPricingBreakdown(saved.pricingBreakdown ?? null);
     setManualPriceOverride(saved.manualPriceOverride ?? null);

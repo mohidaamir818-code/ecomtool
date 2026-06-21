@@ -5,7 +5,7 @@ import type {
   PricingBreakdown,
 } from "@/types/listing-generator";
 
-const DEFAULT_VARIANT_SKU = "N/A";
+const DEFAULT_VARIANT_SKU = "";
 
 export function calculatePricingBreakdown(
   aliExpressPrice: number,

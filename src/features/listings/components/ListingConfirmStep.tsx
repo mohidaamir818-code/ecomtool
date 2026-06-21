@@ -140,6 +140,26 @@ export function ListingConfirmStep({
             <dt className="text-[#6B7280]">Brand</dt>
             <dd className="font-medium text-[#111827]">Unbranded</dd>
           </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-[#6B7280]">Product SKU</dt>
+            <dd className="font-mono text-right text-sm font-medium text-[#111827]">
+              {draft.product.internalProductSku ?? "—"}
+            </dd>
+          </div>
+          {draft.variants.length > 0 ? (
+            <div className="border-t border-gray-100 pt-3">
+              <dt className="mb-2 text-[#6B7280]">eBay variant SKUs</dt>
+              <dd>
+                <ul className="space-y-1 text-right font-mono text-xs text-[#111827]">
+                  {draft.variants.map((variant) => (
+                    <li key={variant.id}>
+                      {variant.label}: {variant.sku || "—"}
+                    </li>
+                  ))}
+                </ul>
+              </dd>
+            </div>
+          ) : null}
         </dl>
       </div>
 
