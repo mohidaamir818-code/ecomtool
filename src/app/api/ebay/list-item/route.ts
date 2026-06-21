@@ -71,6 +71,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: validationError }, { status: 400 });
     }
 
+    console.log("Variants in route:", JSON.stringify(body.draft.variants));
+
     const accessDenied = await requireActiveUser(userId);
     if (accessDenied) return accessDenied;
 

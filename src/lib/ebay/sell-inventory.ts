@@ -347,6 +347,86 @@ function resolveEbayDescription(html: string | null | undefined): string {
   return description;
 }
 
+type AspectVariantSource = { label?: string; name?: string };
+
+function getAspectVariantSources(aspectOptions: EbayAspectBuildOptions): AspectVariantSource[] {
+  const seen = new Set<string>();
+  const variants: AspectVariantSource[] = [];
+
+  for (const variant of aspectOptions.product?.variants ?? []) {
+    const label = variant.label?.trim();
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    variants.push({ label });
+  }
+
+  for (const variant of aspectOptions.variantDrafts ?? []) {
+    const label = variant.label?.trim();
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    variants.push({ label });
+  }
+
+  return variants;
+}
+
+function applyNuclearColourSizeFallback(
+  aspects: Record<string, string[]>,
+  variants: AspectVariantSource[],
+  marketplaceId: EbayMarketplaceId,
+): Record<string, string[]> {
+  const colourKey = marketplaceId === "EBAY_GB" ? "Colour" : "Color";
+  const alternateColourKey = colourKey === "Colour" ? "Color" : "Colour";
+  const labels = variants.map((variant) => String(variant.label ?? variant.name ?? ""));
+  const { colors: colours, sizes: extractedSizes } = extractColoursAndSizesFromLabels(labels);
+
+  console.log("=== DEBUG COLOUR EXTRACTION ===");
+  console.log("Raw variants:", JSON.stringify(variants));
+  console.log("Extracted colours:", JSON.stringify(colours));
+  console.log("Final aspects Colour:", aspects.Colour);
+  console.log("=== END DEBUG ===");
+
+  if (
+    !aspects[colourKey] ||
+    aspects[colourKey].length === 0 ||
+    aspects[colourKey][0] === undefined
+  ) {
+    const colourFromVariants = variants
+      .map((variant) => {
+        const parts = String(variant.label ?? variant.name ?? "")
+          .split("/")
+          .map((part) => part.trim());
+        return parts[0];
+      })
+      .filter((colour) => colour && colour.length > 0 && colour !== "undefined");
+
+    aspects[colourKey] =
+      colourFromVariants.length > 0 ? [...new Set(colourFromVariants)] : ["Multicolor"];
+  }
+
+  delete aspects[alternateColourKey];
+
+  if (!aspects.Size || aspects.Size.length === 0) {
+    const sizeFromVariants = variants
+      .map((variant) => {
+        const parts = String(variant.label ?? variant.name ?? "")
+          .split("/")
+          .map((part) => part.trim());
+        return parts[parts.length - 1];
+      })
+      .filter((size) => size && size.length > 0 && size !== "undefined");
+
+    aspects.Size =
+      sizeFromVariants.length > 0 ? [...new Set(sizeFromVariants)] : ["One Size"];
+  } else if (extractedSizes.length > 0 && aspects.Size.every((size) => !size?.trim())) {
+    aspects.Size = extractedSizes;
+  }
+
+  console.log("FINAL aspects:", JSON.stringify(aspects));
+
+  return aspects;
+}
+
 export interface EbayAspectBuildOptions {
   marketplaceId: EbayMarketplaceId;
   product?: ListingProductSource;
@@ -536,6 +616,12 @@ async function upsertInventoryItem(
         aspects.GTIN = [gtin.trim()];
       }
 
+      applyNuclearColourSizeFallback(
+        aspects,
+        getAspectVariantSources(aspectOptions),
+        marketplaceId,
+      );
+
       console.log("Final aspects being sent to eBay:", JSON.stringify(aspects, null, 2));
 
       const body = {
@@ -583,6 +669,11 @@ async function upsertInventoryItemGroup(
     aspectOptions,
     async () => {
       const aspects = buildEbayAspects(listing, aspectOptions);
+      applyNuclearColourSizeFallback(
+        aspects,
+        getAspectVariantSources(aspectOptions),
+        marketplaceId,
+      );
       console.log("Final aspects being sent to eBay (group):", JSON.stringify(aspects, null, 2));
 
       const body = {
@@ -599,7 +690,7 @@ async function upsertInventoryItemGroup(
             },
           ],
         },
-        aspects: buildEbayAspects(listing, aspectOptions),
+        aspects,
       };
 
       const { response, bodyText } = await ebayFetch("inventory_item_group PUT", requestUrl, {
