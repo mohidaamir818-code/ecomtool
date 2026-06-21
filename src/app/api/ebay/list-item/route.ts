@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { EbayApiError, listDraftOnEbay } from "@/lib/ebay/sell-inventory";
+import { EbayApiError, listDraftOnEbay, parseEbayErrorDetails } from "@/lib/ebay/sell-inventory";
 import { requireConfirmedLocation } from "@/lib/ebay/inventory-location";
 import { assertUniqueVariantSkus, resolveVariantSkuForEbay } from "@/lib/listings/internal-sku";
 import { logUserApiRequest } from "@/lib/requests/tracker";
@@ -109,6 +109,34 @@ export async function POST(request: NextRequest) {
       console.error("eBay URL:", error.url);
       console.error("eBay status:", error.status);
       console.error("eBay raw body:", error.rawBody);
+
+      const details = parseEbayErrorDetails(error.rawBody, error.message);
+      const missingField = error.missingField ?? details.missingField;
+      const ebayError = parseJsonSafe(error.rawBody, null);
+
+      if (userId) {
+        void logUserApiRequest({
+          userId,
+          endpoint: "/api/ebay/list-item",
+          method: "POST",
+          status: "failed",
+        });
+      }
+
+      const responseStatus =
+        error.status >= 400 && error.status < 500 ? error.status : 400;
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: missingField
+            ? `Missing required field: ${missingField}`
+            : details.message,
+          ebayError,
+          status: error.status,
+        },
+        { status: responseStatus },
+      );
     }
 
     if (userId) {
@@ -120,13 +148,8 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const status = error instanceof EbayApiError ? error.status : 500;
-    const details =
-      error instanceof EbayApiError
-        ? error.rawBody
-        : error instanceof Error
-          ? error.stack
-          : undefined;
+    const status = 500;
+    const details = error instanceof Error ? error.stack : undefined;
 
     return NextResponse.json(
       {
@@ -137,5 +160,14 @@ export async function POST(request: NextRequest) {
       },
       { status },
     );
+  }
+}
+
+function parseJsonSafe<T>(bodyText: string, fallback: T): T {
+  if (!bodyText.trim()) return fallback;
+  try {
+    return JSON.parse(bodyText) as T;
+  } catch {
+    return fallback;
   }
 }

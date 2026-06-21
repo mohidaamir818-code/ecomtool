@@ -9,12 +9,12 @@ import {
   resolveVariantSkuForEbay,
 } from "@/lib/listings/internal-sku";
 import {
-  detectAgeGroupFromText,
-  detectDepartmentFromText,
-  detectSizeTypeFromText,
-  findItemSpecificValue,
+  filterAspectsForCategory,
   MPN_DOES_NOT_APPLY,
   MPN_DOES_NOT_APPLY_EBAY,
+  normalizeAspectNameForMarketplace,
+  resolveRequiredEbayAspects,
+  splitAspectValues,
   UNBRANDED,
 } from "@/lib/listings/item-specifics";
 import {
@@ -29,6 +29,7 @@ import type {
   EbayCategorySuggestion,
   GeneratedListing,
   ListingDraft,
+  ListingProductSource,
   ListOnEbayResult,
   VolumePromotionTier,
 } from "@/types/listing-generator";
@@ -61,13 +62,21 @@ export class EbayApiError extends Error {
   readonly status: number;
   readonly rawBody: string;
   readonly url: string;
+  readonly missingField?: string;
 
-  constructor(message: string, status: number, rawBody: string, url: string) {
+  constructor(
+    message: string,
+    status: number,
+    rawBody: string,
+    url: string,
+    missingField?: string,
+  ) {
     super(message);
     this.name = "EbayApiError";
     this.status = status;
     this.rawBody = rawBody;
     this.url = url;
+    this.missingField = missingField;
   }
 }
 
@@ -113,14 +122,32 @@ async function ebayFetch(
   return { response, bodyText };
 }
 
-function parseEbayErrorMessage(bodyText: string, fallback: string): string {
+export function parseEbayErrorDetails(
+  bodyText: string,
+  fallback = "eBay API error",
+): {
+  message: string;
+  missingField?: string;
+  errors?: unknown[];
+} {
   try {
     const data = JSON.parse(bodyText) as {
-      errors?: Array<{ message?: string; longMessage?: string }>;
+      errors?: Array<{
+        message?: string;
+        longMessage?: string;
+        parameters?: Array<{ name?: string; value?: string }>;
+      }>;
     };
-    return data.errors?.[0]?.longMessage ?? data.errors?.[0]?.message ?? fallback;
+    const first = data.errors?.[0];
+    const missingField = first?.parameters?.find((param) => param.name === "2")?.value?.trim();
+    const message = first?.longMessage ?? first?.message ?? fallback;
+    return {
+      message,
+      missingField: missingField || undefined,
+      errors: data.errors,
+    };
   } catch {
-    return bodyText || fallback;
+    return { message: bodyText || fallback };
   }
 }
 
@@ -134,7 +161,14 @@ function parseJsonSafe<T>(bodyText: string, fallback: T): T {
 }
 
 function throwEbayApiError(url: string, response: Response, bodyText: string, fallback: string): never {
-  throw new EbayApiError(parseEbayErrorMessage(bodyText, fallback), response.status, bodyText, url);
+  const details = parseEbayErrorDetails(bodyText, fallback);
+  throw new EbayApiError(
+    details.message,
+    response.status,
+    bodyText,
+    url,
+    details.missingField,
+  );
 }
 
 function mapCondition(condition: string): string {
@@ -158,7 +192,18 @@ function normalizeImageUrls(urls: string[]): string[] {
     .filter(Boolean);
 }
 
-function aspectsFromListing(listing: GeneratedListing): Record<string, string[]> {
+export interface EbayAspectBuildOptions {
+  marketplaceId: EbayMarketplaceId;
+  product?: ListingProductSource;
+  variantDrafts?: ListingDraft["variants"];
+  categoryAspectNames?: string[];
+}
+
+function buildEbayAspects(
+  listing: GeneratedListing,
+  options: EbayAspectBuildOptions,
+): Record<string, string[]> {
+  const { marketplaceId, product, variantDrafts, categoryAspectNames = [] } = options;
   const aspects: Record<string, string[]> = {};
 
   for (const specific of listing.itemSpecifics) {
@@ -168,18 +213,44 @@ function aspectsFromListing(listing: GeneratedListing): Record<string, string[]>
       continue;
     }
     if (nameLower === "condition") continue;
-    aspects[specific.name] = [specific.value];
+
+    const normalizedName = normalizeAspectNameForMarketplace(specific.name, marketplaceId);
+    const values = splitAspectValues(specific.value);
+    if (values.length === 0) continue;
+
+    if (normalizedName === "MPN" && values[0] === MPN_DOES_NOT_APPLY) {
+      aspects.MPN = [MPN_DOES_NOT_APPLY_EBAY];
+      continue;
+    }
+
+    aspects[normalizedName] = values;
   }
 
-  const department =
-    findItemSpecificValue(listing.itemSpecifics, "Department") ??
-    detectDepartmentFromText(listing.seoTitle, listing.descriptionHtml);
-  const sizeType =
-    findItemSpecificValue(listing.itemSpecifics, "Size Type") ??
-    detectSizeTypeFromText(listing.seoTitle, listing.descriptionHtml);
-  const ageGroup =
-    findItemSpecificValue(listing.itemSpecifics, "Age Group") ??
-    detectAgeGroupFromText(listing.seoTitle, listing.descriptionHtml);
+  const colourKey = marketplaceId === "EBAY_GB" ? "Colour" : "Color";
+  if (aspects.Color && colourKey === "Colour") {
+    if (!aspects.Colour) {
+      aspects.Colour = aspects.Color;
+    }
+    delete aspects.Color;
+  } else if (aspects.Colour && colourKey === "Color") {
+    if (!aspects.Color) {
+      aspects.Color = aspects.Colour;
+    }
+    delete aspects.Colour;
+  }
+
+  const required = resolveRequiredEbayAspects({
+    listing,
+    product,
+    variantDrafts,
+    marketplaceId,
+  });
+
+  for (const [name, values] of Object.entries(required)) {
+    if (!aspects[name]?.length) {
+      aspects[name] = values;
+    }
+  }
 
   if (!aspects.Brand) {
     aspects.Brand = [UNBRANDED];
@@ -189,17 +260,8 @@ function aspectsFromListing(listing: GeneratedListing): Record<string, string[]>
   } else if (aspects.MPN[0] === MPN_DOES_NOT_APPLY) {
     aspects.MPN = [MPN_DOES_NOT_APPLY_EBAY];
   }
-  if (!aspects.Department) {
-    aspects.Department = [department];
-  }
-  if (!aspects["Size Type"]) {
-    aspects["Size Type"] = [sizeType];
-  }
-  if (!aspects["Age Group"]) {
-    aspects["Age Group"] = [ageGroup];
-  }
 
-  return aspects;
+  return filterAspectsForCategory(aspects, categoryAspectNames);
 }
 
 function buildVolumePricing(promotions: VolumePromotionTier[]) {
@@ -315,10 +377,11 @@ async function upsertInventoryItem(
   listing: GeneratedListing,
   imageUrls: string[],
   quantity: number,
+  aspectOptions: EbayAspectBuildOptions,
   variantLabel?: string,
   gtin?: string,
 ): Promise<void> {
-  const aspects = aspectsFromListing(listing);
+  const aspects = buildEbayAspects(listing, aspectOptions);
   if (variantLabel) {
     aspects.Variant = [variantLabel];
   }
@@ -362,6 +425,7 @@ async function upsertInventoryItemGroup(
   imageUrls: string[],
   variantSkus: string[],
   variantLabels: string[],
+  aspectOptions: EbayAspectBuildOptions,
 ): Promise<void> {
   const body = {
     inventoryItemGroupKey: groupKey,
@@ -377,7 +441,7 @@ async function upsertInventoryItemGroup(
         },
       ],
     },
-    aspects: aspectsFromListing(listing),
+    aspects: buildEbayAspects(listing, aspectOptions),
   };
 
   const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupKey)}`;
@@ -628,6 +692,13 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
 
   const policyIds = draft.ebayPolicies;
   const categoryId = await resolveCategoryId(token, draft.listing, marketplaceId);
+  const categoryAspectNames = await getItemAspectsForCategory(token, categoryId, marketplaceId);
+  const aspectOptions: EbayAspectBuildOptions = {
+    marketplaceId,
+    product: draft.product,
+    variantDrafts: draft.variants,
+    categoryAspectNames,
+  };
   const selectedDescriptionPhotos = getSelectedDescriptionPhotos(draft.descriptionPhotos);
   const appOrigin = selectedDescriptionPhotos.length > 0 ? getAppOrigin() : "";
   const listing = {
@@ -674,6 +745,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
       listing,
       images,
       quantity,
+      aspectOptions,
       variant?.label,
       variant?.ean,
     );
@@ -717,6 +789,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
         variantListing,
         images,
         quantity,
+        aspectOptions,
         variant.label,
         variant.ean,
       );
@@ -753,6 +826,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
     selectedPhotos,
     variantSkus,
     variantLabels,
+    aspectOptions,
   );
 
   await requireConfirmedLocation(userId);

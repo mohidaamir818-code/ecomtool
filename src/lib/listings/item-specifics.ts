@@ -1,4 +1,8 @@
-import type { GeneratedListingItemSpecific, ListingProductSource } from "@/types/listing-generator";
+import type {
+  GeneratedListing,
+  GeneratedListingItemSpecific,
+  ListingProductSource,
+} from "@/types/listing-generator";
 
 export const EBAY_CONDITION_OPTIONS = [
   "New with tags",
@@ -220,7 +224,7 @@ export function extractVariantAttributes(variants?: ListingProductSource["varian
     const parts = label.split(/[/|,]/).map((part) => part.trim());
     for (const part of parts.length > 0 ? parts : [label]) {
       const sizeMatch = part.match(/size\s*[:\-]?\s*(.+)/i);
-      const colorMatch = part.match(/color\s*[:\-]?\s*(.+)/i);
+      const colorMatch = part.match(/colou?r\s*[:\-]?\s*(.+)/i);
 
       if (sizeMatch?.[1]) sizes.add(sizeMatch[1].trim());
       if (colorMatch?.[1]) colors.add(colorMatch[1].trim());
@@ -237,6 +241,231 @@ export function extractVariantAttributes(variants?: ListingProductSource["varian
     colors: [...colors],
     sizes: [...sizes],
   };
+}
+
+function capitalizeColorWord(word: string): string {
+  if (/^multicolor$/i.test(word) || /^multi$/i.test(word)) return "Multicolor";
+  return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+}
+
+export function detectColorsFromText(title: string, description?: string): string[] {
+  const text = combineProductText(title, description);
+  const found = new Set<string>();
+
+  const labelled = text.matchAll(/colou?r\s*[:\-]?\s*([a-zA-Z][\w\s-]*)/gi);
+  for (const match of labelled) {
+    const value = match[1]?.trim();
+    if (value) found.add(capitalizeColorWord(value.split(/[,/|]/)[0]?.trim() ?? value));
+  }
+
+  for (const token of text.split(/[\s,/|]+/)) {
+    const cleaned = token.replace(/[^\w-]/g, "").trim();
+    if (cleaned && COLOR_WORDS.test(cleaned)) {
+      found.add(capitalizeColorWord(cleaned));
+    }
+  }
+
+  return [...found];
+}
+
+export function splitAspectValues(value: string): string[] {
+  return value
+    .split(/,\s*/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0 && !/^unknown$/i.test(part));
+}
+
+export interface EbayAspectSourceContext {
+  listing: GeneratedListing;
+  product?: ListingProductSource;
+  variantDrafts?: Array<{ label: string }>;
+  marketplaceId: string;
+}
+
+function collectVariantLabels(context: EbayAspectSourceContext): string[] {
+  const labels: string[] = [];
+  for (const variant of context.product?.variants ?? []) {
+    if (variant.label.trim()) labels.push(variant.label.trim());
+  }
+  for (const variant of context.variantDrafts ?? []) {
+    if (variant.label.trim()) labels.push(variant.label.trim());
+  }
+  return labels;
+}
+
+function extractAttributesFromLabels(labels: string[]): { colors: string[]; sizes: string[] } {
+  return extractVariantAttributes(labels.map((label, index) => ({
+    id: String(index),
+    label,
+    price: 0,
+    currency: "GBP",
+    stock: null,
+  })));
+}
+
+function isPlaceholderAspectValue(value: string | undefined): boolean {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return true;
+  if (/^unknown$/i.test(trimmed)) return true;
+  if (trimmed === SEE_DESCRIPTION) return true;
+  return false;
+}
+
+export function resolveColourValues(context: EbayAspectSourceContext): string[] {
+  const { listing, product } = context;
+  const title = product?.title ?? listing.seoTitle;
+  const description = product?.description ?? listing.descriptionHtml;
+  const colours = new Set<string>();
+
+  const fromVariants = extractAttributesFromLabels(collectVariantLabels(context));
+  for (const colour of fromVariants.colors) {
+    colours.add(capitalizeColorWord(colour));
+  }
+
+  const aiColour = findItemSpecificValue(listing.itemSpecifics, "Color")
+    ?? findItemSpecificValue(listing.itemSpecifics, "Colour");
+  if (aiColour && !isPlaceholderAspectValue(aiColour)) {
+    for (const part of splitAspectValues(aiColour)) {
+      colours.add(capitalizeColorWord(part));
+    }
+  }
+
+  for (const colour of detectColorsFromText(title, description)) {
+    colours.add(colour);
+  }
+
+  if (colours.size === 0) {
+    return ["Multicolor"];
+  }
+
+  return [...colours];
+}
+
+export function resolveSizeValues(context: EbayAspectSourceContext): string[] {
+  const { listing, product } = context;
+  const title = product?.title ?? listing.seoTitle;
+  const description = product?.description ?? listing.descriptionHtml;
+  const sizes = new Set<string>();
+
+  const fromVariants = extractAttributesFromLabels(collectVariantLabels(context));
+  for (const size of fromVariants.sizes) {
+    sizes.add(size);
+  }
+
+  const aiSize = findItemSpecificValue(listing.itemSpecifics, "Size");
+  if (aiSize && !isPlaceholderAspectValue(aiSize)) {
+    for (const part of splitAspectValues(aiSize)) {
+      sizes.add(part);
+    }
+  }
+
+  const sizeInText = combineProductText(title, description).match(
+    /size\s*[:\-]?\s*([a-zA-Z0-9][\w\s.-]*)/i,
+  )?.[1];
+  if (sizeInText?.trim()) {
+    sizes.add(sizeInText.trim());
+  }
+
+  if (sizes.size === 0) {
+    return [SEE_DESCRIPTION];
+  }
+
+  return [...sizes];
+}
+
+export function normalizeAspectNameForMarketplace(
+  name: string,
+  marketplaceId: string,
+): string {
+  if (marketplaceId === "EBAY_GB" && name.toLowerCase() === "color") {
+    return "Colour";
+  }
+  return name;
+}
+
+function pickSpecificValue(
+  specifics: GeneratedListingItemSpecific[],
+  names: string[],
+  fallback: string,
+): string {
+  for (const name of names) {
+    const value = findItemSpecificValue(specifics, name);
+    if (value && !isPlaceholderAspectValue(value)) {
+      return value;
+    }
+  }
+  return fallback;
+}
+
+export function resolveRequiredEbayAspects(
+  context: EbayAspectSourceContext,
+): Record<string, string[]> {
+  const { listing, product } = context;
+  const title = product?.title ?? listing.seoTitle;
+  const description = product?.description ?? listing.descriptionHtml;
+  const specifics = listing.itemSpecifics;
+  const dims = parseDimensionsFromText(`${title} ${description ?? ""}`);
+  const colourKey =
+    context.marketplaceId === "EBAY_GB" ? "Colour" : "Color";
+
+  return {
+    Brand: [UNBRANDED],
+    MPN: [MPN_DOES_NOT_APPLY_EBAY],
+    Department: [
+      pickSpecificValue(specifics, ["Department"], detectDepartmentFromText(title, description)),
+    ],
+    [colourKey]: resolveColourValues(context),
+    Size: resolveSizeValues(context),
+    Material: [pickSpecificValue(specifics, ["Material"], SEE_DESCRIPTION)],
+    Pattern: [pickSpecificValue(specifics, ["Pattern"], "Solid")],
+    Occasion: [pickSpecificValue(specifics, ["Occasion"], "Casual")],
+    Season: [pickSpecificValue(specifics, ["Season"], "All Seasons")],
+    Type: [pickSpecificValue(specifics, ["Type", "Product Type"], SEE_DESCRIPTION)],
+    "Item Length": [
+      pickSpecificValue(specifics, ["Item Length", "Length"], dims.length ?? SEE_DESCRIPTION),
+    ],
+    Fit: [pickSpecificValue(specifics, ["Fit"], "Regular")],
+    "Size Type": [
+      pickSpecificValue(specifics, ["Size Type"], detectSizeTypeFromText(title, description)),
+    ],
+    "Age Group": [
+      pickSpecificValue(specifics, ["Age Group"], detectAgeGroupFromText(title, description)),
+    ],
+  };
+}
+
+export function filterAspectsForCategory(
+  aspects: Record<string, string[]>,
+  categoryAspectNames: string[],
+): Record<string, string[]> {
+  if (categoryAspectNames.length === 0) return aspects;
+
+  const allowed = new Set(categoryAspectNames.map((name) => name.toLowerCase()));
+  allowed.add("brand");
+  allowed.add("mpn");
+
+  const aliases: Record<string, string[]> = {
+    color: ["colour"],
+    colour: ["color"],
+  };
+
+  const filtered: Record<string, string[]> = {};
+  for (const [name, values] of Object.entries(aspects)) {
+    const nameLower = name.toLowerCase();
+    if (allowed.has(nameLower)) {
+      filtered[name] = values;
+      continue;
+    }
+    const aliasList = aliases[nameLower] ?? [];
+    if (aliasList.some((alias) => allowed.has(alias))) {
+      filtered[name] = values;
+    }
+  }
+
+  if (!filtered.Brand) filtered.Brand = [UNBRANDED];
+  if (!filtered.MPN) filtered.MPN = [MPN_DOES_NOT_APPLY_EBAY];
+
+  return filtered;
 }
 
 export function parseDimensionsFromText(text: string): {

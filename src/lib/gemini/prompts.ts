@@ -62,6 +62,7 @@ RULES FOR itemSpecifics:
 - Unit: default "Unit"
 - Number of Items: default "1"
 - Color: use variant colors when available (${colors.join(", ") || "infer from product"})
+- For UK listings, Color values must be real color names (Black, White, etc.); use Multicolor if unknown
 - Size: use variant sizes when available (${sizes.join(", ") || "infer from product"})
 - Department: detect from title, description, and variants — use Men's, Women's, Unisex, Boys, or Girls
 - Size Type: Regular unless Plus or Petite is clearly indicated
