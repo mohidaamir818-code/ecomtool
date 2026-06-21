@@ -186,6 +186,7 @@ export interface ListingQualityCheck {
   passed: boolean;
   points: number;
   maxPoints: number;
+  detail?: string;
   tip?: string;
 }
 

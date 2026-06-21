@@ -36,7 +36,9 @@ PRODUCT DATA:
 - Detected sizes: ${sizes.length > 0 ? sizes.join(", ") : "none"}
 
 RULES FOR seoTitle:
-- EXACTLY 80 characters — count carefully and fill all 80 with relevant keywords
+- MUST be EXACTLY 80 characters — count every character before returning JSON
+- If your draft is shorter than 80, pad with relevant product keywords until it reaches exactly 80
+- Never return fewer than 80 or more than 80 characters
 - Start with the most searchable main keyword first
 - Include key feature and condition (New)
 - No brand names — never use Nike, Apple, Samsung, etc.

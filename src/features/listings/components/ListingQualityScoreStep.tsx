@@ -42,13 +42,18 @@ export function ListingQualityScoreStep({ draft }: ListingQualityScoreStepProps)
         <ul className="mt-6 space-y-3">
           {score.checks.map((check) => (
             <li key={check.id} className="flex items-start justify-between gap-3 text-sm">
-              <span className="flex items-center gap-2 text-[#374151]">
-                <span className={check.passed ? "text-emerald-600" : "text-red-500"}>
+              <span className="flex min-w-0 items-start gap-2 text-[#374151]">
+                <span className={`mt-0.5 shrink-0 ${check.passed ? "text-emerald-600" : "text-red-500"}`}>
                   {check.passed ? "✓" : "✗"}
                 </span>
-                {check.label}
+                <span className="min-w-0">
+                  <span className="block">{check.label}</span>
+                  {check.detail ? (
+                    <span className="mt-0.5 block text-xs text-[#9CA3AF]">{check.detail}</span>
+                  ) : null}
+                </span>
               </span>
-              <span className="font-medium text-[#6B7280]">
+              <span className="shrink-0 font-medium text-[#6B7280]">
                 {check.points}/{check.maxPoints}
               </span>
             </li>

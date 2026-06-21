@@ -8,6 +8,7 @@ import { cleanLabel, filterDescriptionImageUrls } from "@/lib/listings/listing-s
 import type { HandlingProductData, HandlingProductVariant } from "@/types/handling";
 
 export const MAX_DESCRIPTION_IMAGES = 20;
+export const MAX_GALLERY_IMAGES = 24;
 const DESCRIPTION_IMAGE_FETCH_TIMEOUT_MS = 8000;
 
 const MTOP_APP_KEY = "12574478";
@@ -1147,6 +1148,80 @@ function excludeGalleryImages(descriptionImages: string[], galleryImages: string
   return descriptionImages.filter((url) => !gallerySet.has(url));
 }
 
+function collectSkuGalleryImages(skus: Array<Record<string, unknown>>): string[] {
+  const urls: string[] = [];
+  for (const sku of skus) {
+    const properties = sku.ae_sku_property_dtos as Array<Record<string, unknown>> | undefined;
+    const skuImage = extractSkuImage(properties);
+    if (skuImage) urls.push(skuImage);
+  }
+  return dedupeUrls(urls);
+}
+
+export async function fetchGalleryImagesFromPage(productUrl: string): Promise<string[]> {
+  try {
+    const response = await fetch(productUrl, {
+      headers: BROWSER_HEADERS,
+      cache: "no-store",
+    });
+
+    if (!response.ok) return [];
+
+    const html = await response.text();
+    const urls: string[] = [];
+
+    const pathListMatch = html.match(/"imagePathList"\s*:\s*(\[[^\]]+\])/);
+    if (pathListMatch?.[1]) {
+      try {
+        const parsed = JSON.parse(pathListMatch[1]) as unknown[];
+        for (const entry of parsed) {
+          if (typeof entry === "string" && entry.trim()) urls.push(entry.trim());
+        }
+      } catch {
+        // ignore malformed JSON
+      }
+    }
+
+    const mainImagesMatch = html.match(/"mainImages"\s*:\s*(\[[\s\S]*?\])\s*[,}]/);
+    if (mainImagesMatch?.[1]) {
+      try {
+        const parsed = JSON.parse(mainImagesMatch[1]) as Array<{ imageUrl?: string }>;
+        for (const entry of parsed) {
+          if (entry.imageUrl?.trim()) urls.push(entry.imageUrl.trim());
+        }
+      } catch {
+        // ignore malformed JSON
+      }
+    }
+
+    const imageUrlPattern = /"imageUrl"\s*:\s*"(https:[^"]+)"/g;
+    for (const match of html.matchAll(imageUrlPattern)) {
+      if (match[1]) urls.push(match[1]);
+    }
+
+    return dedupeUrls(urls);
+  } catch {
+    return [];
+  }
+}
+
+async function enrichGalleryImages(product: HandlingProductData): Promise<HandlingProductData> {
+  const existing = product.images?.filter(Boolean) ?? (product.imageUrl ? [product.imageUrl] : []);
+  const pageImages = await fetchGalleryImagesFromPage(product.productUrl);
+  const variantImages =
+    product.variants
+      ?.map((variant) => variant.imageUrl)
+      .filter((url): url is string => Boolean(url)) ?? [];
+
+  const images = dedupeUrls([...existing, ...pageImages, ...variantImages]).slice(0, MAX_GALLERY_IMAGES);
+
+  return {
+    ...product,
+    images,
+    imageUrl: images[0] ?? product.imageUrl ?? null,
+  };
+}
+
 async function enrichDescriptionImages(product: HandlingProductData): Promise<HandlingProductData> {
   const gallery = product.images?.filter(Boolean) ?? (product.imageUrl ? [product.imageUrl] : []);
   const pageHtml = await fetchDescriptionHtmlFromPage(product.productUrl);
@@ -1222,7 +1297,10 @@ async function parseDsProductPayload(
   if (!defaultVariant) return null;
 
   const multimedia = result.ae_multimedia_info_dto as Record<string, unknown> | undefined;
-  const parsedImages = parseMultimediaImages(multimedia);
+  const parsedImages = dedupeUrls([
+    ...parseMultimediaImages(multimedia),
+    ...collectSkuGalleryImages(skus),
+  ]).slice(0, MAX_GALLERY_IMAGES);
   const imageUrl = parsedImages[0] ?? null;
   const descriptionImages = excludeGalleryImages(
     await collectDescriptionImagesFromDsResult(result),
@@ -1327,6 +1405,7 @@ async function callAffiliateProductApi(productId: string): Promise<HandlingProdu
       (item.product_main_image_url ? String(item.product_main_image_url) : null) ??
       imageUrls?.string?.[0] ??
       null,
+    images: dedupeUrls(imageUrls?.string ?? []).slice(0, MAX_GALLERY_IMAGES),
     price,
     currency: String(item.target_sale_price_currency ?? "GBP"),
     stock: null,
@@ -1456,10 +1535,12 @@ export async function fetchAliExpressProduct(url: string): Promise<HandlingProdu
       resolvedUrl,
     ]);
 
-    const enriched = await enrichDescriptionImages({
+    const withGallery = await enrichGalleryImages({
       ...openPlatformProduct,
       productUrl: canonicalUrl,
     });
+
+    const enriched = await enrichDescriptionImages(withGallery);
 
     console.log("[AliExpress Fetch Debug] Final source selected", {
       source: "open-platform",
@@ -1468,6 +1549,7 @@ export async function fetchAliExpressProduct(url: string): Promise<HandlingProdu
       finalCurrency: enriched.currency,
       finalStock: enriched.stock,
       finalOrders: enriched.orders,
+      galleryImagesCount: enriched.images?.length ?? 0,
       descriptionImagesCount: enriched.descriptionImages?.length ?? 0,
       inputUrl: trimmedUrl,
     });

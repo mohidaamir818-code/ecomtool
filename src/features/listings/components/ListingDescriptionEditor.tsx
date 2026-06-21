@@ -26,7 +26,8 @@ const QUILL_MODULES = {
 };
 
 const previewClassName = [
-  "min-h-[280px] rounded-lg border border-[#E5E5E5] bg-white p-5",
+  "min-h-[280px] max-w-full overflow-hidden rounded-lg border border-[#E5E5E5] bg-white p-5",
+  "break-words [overflow-wrap:anywhere]",
   "text-[15px] leading-relaxed text-[#191919]",
   "[&_h2]:mt-5 [&_h2]:mb-3 [&_h2]:text-xl [&_h2]:font-bold [&_h2]:leading-snug [&_h2]:text-[#191919]",
   "[&_h2:first-child]:mt-0",
@@ -40,10 +41,10 @@ const previewClassName = [
 ].join(" ");
 
 const quillEditorClassName = [
-  "listing-description-quill rounded-lg border border-[#E5E5E5] bg-white overflow-hidden",
+  "listing-description-quill max-w-full overflow-hidden rounded-lg border border-[#E5E5E5] bg-white",
   "[&_.ql-toolbar]:border-0 [&_.ql-toolbar]:border-b [&_.ql-toolbar]:border-[#E5E5E5] [&_.ql-toolbar]:bg-[#F7F7F7]",
-  "[&_.ql-container]:border-0 [&_.ql-container]:min-h-[240px] [&_.ql-editor]:min-h-[240px]",
-  "[&_.ql-editor]:text-[15px] [&_.ql-editor]:leading-relaxed [&_.ql-editor]:text-[#191919]",
+  "[&_.ql-container]:overflow-hidden [&_.ql-container]:border-0 [&_.ql-container]:min-h-[240px] [&_.ql-editor]:min-h-[240px]",
+  "[&_.ql-editor]:break-words [&_.ql-editor]:overflow-wrap-anywhere [&_.ql-editor]:text-[15px] [&_.ql-editor]:leading-relaxed [&_.ql-editor]:text-[#191919]",
   "[&_.ql-editor_h2]:text-xl [&_.ql-editor_h2]:font-bold",
 ].join(" ");
 

@@ -77,7 +77,7 @@ export async function generateEbayListing(
       : fallbackPrice;
 
   const sanitized = sanitizeListingContent({
-    seoTitle: padTitleTo80(raw.seoTitle ?? product.title, product.title),
+    seoTitle: raw.seoTitle ?? product.title,
     descriptionHtml: raw.descriptionHtml?.trim() || `<p>${product.description ?? product.title}</p>`,
     itemSpecifics,
   });
@@ -85,7 +85,7 @@ export async function generateEbayListing(
   itemSpecifics = sanitized.itemSpecifics;
 
   return {
-    seoTitle: sanitized.seoTitle,
+    seoTitle: padTitleTo80(sanitized.seoTitle, product.title),
     descriptionHtml: sanitized.descriptionHtml,
     suggestedPrice,
     currency: raw.currency?.trim() || currency,

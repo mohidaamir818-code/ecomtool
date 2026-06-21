@@ -2,50 +2,80 @@ import type { ListingDraft, ListingQualityCheck, ListingQualityScore } from "@/t
 import { countFilledItemSpecifics } from "@/lib/listings/item-specifics";
 import { getEnabledPromotions, getSelectedPhotos } from "@/features/listings/lib/draft-utils";
 
-function countDescriptionWords(html: string): number {
-  const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-  return text ? text.split(" ").length : 0;
+function countDescriptionPlainTextLength(html: string): number {
+  return html.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim().length;
+}
+
+function scoreTitleLength(len: number): { points: number; passed: boolean } {
+  if (len >= 75) return { points: 20, passed: true };
+  if (len >= 60) return { points: 15, passed: false };
+  if (len >= 40) return { points: 10, passed: false };
+  return { points: 5, passed: false };
+}
+
+function scorePhotoCount(count: number): { points: number; passed: boolean } {
+  if (count >= 8) return { points: 20, passed: true };
+  if (count >= 5) return { points: 15, passed: false };
+  if (count >= 3) return { points: 10, passed: false };
+  if (count >= 1) return { points: 5, passed: false };
+  return { points: 0, passed: false };
+}
+
+function scoreDescriptionLength(len: number): { points: number; passed: boolean } {
+  if (len >= 500) return { points: 15, passed: true };
+  if (len >= 300) return { points: 10, passed: false };
+  if (len >= 100) return { points: 5, passed: false };
+  return { points: 0, passed: false };
 }
 
 export function computeListingQualityScore(draft: ListingDraft): ListingQualityScore {
   const checks: ListingQualityCheck[] = [];
   const tips: string[] = [];
 
-  const titleLen = draft.listing.seoTitle.length;
-  const titlePassed = titleLen === 80;
+  const titleLen = draft.listing.seoTitle.trim().length;
+  const titleScore = scoreTitleLength(titleLen);
   checks.push({
     id: "title",
     label: "Title length",
-    passed: titlePassed,
-    points: titlePassed ? 20 : titleLen >= 60 ? 12 : 0,
+    passed: titleScore.passed,
+    points: titleScore.points,
     maxPoints: 20,
-    tip: titlePassed ? undefined : "Use all 80 characters with keywords at the start.",
+    detail: `${titleLen}/80 characters`,
+    tip: titleScore.passed ? undefined : "Expand your title to 75–80 characters with keywords at the start.",
   });
-  if (!titlePassed) tips.push("Expand your title to exactly 80 characters for maximum eBay visibility.");
+  if (!titleScore.passed) {
+    tips.push("Expand your title to 75–80 characters for maximum eBay visibility.");
+  }
 
   const photoCount = getSelectedPhotos(draft).length;
-  const photosPassed = photoCount >= 8;
+  const photoScore = scorePhotoCount(photoCount);
   checks.push({
     id: "photos",
     label: "Photos",
-    passed: photosPassed,
-    points: photoCount >= 8 ? 20 : photoCount >= 4 ? 12 : photoCount >= 1 ? 6 : 0,
+    passed: photoScore.passed,
+    points: photoScore.points,
     maxPoints: 20,
-    tip: photosPassed ? undefined : "Select at least 8 photos for better conversion.",
+    detail: photoCount >= 8 ? `${photoCount} photos` : `${photoCount} photos (need 8+)`,
+    tip: photoScore.passed ? undefined : "Select at least 8 photos for better conversion.",
   });
-  if (!photosPassed) tips.push("Add more product photos — listings with 8+ images perform better.");
+  if (!photoScore.passed) {
+    tips.push("Add more product photos — listings with 8+ images perform better.");
+  }
 
-  const wordCount = countDescriptionWords(draft.listing.descriptionHtml);
-  const descPassed = wordCount >= 150;
+  const descLen = countDescriptionPlainTextLength(draft.listing.descriptionHtml);
+  const descScore = scoreDescriptionLength(descLen);
   checks.push({
     id: "description",
     label: "Description length",
-    passed: descPassed,
-    points: descPassed ? 15 : wordCount >= 80 ? 8 : wordCount >= 40 ? 4 : 0,
+    passed: descScore.passed,
+    points: descScore.points,
     maxPoints: 15,
-    tip: descPassed ? undefined : "Write at least 150 words with bullet features and a guarantee.",
+    detail: descLen >= 500 ? `${descLen} characters` : `${descLen} characters (need 500+)`,
+    tip: descScore.passed ? undefined : "Write at least 500 characters with bullet features and a guarantee.",
   });
-  if (!descPassed) tips.push("Expand your description with features, compatibility, and what's in the box.");
+  if (!descScore.passed) {
+    tips.push("Expand your description with features, compatibility, and what's in the box.");
+  }
 
   const specificsCount = countFilledItemSpecifics(draft.listing.itemSpecifics);
   const specificsPassed = specificsCount >= 10;
