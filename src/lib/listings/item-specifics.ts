@@ -293,8 +293,17 @@ function collectVariantLabels(context: EbayAspectSourceContext): string[] {
   return labels;
 }
 
-const VARIANT_SIZE_PART =
-  /^(XS|S|M|L|XL|2XL|3XL|4XL|XXL|XXXL|\d+\s*(pcs|cm|mm|inch|in|kg|g)?)$/i;
+const SIZE_PATTERNS = [
+  /^(XXS|XS|S|M|L|XL|2XL|3XL|4XL|5XL|XXL|XXXL|XXXXL)$/i,
+  /^\d+$/,
+  /^\d+\s*-\s*\d+$/,
+  /^(small|medium|large|extra\s*large)$/i,
+  /^(one size|free size|universal)$/i,
+  /^\d+(cm|mm|inch|kg|g|oz|ml|l)$/i,
+  /^(EU|UK|US)\s*\d+$/i,
+] as const;
+
+const PROTECTED_ASPECT_KEYS = new Set(["Colour", "Color", "Size"]);
 
 function splitVariantLabelParts(label: string): string[] {
   return label
@@ -306,15 +315,13 @@ function splitVariantLabelParts(label: string): string[] {
 function isVariantSizePart(part: string): boolean {
   const trimmed = part.trim();
   if (!trimmed) return false;
-  if (/^\d+$/.test(trimmed)) return true;
-  return VARIANT_SIZE_PART.test(trimmed);
+  return SIZE_PATTERNS.some((pattern) => pattern.test(trimmed));
 }
 
 function isVariantColourPart(part: string): boolean {
   const trimmed = part.trim();
   if (!trimmed) return false;
-  if (/^\d+$/.test(trimmed)) return false;
-  if (/^\d/.test(trimmed) && isVariantSizePart(trimmed)) return false;
+  if (trimmed.length >= 30) return false;
   return !isVariantSizePart(trimmed);
 }
 
@@ -323,6 +330,13 @@ export function extractColourForLabel(label: string): string | null {
   const colourPart = parts.find(isVariantColourPart);
   if (!colourPart) return null;
   return capitalizeColorWord(colourPart);
+}
+
+export function extractSizeForLabel(label: string): string | null {
+  const parts = splitVariantLabelParts(label);
+  const sizePart = parts.find(isVariantSizePart);
+  if (!sizePart) return null;
+  return sizePart;
 }
 
 export function extractColoursAndSizesFromLabels(labels: string[]): {
@@ -341,12 +355,9 @@ export function extractColoursAndSizesFromLabels(labels: string[]): {
     for (const part of parts) {
       if (isVariantSizePart(part)) {
         sizes.add(part);
+      } else if (part.length > 0 && part.length < 30) {
+        colors.add(capitalizeColorWord(part));
       }
-    }
-
-    const colourPart = parts.find(isVariantColourPart);
-    if (colourPart) {
-      colors.add(capitalizeColorWord(colourPart));
     }
   }
 
@@ -401,6 +412,21 @@ export function getSafeAspectDefault(fieldName: string): string[] {
   }
 
   return [SEE_DESCRIPTION];
+}
+
+export function buildAspectSafeDefaults(extracted: {
+  colors: string[];
+  sizes: string[];
+}): Record<string, string[]> {
+  const colours = extracted.colors.length > 0 ? extracted.colors : ["Multicolor"];
+  const sizes = extracted.sizes.length > 0 ? extracted.sizes : ["One Size"];
+
+  return {
+    ...EBAY_ASPECT_SAFE_DEFAULTS,
+    Colour: colours,
+    Color: colours,
+    Size: sizes,
+  };
 }
 
 function isPlaceholderAspectValue(value: string | undefined): boolean {
@@ -614,6 +640,7 @@ export function aspectsFromListingSpecifics(
       continue;
     }
     if (nameLower === "condition") continue;
+    if (nameLower === "color" || nameLower === "colour" || nameLower === "size") continue;
 
     const normalizedName = normalizeAspectNameForMarketplace(specific.name, marketplaceId);
     const values = splitAspectValues(specific.value);
@@ -647,6 +674,7 @@ export function mergeEbayAspects(
   const merged: Record<string, string[]> = { ...defaults };
 
   for (const [name, values] of Object.entries(aiAspects)) {
+    if (PROTECTED_ASPECT_KEYS.has(name)) continue;
     const meaningful = values.filter((value) => !isPlaceholderAspectValue(value));
     if (meaningful.length > 0) {
       merged[name] = meaningful;

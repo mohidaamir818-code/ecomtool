@@ -10,9 +10,12 @@ import {
 } from "@/lib/listings/internal-sku";
 import {
   aspectsFromListingSpecifics,
+  buildAspectSafeDefaults,
   buildDefaultEbayUkAspects,
   enforceProtectedEbayAspects,
   extractColourForLabel,
+  extractColoursAndSizesFromLabels,
+  extractSizeForLabel,
   filterAspectsForCategory,
   getSafeAspectDefault,
   mergeEbayAspects,
@@ -39,7 +42,7 @@ import { DEFAULT_PROMOTIONS } from "@/types/listing-generator";
 
 const EBAY_API_BASE = "https://api.ebay.com";
 const MAX_PHOTOS = 24;
-const MAX_ASPECT_RETRIES = 3;
+const MAX_ASPECT_RETRIES = 5;
 
 function taxonomyHeaders(token: string, marketplaceId: EbayMarketplaceId): HeadersInit {
   const { acceptLanguage } = resolveMarketplaceConfig(marketplaceId);
@@ -201,6 +204,7 @@ export function extractMissingAspectField(bodyText: string): string | null {
 function patchMissingAspectOverride(
   aspectOptions: EbayAspectBuildOptions,
   missingField: string,
+  attempt: number,
 ): void {
   if (!aspectOptions.aspectOverrides) {
     aspectOptions.aspectOverrides = {};
@@ -209,9 +213,16 @@ function patchMissingAspectOverride(
     aspectOptions.marketplaceId === "EBAY_GB"
       ? normalizeAspectNameForMarketplace(missingField, aspectOptions.marketplaceId)
       : missingField;
-  const safeValue = getSafeAspectDefault(fieldKey);
+
+  const extracted = aspectOptions.extractedAspects;
+  const safeDefaults = extracted
+    ? buildAspectSafeDefaults({ colors: extracted.colours, sizes: extracted.sizes })
+    : null;
+  const safeValue =
+    safeDefaults?.[fieldKey] ?? getSafeAspectDefault(fieldKey);
+
   aspectOptions.aspectOverrides[fieldKey] = safeValue;
-  console.log(`Auto-fixing missing field: ${fieldKey}`, safeValue);
+  console.log(`Auto-retry ${attempt}: fixing ${fieldKey}`, safeValue);
 }
 
 async function executeWithMissingAspectRetry(
@@ -229,7 +240,7 @@ async function executeWithMissingAspectRetry(
     if (attempts < MAX_ASPECT_RETRIES) {
       const missingField = extractMissingAspectField(bodyText);
       if (missingField) {
-        patchMissingAspectOverride(aspectOptions, missingField);
+        patchMissingAspectOverride(aspectOptions, missingField, attempts + 1);
         attempts++;
         continue;
       }
@@ -260,7 +271,7 @@ async function executePublishWithAspectRetry(
       const missingField = extractMissingAspectField(bodyText);
       if (missingField) {
         console.log(`[eBay ${label}] Missing aspect "${missingField}", re-upserting and retrying`);
-        patchMissingAspectOverride(aspectOptions, missingField);
+        patchMissingAspectOverride(aspectOptions, missingField, attempts + 1);
         await reupsertInventory();
         attempts++;
         continue;
@@ -318,6 +329,7 @@ export interface EbayAspectBuildOptions {
   variantDrafts?: ListingDraft["variants"];
   categoryAspectNames?: string[];
   aspectOverrides?: Record<string, string[]>;
+  extractedAspects?: { colours: string[]; sizes: string[] };
 }
 
 export function buildEbayAspects(
@@ -346,6 +358,8 @@ export function buildEbayAspects(
     const aiAspects = aspectsFromListingSpecifics(listing, marketplaceId);
     aspects = mergeEbayAspects(defaults, aiAspects, aspectOverrides);
     aspects = enforceProtectedEbayAspects(aspects, context);
+    console.log("=== ASPECTS BEING SENT ===");
+    console.log(JSON.stringify(aspects, null, 2));
     return aspects;
   }
 
@@ -353,7 +367,10 @@ export function buildEbayAspects(
   const aiAspects = aspectsFromListingSpecifics(listing, marketplaceId);
   aspects = mergeEbayAspects(defaults, aiAspects, aspectOverrides);
   aspects = enforceProtectedEbayAspects(aspects, context);
-  return filterAspectsForCategory(aspects, categoryAspectNames);
+  aspects = filterAspectsForCategory(aspects, categoryAspectNames);
+  console.log("=== ASPECTS BEING SENT ===");
+  console.log(JSON.stringify(aspects, null, 2));
+  return aspects;
 }
 
 function buildVolumePricing(promotions: VolumePromotionTier[]) {
@@ -483,8 +500,12 @@ async function upsertInventoryItem(
         aspects.Variant = [variantLabel];
         const colourKey = marketplaceId === "EBAY_GB" ? "Colour" : "Color";
         const variantColour = extractColourForLabel(variantLabel);
+        const variantSize = extractSizeForLabel(variantLabel);
         if (variantColour) {
           aspects[colourKey] = [variantColour];
+        }
+        if (variantSize) {
+          aspects.Size = [variantSize];
         }
       }
       if (gtin?.trim()) {
@@ -805,12 +826,16 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
   const policyIds = draft.ebayPolicies;
   const categoryId = await resolveCategoryId(token, draft.listing, marketplaceId);
   const categoryAspectNames = await getItemAspectsForCategory(token, categoryId, marketplaceId);
+  const { colors, sizes } = extractColoursAndSizesFromLabels(
+    draft.variants.map((variant) => variant.label),
+  );
   const aspectOptions: EbayAspectBuildOptions = {
     marketplaceId,
     product: draft.product,
     variantDrafts: draft.variants,
     categoryAspectNames,
     aspectOverrides: {},
+    extractedAspects: { colours: colors, sizes },
   };
   const selectedDescriptionPhotos = getSelectedDescriptionPhotos(draft.descriptionPhotos);
   const appOrigin = selectedDescriptionPhotos.length > 0 ? getAppOrigin() : "";
