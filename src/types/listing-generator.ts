@@ -62,6 +62,18 @@ export interface EbayConnectionStatus {
   connected: boolean;
   ebayUsername: string | null;
   accessTokenExpiresAt: string | null;
+  addressConfirmed?: boolean;
+}
+
+export interface EbaySellerInventoryLocation {
+  sellerId: string;
+  city: string;
+  postalCode: string;
+  country: string;
+  merchantLocationKey: string;
+  addressConfirmed: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ListingVariantDraft {

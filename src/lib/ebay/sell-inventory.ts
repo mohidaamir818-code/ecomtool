@@ -2,6 +2,7 @@ import "server-only";
 
 import { buildDescriptionHtmlWithImages, getSelectedDescriptionPhotos } from "@/features/listings/lib/draft-utils";
 import { getAppOrigin } from "@/lib/env";
+import { requireConfirmedLocation } from "@/lib/ebay/inventory-location";
 import {
   assertUniqueVariantSkus,
   resolveGroupSkuKey,
@@ -391,7 +392,12 @@ function buildOfferBody(
   promotions: VolumePromotionTier[],
   policyIds: EbayBusinessPolicies,
   marketplaceId: EbayMarketplaceId,
-  options: { sku?: string; inventoryItemGroupKey?: string; priceOverride?: number },
+  options: {
+    sku?: string;
+    inventoryItemGroupKey?: string;
+    priceOverride?: number;
+    merchantLocationKey: string;
+  },
 ): Record<string, unknown> {
   const config = resolveMarketplaceConfig(marketplaceId);
   const { fulfillmentPolicyId, paymentPolicyId, returnPolicyId } = policyIds;
@@ -421,6 +427,7 @@ function buildOfferBody(
     listingDescription: listing.descriptionHtml,
     availableQuantity: quantity,
     categoryId,
+    merchantLocationKey: options.merchantLocationKey,
     listingPolicies: {
       fulfillmentPolicyId,
       paymentPolicyId,
@@ -466,7 +473,12 @@ async function createOffer(
   promotions: VolumePromotionTier[],
   policyIds: EbayBusinessPolicies,
   marketplaceId: EbayMarketplaceId,
-  options: { sku?: string; inventoryItemGroupKey?: string; priceOverride?: number },
+  options: {
+    sku?: string;
+    inventoryItemGroupKey?: string;
+    priceOverride?: number;
+    merchantLocationKey: string;
+  },
 ): Promise<string> {
   const body = buildOfferBody(
     listing,
@@ -561,6 +573,8 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
 
   const marketplaceId = await getSellerMarketplaceId(userId);
   const marketplaceConfig = resolveMarketplaceConfig(marketplaceId);
+  const sellerLocation = await requireConfirmedLocation(userId);
+  const merchantLocationKey = sellerLocation.merchantLocationKey;
 
   if (draft.listing.brand !== "Unbranded") {
     throw new Error("Brand must remain Unbranded for this listing.");
@@ -638,8 +652,9 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
       draft.promotions,
       policyIds,
       marketplaceId,
-      { sku },
+      { sku, merchantLocationKey },
     );
+    await requireConfirmedLocation(userId);
     const published = await publishOffer(token, marketplaceId, offerId);
 
     return {
@@ -685,6 +700,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
           sku,
           inventoryItemGroupKey: groupKey,
           priceOverride: variant.price,
+          merchantLocationKey,
         },
       );
 
@@ -706,6 +722,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
     variantLabels,
   );
 
+  await requireConfirmedLocation(userId);
   const published = await publishOfferByGroup(token, groupKey, marketplaceId);
 
   return {

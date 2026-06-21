@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { EbayApiError, listDraftOnEbay } from "@/lib/ebay/sell-inventory";
+import { requireConfirmedLocation } from "@/lib/ebay/inventory-location";
 import { assertUniqueVariantSkus, resolveVariantSkuForEbay } from "@/lib/listings/internal-sku";
 import { logUserApiRequest } from "@/lib/requests/tracker";
 import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
@@ -72,6 +73,16 @@ export async function POST(request: NextRequest) {
 
     const accessDenied = await requireActiveUser(userId);
     if (accessDenied) return accessDenied;
+
+    try {
+      await requireConfirmedLocation(userId);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Warehouse address is not set up. Enter your eBay registration address before listing.";
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
 
     const result = await listDraftOnEbay(userId, body.draft);
 

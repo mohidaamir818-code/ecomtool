@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getEbayConnectionStatus } from "@/lib/ebay/oauth-user";
+import { getSellerInventoryLocation } from "@/lib/ebay/seller-inventory-location-db";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 
 export async function GET(request: NextRequest) {
@@ -22,7 +23,12 @@ export async function GET(request: NextRequest) {
     }
 
     const status = await getEbayConnectionStatus(userId);
-    return NextResponse.json({ success: true, ...status });
+    const location = await getSellerInventoryLocation(userId);
+    return NextResponse.json({
+      success: true,
+      ...status,
+      addressConfirmed: Boolean(location?.addressConfirmed),
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load eBay status.";
     return NextResponse.json({ error: message }, { status: 500 });

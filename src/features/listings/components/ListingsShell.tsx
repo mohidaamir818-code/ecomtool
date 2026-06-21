@@ -9,6 +9,7 @@ import { draftNeedsSkuBackfill } from "@/lib/listings/internal-sku";
 import { fetchSellerPreferences, persistSellerPreferences } from "@/features/listings/lib/seller-preferences-client";
 import { sellerPreferencesToPromotions, promotionsToSellerPreferences } from "@/lib/listings/seller-preferences-mappers";
 import { AiListingGenerator } from "./AiListingGenerator";
+import { EbayAddressSetupForm } from "./EbayAddressSetupForm";
 import { EbayConnect } from "./EbayConnect";
 import { EbayConnectedBanner } from "./EbayConnectedBanner";
 import { EbayStoreConnectGate } from "./EbayStoreConnectGate";
@@ -66,6 +67,7 @@ export function ListingsShell() {
     connected: false,
     ebayUsername: null,
     accessTokenExpiresAt: null,
+    addressConfirmed: false,
   });
   const [ebayStatusLoading, setEbayStatusLoading] = useState(true);
   const [showEbayConnectedToast, setShowEbayConnectedToast] = useState(false);
@@ -95,6 +97,7 @@ export function ListingsShell() {
           connected: Boolean(data.connected),
           ebayUsername: data.ebayUsername ?? null,
           accessTokenExpiresAt: data.accessTokenExpiresAt ?? null,
+          addressConfirmed: Boolean(data.addressConfirmed),
         };
         setEbayStatus((current) => {
           if (oauthJustSucceeded.current && !nextStatus.connected) {
@@ -550,6 +553,11 @@ export function ListingsShell() {
     !ebayStatus.connected &&
     !wizardStarted &&
     !resumeOffer;
+  const showAddressGate =
+    !ebayStatusLoading &&
+    ebayStatus.connected &&
+    !ebayStatus.addressConfirmed &&
+    Boolean(userId);
 
   function handleEbayDisconnected() {
     oauthJustSucceeded.current = false;
@@ -557,6 +565,7 @@ export function ListingsShell() {
       connected: false,
       ebayUsername: null,
       accessTokenExpiresAt: null,
+      addressConfirmed: false,
     });
   }
 
@@ -607,13 +616,30 @@ export function ListingsShell() {
           </div>
         ) : showConnectGate && userId ? (
           <EbayStoreConnectGate userId={userId} errorMessage={isError ? notice : undefined} />
+        ) : showAddressGate ? (
+          <>
+            <EbayConnectedBanner
+              userId={userId!}
+              ebayUsername={ebayStatus.ebayUsername}
+              addressConfirmed={false}
+              onDisconnected={handleEbayDisconnected}
+              onAddressUpdated={() => void loadEbayStatus()}
+            />
+            <EbayAddressSetupForm
+              userId={userId!}
+              mode="setup"
+              onComplete={() => void loadEbayStatus()}
+            />
+          </>
         ) : (
           <>
             {ebayStatus.connected && userId ? (
               <EbayConnectedBanner
                 userId={userId}
                 ebayUsername={ebayStatus.ebayUsername}
+                addressConfirmed={ebayStatus.addressConfirmed}
                 onDisconnected={handleEbayDisconnected}
+                onAddressUpdated={() => void loadEbayStatus()}
               />
             ) : null}
 
@@ -725,6 +751,7 @@ export function ListingsShell() {
                 userId={userId}
                 draft={draft}
                 disabled={isBlocked}
+                addressConfirmed={ebayStatus.addressConfirmed}
                 onListed={setListedUrl}
               />
             </>

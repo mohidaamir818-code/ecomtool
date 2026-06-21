@@ -12,6 +12,7 @@ interface ListingConfirmStepProps {
   userId: string;
   draft: ListingDraft;
   disabled?: boolean;
+  addressConfirmed?: boolean;
   onListed: (listingUrl: string | null) => void;
 }
 
@@ -19,12 +20,14 @@ export function ListingConfirmStep({
   userId,
   draft,
   disabled = false,
+  addressConfirmed = false,
   onListed,
 }: ListingConfirmStepProps) {
   const [status, setStatus] = useState<EbayConnectionStatus>({
     connected: false,
     ebayUsername: null,
     accessTokenExpiresAt: null,
+    addressConfirmed: false,
   });
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [listingLoading, setListingLoading] = useState(false);
@@ -42,6 +45,7 @@ export function ListingConfirmStep({
           connected: Boolean(data.connected),
           ebayUsername: data.ebayUsername ?? null,
           accessTokenExpiresAt: data.accessTokenExpiresAt ?? null,
+          addressConfirmed: Boolean(data.addressConfirmed),
         });
       }
     } finally {
@@ -102,6 +106,13 @@ export function ListingConfirmStep({
 
   const selectedPhotos = getSelectedPhotos(draft).length;
   const dealsSummary = summarizeDeals(draft.promotions);
+
+  const canList =
+    status.connected &&
+    (addressConfirmed || status.addressConfirmed) &&
+    !disabled &&
+    !listingLoading &&
+    !listingUrl;
 
   return (
     <div className="space-y-6">
@@ -191,12 +202,18 @@ export function ListingConfirmStep({
 
       <button
         type="button"
-        disabled={disabled || !status.connected || listingLoading || Boolean(listingUrl)}
+        disabled={!canList}
         onClick={() => void handleListOnEbay()}
         className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {listingLoading ? "Listing on eBay..." : "List on eBay"}
       </button>
+
+      {!addressConfirmed && !status.addressConfirmed && status.connected ? (
+        <p className="text-sm text-amber-700">
+          Complete warehouse address setup before listing.
+        </p>
+      ) : null}
 
       {message ? (
         <p
