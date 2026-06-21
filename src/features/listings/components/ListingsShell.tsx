@@ -746,6 +746,7 @@ export function ListingsShell() {
             onBack={handleBack}
             onNext={() => void handleNext()}
             nextDisabled={busy || (currentStep === 3 && generateLoading)}
+            hideNext={currentStep === 1 && Boolean(vero && !vero.safe)}
           />
         ) : null}
           </>
@@ -753,7 +754,13 @@ export function ListingsShell() {
       </div>
 
       {showVeroModal && vero && !vero.safe ? (
-        <VeroBlockModal result={vero} onClose={() => setShowVeroModal(false)} />
+        <VeroBlockModal
+          result={vero}
+          onStartNew={() => {
+            setShowVeroModal(false);
+            resetWizard();
+          }}
+        />
       ) : null}
 
       {showSavedToast ? (

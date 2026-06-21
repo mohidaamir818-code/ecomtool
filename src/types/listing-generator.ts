@@ -53,6 +53,8 @@ export interface VeroCheckResult {
   hasRestrictedWords: boolean;
   warnings: string[];
   summary: string;
+  brandFound?: string | null;
+  blockType?: "branded_text" | "brand_logo_image" | "restricted_words" | "banned_category";
 }
 
 export interface EbayConnectionStatus {

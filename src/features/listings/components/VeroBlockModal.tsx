@@ -4,10 +4,10 @@ import type { VeroCheckResult } from "@/types/listing-generator";
 
 interface VeroBlockModalProps {
   result: VeroCheckResult;
-  onClose: () => void;
+  onStartNew: () => void;
 }
 
-export function VeroBlockModal({ result, onClose }: VeroBlockModalProps) {
+export function VeroBlockModal({ result, onStartNew }: VeroBlockModalProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-lg rounded-2xl border border-red-200 bg-white p-6 shadow-xl">
@@ -16,14 +16,8 @@ export function VeroBlockModal({ result, onClose }: VeroBlockModalProps) {
             !
           </span>
           <div>
-            <h2 className="text-lg font-bold text-red-700">Do not list this product</h2>
-            <p className="mt-2 text-sm text-red-700">
-              This product may be counterfeit — Nike, Apple, and other branded items are high risk.
-            </p>
-            <p className="mt-2 text-sm font-medium text-red-800">
-              Listing this may get your eBay account banned.
-            </p>
-            <p className="mt-3 text-sm text-[#374151]">{result.summary}</p>
+            <h2 className="text-lg font-bold text-red-700">VeRO violation — listing blocked</h2>
+            <p className="mt-3 whitespace-pre-line text-sm text-red-800">{result.summary}</p>
             {result.warnings.length > 0 ? (
               <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-red-700">
                 {result.warnings.map((warning) => (
@@ -36,10 +30,10 @@ export function VeroBlockModal({ result, onClose }: VeroBlockModalProps) {
 
         <button
           type="button"
-          onClick={onClose}
+          onClick={onStartNew}
           className="mt-6 w-full rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700"
         >
-          Close
+          Start New Listing
         </button>
       </div>
     </div>

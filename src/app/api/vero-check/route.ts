@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkVeroSafety } from "@/lib/gemini/vero-check";
+import { checkVeroSafety, checkVeroSafetyForDraft } from "@/lib/gemini/vero-check";
 import { fetchListingProductSource } from "@/lib/listings/product-source";
 import { logUserApiRequest } from "@/lib/requests/tracker";
 import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
-import type { ListingProductSource } from "@/types/listing-generator";
+import type { ListingDraft, ListingProductSource } from "@/types/listing-generator";
 
 export async function POST(request: NextRequest) {
   let userId: string | null = null;
@@ -14,6 +14,8 @@ export async function POST(request: NextRequest) {
       url?: string;
       product?: ListingProductSource;
       title?: string;
+      draft?: ListingDraft;
+      finalCheck?: boolean;
     };
 
     userId = body.userId?.trim() ?? null;
@@ -24,6 +26,17 @@ export async function POST(request: NextRequest) {
 
     const accessDenied = await requireActiveUser(userId);
     if (accessDenied) return accessDenied;
+
+    if (body.finalCheck && body.draft) {
+      const vero = await checkVeroSafetyForDraft(body.draft);
+      void logUserApiRequest({
+        userId,
+        endpoint: "/api/vero-check",
+        method: "POST",
+        status: "success",
+      });
+      return NextResponse.json({ success: true, vero });
+    }
 
     let product = body.product ?? null;
 

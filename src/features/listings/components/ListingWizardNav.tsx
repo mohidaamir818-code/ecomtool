@@ -4,6 +4,7 @@ interface ListingWizardNavProps {
   currentStep: number;
   maxStep: number;
   nextDisabled?: boolean;
+  hideNext?: boolean;
   nextLabel?: string;
   showBack?: boolean;
   onBack: () => void;
@@ -14,6 +15,7 @@ export function ListingWizardNav({
   currentStep,
   maxStep,
   nextDisabled = false,
+  hideNext = false,
   nextLabel = "Next",
   showBack = true,
   onBack,
@@ -36,14 +38,16 @@ export function ListingWizardNav({
           <span />
         )}
 
-        <button
-          type="button"
-          disabled={nextDisabled}
-          onClick={onNext}
-          className="rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-50 sm:ml-auto"
-        >
-          {nextLabel}
-        </button>
+        {hideNext ? null : (
+          <button
+            type="button"
+            disabled={nextDisabled}
+            onClick={onNext}
+            className="rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-50 sm:ml-auto"
+          >
+            {nextLabel}
+          </button>
+        )}
       </div>
     </div>
   );

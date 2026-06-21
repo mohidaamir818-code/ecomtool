@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listDraftOnEbay } from "@/lib/ebay/sell-inventory";
+import { checkVeroSafetyForDraft } from "@/lib/gemini/vero-check";
 import { logUserApiRequest } from "@/lib/requests/tracker";
 import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
 import type { ListingDraft } from "@/types/listing-generator";
@@ -53,6 +54,11 @@ export async function POST(request: NextRequest) {
 
     const accessDenied = await requireActiveUser(userId);
     if (accessDenied) return accessDenied;
+
+    const vero = await checkVeroSafetyForDraft(body.draft);
+    if (!vero.safe) {
+      return NextResponse.json({ error: vero.summary }, { status: 403 });
+    }
 
     const result = await listDraftOnEbay(userId, body.draft);
 

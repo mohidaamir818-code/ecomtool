@@ -71,6 +71,11 @@ OTHER RULES:
 - condition: "${DEFAULT_EBAY_CONDITION}" unless clearly used product
 - brand: ALWAYS "${UNBRANDED}"
 
+IMPORTANT VERo SAFETY:
+- If this product appears to be a counterfeit or replica of a branded product, or if it shows any brand logos in images, you MUST flag it as a VeRO violation.
+- Never generate a listing for branded products (Nike, Adidas, Apple, Samsung, Louis Vuitton, etc.).
+- If branded content is detected, do not produce listing copy — the listing must be blocked.
+
 Return ONLY valid JSON with this exact shape:
 {
   "seoTitle": string,
@@ -85,6 +90,8 @@ Return ONLY valid JSON with this exact shape:
 }
 
 export function buildVeroCheckPrompt(product: ListingProductSource, title?: string): string {
+  const variantLabels = product.variants?.map((variant) => variant.label).join(", ") ?? "none";
+
   return `You are an eBay VeRO and policy compliance expert for UK sellers.
 
 Analyze this product for listing safety on eBay UK.
@@ -93,12 +100,14 @@ PRODUCT:
 - Title: ${title ?? product.title}
 - Source title: ${product.title}
 - Description: ${product.description ?? "n/a"}
+- Variant labels: ${variantLabels}
 - Price: ${product.price} ${product.currency}
 
 Check for:
-1. Counterfeit or high-risk branded goods (Nike, Apple, Samsung, Disney, Louis Vuitton, etc.)
-2. eBay banned or restricted categories (weapons, drugs, replicas, etc.)
-3. Restricted words in title (Replica, 1:1, OEM fake, etc.)
+1. Counterfeit or high-risk branded goods (Nike, Adidas, Apple, Samsung, Disney, Louis Vuitton, Gucci, Puma, Sony, PlayStation, Xbox, etc.)
+2. Brand names in title, description, or variant labels
+3. eBay banned or restricted categories (weapons, drugs, replicas, etc.)
+4. Restricted words (Replica, 1:1, OEM fake, knockoff, etc.)
 
 Return ONLY valid JSON:
 {
@@ -110,5 +119,5 @@ Return ONLY valid JSON:
   "summary": string
 }
 
-If ANY risk is high, set safe to false and explain in summary.`;
+If ANY brand or high risk is detected, set safe to false and isCounterfeitOrBranded to true.`;
 }
