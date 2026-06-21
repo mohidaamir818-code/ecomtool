@@ -16,12 +16,8 @@ interface InventoryLocationResponse {
   error?: string;
 }
 
-function isAddressSaved(data: InventoryLocationResponse): boolean {
-  if (data.addressConfirmed) return true;
-  return Boolean(data.city?.trim() && data.postalCode?.trim() && data.country?.trim());
-}
-
 const warehouseConfiguredKey = (userId: string) => `ebay-warehouse-configured-${userId}`;
+const parentNotifiedKey = (userId: string) => `ebay-warehouse-parent-notified-${userId}`;
 
 function readStoredConfigured(userId: string): boolean {
   if (typeof window === "undefined") return false;
@@ -31,6 +27,19 @@ function readStoredConfigured(userId: string): boolean {
 function storeConfigured(userId: string): void {
   if (typeof window === "undefined") return;
   sessionStorage.setItem(warehouseConfiguredKey(userId), "1");
+}
+
+function hasNotifiedParent(userId: string): boolean {
+  if (typeof window === "undefined") return false;
+  return sessionStorage.getItem(parentNotifiedKey(userId)) === "1";
+}
+
+function notifyParentOncePerSession(userId: string, notify: () => void): void {
+  if (hasNotifiedParent(userId)) return;
+  if (typeof window !== "undefined") {
+    sessionStorage.setItem(parentNotifiedKey(userId), "1");
+  }
+  notify();
 }
 
 interface EbayAddressSetupFormProps {
@@ -53,24 +62,18 @@ export function EbayAddressSetupForm({
   onCancel,
 }: EbayAddressSetupFormProps) {
   const isSetup = mode === "setup";
-  const storedConfigured = isSetup && readStoredConfigured(userId);
+  const skipSetupUi =
+    isSetup && (readStoredConfigured(userId) || hasNotifiedParent(userId));
 
   const [city, setCity] = useState(initialCity);
   const [postalCode, setPostalCode] = useState(initialPostalCode);
   const [country, setCountry] = useState(initialCountry);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [checkingExisting, setCheckingExisting] = useState(isSetup && !storedConfigured);
-  const [addressAlreadyExists, setAddressAlreadyExists] = useState(storedConfigured);
+  const [checkingExisting, setCheckingExisting] = useState(isSetup && !skipSetupUi);
+  const [addressAlreadyExists, setAddressAlreadyExists] = useState(skipSetupUi);
   const onCompleteRef = useRef(onComplete);
-  const notifiedParentRef = useRef(false);
   onCompleteRef.current = onComplete;
-
-  function notifyParentIfNeeded(): void {
-    if (notifiedParentRef.current) return;
-    notifiedParentRef.current = true;
-    onCompleteRef.current();
-  }
 
   useEffect(() => {
     setCity(initialCity);
@@ -81,10 +84,9 @@ export function EbayAddressSetupForm({
   useEffect(() => {
     if (mode !== "setup") return;
 
-    if (readStoredConfigured(userId)) {
+    if (hasNotifiedParent(userId)) {
       setAddressAlreadyExists(true);
       setCheckingExisting(false);
-      notifyParentIfNeeded();
       return;
     }
 
@@ -99,10 +101,10 @@ export function EbayAddressSetupForm({
 
         if (cancelled) return;
 
-        if (response.ok && isAddressSaved(data)) {
+        if (response.ok && data.addressConfirmed) {
           setAddressAlreadyExists(true);
           storeConfigured(userId);
-          notifyParentIfNeeded();
+          notifyParentOncePerSession(userId, () => onCompleteRef.current());
         }
       } catch {
         // Fall through to showing the setup form.
@@ -152,7 +154,7 @@ export function EbayAddressSetupForm({
         if (data.error?.includes("already set up")) {
           setAddressAlreadyExists(true);
           storeConfigured(userId);
-          notifyParentIfNeeded();
+          notifyParentOncePerSession(userId, () => onCompleteRef.current());
           return;
         }
         setError(data.error ?? "Failed to save warehouse address.");
@@ -160,6 +162,9 @@ export function EbayAddressSetupForm({
       }
 
       storeConfigured(userId);
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem(parentNotifiedKey(userId), "1");
+      }
       onComplete();
     } catch {
       setError("Network error while saving warehouse address.");
@@ -168,17 +173,7 @@ export function EbayAddressSetupForm({
     }
   }
 
-  if (isSetup && checkingExisting) {
-    return (
-      <div
-        className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm"
-        aria-busy="true"
-        aria-label="Checking warehouse address"
-      />
-    );
-  }
-
-  if (isSetup && addressAlreadyExists) {
+  if (isSetup && (checkingExisting || addressAlreadyExists)) {
     return null;
   }
 
