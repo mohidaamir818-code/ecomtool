@@ -293,7 +293,37 @@ function collectVariantLabels(context: EbayAspectSourceContext): string[] {
   return labels;
 }
 
-const VARIANT_SIZE_PART = /^(XS|S|M|L|XL|XXL|XXXL|2XL|3XL|4XL|\d+)$/i;
+const VARIANT_SIZE_PART =
+  /^(XS|S|M|L|XL|2XL|3XL|4XL|XXL|XXXL|\d+\s*(pcs|cm|mm|inch|in|kg|g)?)$/i;
+
+function splitVariantLabelParts(label: string): string[] {
+  return label
+    .split(/\s*\/\s*|\s*\|\s*|,\s*|\s+-\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function isVariantSizePart(part: string): boolean {
+  const trimmed = part.trim();
+  if (!trimmed) return false;
+  if (/^\d+$/.test(trimmed)) return true;
+  return VARIANT_SIZE_PART.test(trimmed);
+}
+
+function isVariantColourPart(part: string): boolean {
+  const trimmed = part.trim();
+  if (!trimmed) return false;
+  if (/^\d+$/.test(trimmed)) return false;
+  if (/^\d/.test(trimmed) && isVariantSizePart(trimmed)) return false;
+  return !isVariantSizePart(trimmed);
+}
+
+export function extractColourForLabel(label: string): string | null {
+  const parts = splitVariantLabelParts(label);
+  const colourPart = parts.find(isVariantColourPart);
+  if (!colourPart) return null;
+  return capitalizeColorWord(colourPart);
+}
 
 export function extractColoursAndSizesFromLabels(labels: string[]): {
   colors: string[];
@@ -306,29 +336,31 @@ export function extractColoursAndSizesFromLabels(labels: string[]): {
     const trimmed = label.trim();
     if (!trimmed) continue;
 
-    const parts = trimmed
-      .split(/\s*\/\s*|\|/)
-      .map((part) => part.trim())
-      .filter(Boolean);
+    const parts = splitVariantLabelParts(trimmed);
 
     for (const part of parts) {
-      if (VARIANT_SIZE_PART.test(part)) {
+      if (isVariantSizePart(part)) {
         sizes.add(part);
       }
     }
 
-    const colourPart = parts.find(
-      (part) => !/^\d/.test(part) && !VARIANT_SIZE_PART.test(part),
-    );
+    const colourPart = parts.find(isVariantColourPart);
     if (colourPart) {
       colors.add(capitalizeColorWord(colourPart));
     }
   }
 
-  return {
+  const result = {
     colors: [...colors].slice(0, 10),
     sizes: [...sizes].slice(0, 20),
   };
+
+  if (labels.length > 0) {
+    console.log("Extracted colours:", result.colors);
+    console.log("Extracted sizes:", result.sizes);
+  }
+
+  return result;
 }
 
 export const EBAY_ASPECT_SAFE_DEFAULTS: Record<string, string[]> = {
@@ -635,6 +667,31 @@ export function mergeEbayAspects(
   }
 
   return merged;
+}
+
+export function enforceProtectedEbayAspects(
+  aspects: Record<string, string[]>,
+  context: EbayAspectSourceContext,
+): Record<string, string[]> {
+  const extracted = extractColoursAndSizesFromLabels(collectVariantLabels(context));
+  const colourKey = context.marketplaceId === "EBAY_GB" ? "Colour" : "Color";
+  const alternateColourKey = colourKey === "Colour" ? "Color" : "Colour";
+
+  delete aspects[alternateColourKey];
+
+  if (extracted.colors.length > 0) {
+    aspects[colourKey] = extracted.colors;
+  } else if (!aspects[colourKey]?.length) {
+    aspects[colourKey] = ["Multicolor"];
+  }
+
+  if (extracted.sizes.length > 0) {
+    aspects.Size = extracted.sizes;
+  } else if (!aspects.Size?.length) {
+    aspects.Size = ["One Size"];
+  }
+
+  return aspects;
 }
 
 export function resolveRequiredEbayAspects(
