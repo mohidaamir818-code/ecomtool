@@ -13,9 +13,7 @@ import {
   buildAspectSafeDefaults,
   buildDefaultEbayUkAspects,
   enforceProtectedEbayAspects,
-  extractColourForLabel,
   extractColoursAndSizesFromLabels,
-  extractSizeForLabel,
   filterAspectsForCategory,
   getSafeAspectDefault,
   mergeEbayAspects,
@@ -368,6 +366,51 @@ function getAspectVariantSources(aspectOptions: EbayAspectBuildOptions): AspectV
   }
 
   return variants;
+}
+
+const SKU_SIZE_PATTERNS = [
+  /^(XXS|XS|S|M|L|XL|2XL|3XL|4XL|5XL|XXL|XXXL|XXXXL)$/i,
+  /^\d+$/,
+  /^\d+\s*-\s*\d+$/,
+  /^(small|medium|large|extra\s*large)$/i,
+  /^(one size|free size|universal)$/i,
+  /^\d+(cm|mm|inch|inches|kg|g|oz|ml|l)$/i,
+  /^(EU|UK|US)\s*\d+$/i,
+  /^\d+\/\d+$/,
+] as const;
+
+function isSkuSizePart(part: string): boolean {
+  return SKU_SIZE_PATTERNS.some((pattern) => pattern.test(part));
+}
+
+function parseSkuColourAndSizeFromLabel(label: string): { colour: string; size: string } {
+  const parts = label
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return { colour: "Multicolor", size: "One Size" };
+  }
+
+  const firstPart = parts[0];
+  const isFirstSize = isSkuSizePart(firstPart);
+
+  let colour = "Multicolor";
+  let size = "One Size";
+
+  if (!isFirstSize && firstPart) {
+    colour = firstPart;
+  }
+
+  if (parts.length > 1) {
+    const lastPart = parts[parts.length - 1];
+    size = lastPart;
+  } else if (isFirstSize) {
+    size = firstPart;
+  }
+
+  return { colour, size };
 }
 
 function applyNuclearColourSizeFallback(
@@ -782,16 +825,12 @@ async function upsertInventoryItem(
     async () => {
       const aspects = buildEbayAspects(listing, aspectOptions);
       if (variantLabel) {
-        aspects.Variant = [variantLabel];
         const colourKey = marketplaceId === "EBAY_GB" ? "Colour" : "Color";
-        const variantColour = extractColourForLabel(variantLabel);
-        const variantSize = extractSizeForLabel(variantLabel);
-        if (variantColour) {
-          aspects[colourKey] = [variantColour];
-        }
-        if (variantSize) {
-          aspects.Size = [variantSize];
-        }
+        const alternateColourKey = colourKey === "Colour" ? "Color" : "Colour";
+        const { colour, size } = parseSkuColourAndSizeFromLabel(variantLabel);
+        aspects[colourKey] = [colour];
+        aspects.Size = [size];
+        delete aspects[alternateColourKey];
       }
       if (gtin?.trim()) {
         aspects.GTIN = [gtin.trim()];
