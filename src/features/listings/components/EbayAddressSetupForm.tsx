@@ -1,12 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const COUNTRY_OPTIONS = [
   { value: "GB", label: "United Kingdom (GB)" },
   { value: "US", label: "United States (US)" },
   { value: "DE", label: "Germany (DE)" },
 ] as const;
+
+interface InventoryLocationResponse {
+  addressConfirmed?: boolean;
+  city?: string | null;
+  postalCode?: string | null;
+  country?: string | null;
+  error?: string;
+}
+
+function isAddressSaved(data: InventoryLocationResponse): boolean {
+  if (data.addressConfirmed) return true;
+  return Boolean(data.city?.trim() && data.postalCode?.trim() && data.country?.trim());
+}
 
 interface EbayAddressSetupFormProps {
   userId: string;
@@ -32,12 +45,50 @@ export function EbayAddressSetupForm({
   const [country, setCountry] = useState(initialCountry);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [checkingExisting, setCheckingExisting] = useState(mode === "setup");
+  const [addressAlreadyExists, setAddressAlreadyExists] = useState(false);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   useEffect(() => {
     setCity(initialCity);
     setPostalCode(initialPostalCode);
     setCountry(initialCountry || "GB");
   }, [initialCity, initialPostalCode, initialCountry]);
+
+  useEffect(() => {
+    if (mode !== "setup") return;
+
+    let cancelled = false;
+
+    async function checkExistingAddress() {
+      try {
+        const response = await fetch(
+          `/api/ebay/inventory-location?userId=${encodeURIComponent(userId)}`,
+        );
+        const data = (await response.json()) as InventoryLocationResponse;
+
+        if (cancelled) return;
+
+        if (response.ok && isAddressSaved(data)) {
+          setAddressAlreadyExists(true);
+          onCompleteRef.current();
+        }
+      } catch {
+        // Fall through to showing the setup form.
+      } finally {
+        if (!cancelled) {
+          setCheckingExisting(false);
+        }
+      }
+    }
+
+    void checkExistingAddress();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, mode]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -65,9 +116,14 @@ export function EbayAddressSetupForm({
         }),
       });
 
-      const data = (await response.json()) as { error?: string };
+      const data = (await response.json()) as InventoryLocationResponse;
 
       if (!response.ok) {
+        if (data.error?.includes("already set up")) {
+          setAddressAlreadyExists(true);
+          onCompleteRef.current();
+          return;
+        }
         setError(data.error ?? "Failed to save warehouse address.");
         return;
       }
@@ -81,6 +137,18 @@ export function EbayAddressSetupForm({
   }
 
   const isSetup = mode === "setup";
+
+  if (isSetup && checkingExisting) {
+    return null;
+  }
+
+  if (isSetup && addressAlreadyExists) {
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-6 shadow-sm">
+        <p className="font-medium text-green-600">✓ Warehouse address configured</p>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
