@@ -562,8 +562,7 @@ export function ListingsShell() {
     !ebayStatus.connected &&
     !wizardStarted &&
     !resumeOffer;
-  const showAddressGate =
-    !ebayStatusLoading &&
+  const showAddressSetup =
     ebayStatus.connected &&
     !ebayStatus.addressConfirmed &&
     Boolean(userId);
@@ -625,21 +624,6 @@ export function ListingsShell() {
           </div>
         ) : showConnectGate && userId ? (
           <EbayStoreConnectGate userId={userId} errorMessage={isError ? notice : undefined} />
-        ) : showAddressGate ? (
-          <>
-            <EbayConnectedBanner
-              userId={userId!}
-              ebayUsername={ebayStatus.ebayUsername}
-              addressConfirmed={false}
-              onDisconnected={handleEbayDisconnected}
-              onAddressUpdated={() => void loadEbayStatus()}
-            />
-            <EbayAddressSetupForm
-              userId={userId!}
-              mode="setup"
-              onComplete={() => void loadEbayStatus()}
-            />
-          </>
         ) : (
           <>
             {ebayStatus.connected && userId ? (
@@ -650,6 +634,16 @@ export function ListingsShell() {
                 onDisconnected={handleEbayDisconnected}
                 onAddressUpdated={() => void loadEbayStatus()}
               />
+            ) : null}
+
+            {showAddressSetup ? (
+              <div className="mb-6">
+                <EbayAddressSetupForm
+                  userId={userId!}
+                  mode="setup"
+                  onComplete={() => void loadEbayStatus()}
+                />
+              </div>
             ) : null}
 
             {resumeOffer && !wizardStarted ? (
@@ -669,8 +663,9 @@ export function ListingsShell() {
 
         {currentStep === 0 ? (
           <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
-            <label className="block text-sm font-medium text-[#111827]">
-              AliExpress product URL
+            <h2 className="text-lg font-semibold text-[#111827]">Start New Listing</h2>
+            <label className="mt-4 block text-sm font-medium text-[#111827]">
+              AliExpress Product URL
               <input
                 type="url"
                 value={url}
@@ -799,6 +794,7 @@ export function ListingsShell() {
             onBack={handleBack}
             onNext={() => void handleNext()}
             nextDisabled={busy || (currentStep === 3 && generateLoading)}
+            nextLabel={currentStep === 0 ? "Check & Generate Listing" : "Next"}
             hideNext={currentStep === 1 && Boolean(vero && !vero.safe)}
           />
         ) : null}
