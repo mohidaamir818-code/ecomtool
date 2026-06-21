@@ -474,6 +474,50 @@ function buildVariationSpecsFromVariants(
   };
 }
 
+function labelsHaveExplicitSize(labels: string[]): boolean {
+  return labels.some(
+    (label) => label.split("/").map((part) => part.trim()).filter(Boolean).length > 1,
+  );
+}
+
+function buildGroupVariesBy(
+  colourKey: "Colour" | "Color",
+  colours: string[],
+  sizes: string[],
+  aspectOptions: EbayAspectBuildOptions,
+): {
+  aspectsImageVariesBy: string[];
+  specifications: Array<{ name: string; values: string[] }>;
+} {
+  const uniqueColours = dedupeVariationValues(colours);
+  const uniqueSizes = dedupeVariationValues(sizes);
+  const labels = (aspectOptions.variantDrafts ?? [])
+    .map((variant) => variant.label?.trim() ?? "")
+    .filter(Boolean);
+
+  const specifications: Array<{ name: string; values: string[] }> = [];
+
+  if (uniqueColours.length > 0) {
+    specifications.push({ name: colourKey, values: uniqueColours });
+  }
+
+  const hasExplicitSize = labelsHaveExplicitSize(labels);
+  const sizesVary = uniqueSizes.length > 1;
+  const sizeEqualsSingleColour =
+    uniqueSizes.length === 1 &&
+    uniqueColours.length === 1 &&
+    uniqueSizes[0].toLowerCase() === uniqueColours[0].toLowerCase();
+
+  if (hasExplicitSize && sizesVary && !sizeEqualsSingleColour) {
+    specifications.push({ name: "Size", values: uniqueSizes });
+  }
+
+  return {
+    aspectsImageVariesBy: [colourKey],
+    specifications,
+  };
+}
+
 const MULTI_SKU_SHARED_ASPECT_KEYS = new Set([
   "Brand",
   "MPN",
@@ -677,13 +721,7 @@ function buildInventoryItemGroupBody(
   finalColours = dedupeVariationValues(finalColours);
   finalSizes = dedupeVariationValues(finalSizes);
 
-  const variesBy = {
-    aspectsImageVariesBy: [colourKey],
-    specifications: [
-      { name: colourKey, values: finalColours },
-      { name: "Size", values: finalSizes },
-    ],
-  };
+  const variesBy = buildGroupVariesBy(colourKey, finalColours, finalSizes, aspectOptions);
 
   return {
     inventoryItemGroupKey: groupKey,
@@ -730,19 +768,12 @@ function ensureGroupBodyHasAspects(
     (spec) => spec.name === "Size",
   )?.values;
 
-  groupBody.variesBy = {
-    aspectsImageVariesBy: [colourKey],
-    specifications: [
-      {
-        name: colourKey,
-        values: dedupeVariationValues(existingColourSpec?.length ? existingColourSpec : safeColours),
-      },
-      {
-        name: "Size",
-        values: dedupeVariationValues(existingSizeSpec?.length ? existingSizeSpec : safeSizes),
-      },
-    ],
-  };
+  groupBody.variesBy = buildGroupVariesBy(
+    colourKey,
+    existingColourSpec?.length ? existingColourSpec : safeColours,
+    existingSizeSpec?.length ? existingSizeSpec : safeSizes,
+    aspectOptions,
+  );
 }
 
 export interface EbayAspectBuildOptions {
