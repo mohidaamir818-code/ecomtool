@@ -22,11 +22,23 @@ import { DEFAULT_PROMOTIONS } from "@/types/listing-generator";
 const EBAY_API_BASE = "https://api.ebay.com";
 const MAX_PHOTOS = 24;
 
-function sellHeaders(token: string): HeadersInit {
+function taxonomyHeaders(token: string, marketplaceId: EbayMarketplaceId): HeadersInit {
+  const { acceptLanguage } = resolveMarketplaceConfig(marketplaceId);
+  return {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/json",
+    "Accept-Language": acceptLanguage,
+  };
+}
+
+function inventoryHeaders(token: string, marketplaceId: EbayMarketplaceId): HeadersInit {
+  const { contentLanguage, acceptLanguage } = resolveMarketplaceConfig(marketplaceId);
   return {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
     Accept: "application/json",
+    "Content-Language": contentLanguage,
+    "Accept-Language": acceptLanguage,
   };
 }
 
@@ -177,6 +189,7 @@ export async function getCategorySuggestions(
   marketplaceId?: EbayMarketplaceId,
 ): Promise<EbayCategorySuggestion[]> {
   const config = resolveMarketplaceConfig(marketplaceId);
+  const resolvedMarketplaceId = config.marketplaceId;
   const url = new URL(
     `${EBAY_API_BASE}/commerce/taxonomy/v1/category_tree/${config.categoryTreeId}/get_category_suggestions`,
   );
@@ -184,7 +197,7 @@ export async function getCategorySuggestions(
 
   const requestUrl = url.toString();
   const { response, bodyText } = await ebayFetch("taxonomy/suggestions", requestUrl, {
-    headers: sellHeaders(token),
+    headers: taxonomyHeaders(token, resolvedMarketplaceId),
     cache: "no-store",
   });
 
@@ -223,6 +236,7 @@ export async function getItemAspectsForCategory(
   marketplaceId?: EbayMarketplaceId,
 ): Promise<string[]> {
   const config = resolveMarketplaceConfig(marketplaceId);
+  const resolvedMarketplaceId = config.marketplaceId;
   const url = new URL(
     `${EBAY_API_BASE}/commerce/taxonomy/v1/category_tree/${config.categoryTreeId}/get_item_aspects_for_category`,
   );
@@ -230,7 +244,7 @@ export async function getItemAspectsForCategory(
 
   const requestUrl = url.toString();
   const { response, bodyText } = await ebayFetch("taxonomy/aspects", requestUrl, {
-    headers: sellHeaders(token),
+    headers: taxonomyHeaders(token, resolvedMarketplaceId),
     cache: "no-store",
   });
 
@@ -268,6 +282,7 @@ async function resolveCategoryId(
 
 async function upsertInventoryItem(
   token: string,
+  marketplaceId: EbayMarketplaceId,
   sku: string,
   listing: GeneratedListing,
   imageUrls: string[],
@@ -301,7 +316,7 @@ async function upsertInventoryItem(
   const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`;
   const { response, bodyText } = await ebayFetch("inventory_item PUT", requestUrl, {
     method: "PUT",
-    headers: sellHeaders(token),
+    headers: inventoryHeaders(token, marketplaceId),
     body: JSON.stringify(body),
     cache: "no-store",
   });
@@ -313,6 +328,7 @@ async function upsertInventoryItem(
 
 async function upsertInventoryItemGroup(
   token: string,
+  marketplaceId: EbayMarketplaceId,
   groupKey: string,
   listing: GeneratedListing,
   imageUrls: string[],
@@ -339,7 +355,7 @@ async function upsertInventoryItemGroup(
   const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupKey)}`;
   const { response, bodyText } = await ebayFetch("inventory_item_group PUT", requestUrl, {
     method: "PUT",
-    headers: sellHeaders(token),
+    headers: inventoryHeaders(token, marketplaceId),
     body: JSON.stringify(body),
     cache: "no-store",
   });
@@ -405,7 +421,7 @@ async function createOffer(
   const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/offer`;
   const { response, bodyText } = await ebayFetch("offer POST", requestUrl, {
     method: "POST",
-    headers: sellHeaders(token),
+    headers: inventoryHeaders(token, marketplaceId),
     body: JSON.stringify(body),
     cache: "no-store",
   });
@@ -428,7 +444,7 @@ async function publishOfferByGroup(
   const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/offer/publish_by_inventory_item_group`;
   const { response, bodyText } = await ebayFetch("publish_by_group POST", requestUrl, {
     method: "POST",
-    headers: sellHeaders(token),
+    headers: inventoryHeaders(token, marketplaceId),
     body: JSON.stringify({
       inventoryItemGroupKey: groupKey,
       marketplaceId: config.marketplaceId,
@@ -450,12 +466,13 @@ async function publishOfferByGroup(
 
 async function publishOffer(
   token: string,
+  marketplaceId: EbayMarketplaceId,
   offerId: string,
 ): Promise<{ listingId: string | null }> {
   const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/publish`;
   const { response, bodyText } = await ebayFetch("publish POST", requestUrl, {
     method: "POST",
-    headers: sellHeaders(token),
+    headers: inventoryHeaders(token, marketplaceId),
     cache: "no-store",
   });
 
@@ -528,6 +545,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
 
     await upsertInventoryItem(
       token,
+      marketplaceId,
       sku,
       listing,
       images,
@@ -545,7 +563,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
       marketplaceId,
       { sku },
     );
-    const published = await publishOffer(token, offerId);
+    const published = await publishOffer(token, marketplaceId, offerId);
 
     return {
       sku,
@@ -573,6 +591,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
 
     await upsertInventoryItem(
       token,
+      marketplaceId,
       sku,
       variantListing,
       images,
@@ -601,6 +620,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
 
   await upsertInventoryItemGroup(
     token,
+    marketplaceId,
     groupKey,
     listing,
     selectedPhotos,

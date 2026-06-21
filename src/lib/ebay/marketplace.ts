@@ -11,6 +11,8 @@ export type EbayMarketplaceId = (typeof SUPPORTED_MARKETPLACES)[number];
 export interface EbayMarketplaceConfig {
   marketplaceId: EbayMarketplaceId;
   currency: string;
+  contentLanguage: string;
+  acceptLanguage: string;
   endUserCountry: string;
   listingSiteHost: string;
   categoryTreeId: string;
@@ -21,6 +23,8 @@ const MARKETPLACE_CONFIG: Record<EbayMarketplaceId, EbayMarketplaceConfig> = {
   EBAY_GB: {
     marketplaceId: "EBAY_GB",
     currency: "GBP",
+    contentLanguage: "en-GB",
+    acceptLanguage: "en-GB",
     endUserCountry: "GB",
     listingSiteHost: "www.ebay.co.uk",
     categoryTreeId: "3",
@@ -29,6 +33,8 @@ const MARKETPLACE_CONFIG: Record<EbayMarketplaceId, EbayMarketplaceConfig> = {
   EBAY_US: {
     marketplaceId: "EBAY_US",
     currency: "USD",
+    contentLanguage: "en-US",
+    acceptLanguage: "en-US",
     endUserCountry: "US",
     listingSiteHost: "www.ebay.com",
     categoryTreeId: "0",
@@ -37,6 +43,8 @@ const MARKETPLACE_CONFIG: Record<EbayMarketplaceId, EbayMarketplaceConfig> = {
   EBAY_DE: {
     marketplaceId: "EBAY_DE",
     currency: "EUR",
+    contentLanguage: "de-DE",
+    acceptLanguage: "de-DE",
     endUserCountry: "DE",
     listingSiteHost: "www.ebay.de",
     categoryTreeId: "77",
