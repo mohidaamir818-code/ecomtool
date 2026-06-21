@@ -413,6 +413,36 @@ function parseSkuColourAndSizeFromLabel(label: string): { colour: string; size: 
   return { colour, size };
 }
 
+const MULTI_SKU_SHARED_ASPECT_KEYS = new Set([
+  "Brand",
+  "MPN",
+  "Department",
+  "Age Group",
+  "Material",
+  "Pattern",
+  "Occasion",
+  "Season",
+  "Style",
+  "Fit",
+  "Country/Region of Manufacture",
+]);
+
+function isMultiSkuListing(aspectOptions: EbayAspectBuildOptions): boolean {
+  return (aspectOptions.variantDrafts?.length ?? 0) > 1;
+}
+
+function buildMultiSkuInventoryItemAspects(
+  aspects: Record<string, string[]>,
+): Record<string, string[]> {
+  const filtered: Record<string, string[]> = {};
+  for (const [key, values] of Object.entries(aspects)) {
+    if (MULTI_SKU_SHARED_ASPECT_KEYS.has(key) && values.length > 0) {
+      filtered[key] = values;
+    }
+  }
+  return filtered;
+}
+
 function applyNuclearColourSizeFallback(
   aspects: Record<string, string[]>,
   variants: AspectVariantSource[],
@@ -823,24 +853,29 @@ async function upsertInventoryItem(
   await executeWithMissingAspectRetry(
     aspectOptions,
     async () => {
-      const aspects = buildEbayAspects(listing, aspectOptions);
-      if (variantLabel) {
-        const colourKey = marketplaceId === "EBAY_GB" ? "Colour" : "Color";
-        const alternateColourKey = colourKey === "Colour" ? "Color" : "Colour";
-        const { colour, size } = parseSkuColourAndSizeFromLabel(variantLabel);
-        aspects[colourKey] = [colour];
-        aspects.Size = [size];
-        delete aspects[alternateColourKey];
-      }
-      if (gtin?.trim()) {
-        aspects.GTIN = [gtin.trim()];
-      }
+      let aspects = buildEbayAspects(listing, aspectOptions);
 
-      applyNuclearColourSizeFallback(
-        aspects,
-        getAspectVariantSources(aspectOptions),
-        marketplaceId,
-      );
+      if (isMultiSkuListing(aspectOptions)) {
+        aspects = buildMultiSkuInventoryItemAspects(aspects);
+      } else {
+        if (variantLabel) {
+          const colourKey = marketplaceId === "EBAY_GB" ? "Colour" : "Color";
+          const alternateColourKey = colourKey === "Colour" ? "Color" : "Colour";
+          const { colour, size } = parseSkuColourAndSizeFromLabel(variantLabel);
+          aspects[colourKey] = [colour];
+          aspects.Size = [size];
+          delete aspects[alternateColourKey];
+        }
+        if (gtin?.trim()) {
+          aspects.GTIN = [gtin.trim()];
+        }
+
+        applyNuclearColourSizeFallback(
+          aspects,
+          getAspectVariantSources(aspectOptions),
+          marketplaceId,
+        );
+      }
 
       console.log("Final aspects being sent to eBay:", JSON.stringify(aspects, null, 2));
 
