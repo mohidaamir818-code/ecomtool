@@ -495,16 +495,28 @@ function buildInventoryItemGroupBody(
     specifications: Array<{ name: string; values: string[] }>;
   };
 } {
-  const { colourKey, colours, sizes } = resolveGroupColourSizeArrays(aspectOptions, marketplaceId);
+  let { colourKey, colours, sizes } = resolveGroupColourSizeArrays(aspectOptions, marketplaceId);
+  if (colours.length === 0) colours = ["Multicolor"];
+  if (sizes.length === 0) sizes = ["One Size"];
+
   const alternateColourKey = colourKey === "Colour" ? "Color" : "Colour";
-  const variants = getAspectVariantSources(aspectOptions);
+  const baseAspects = buildEbayAspects(listing, aspectOptions);
+  const department = baseAspects.Department?.[0] ?? "Unisex";
 
-  const aspects = buildEbayAspects(listing, aspectOptions);
-  applyNuclearColourSizeFallback(aspects, variants, marketplaceId);
-
-  aspects[colourKey] = colours;
+  const aspects: Record<string, string[]> = {
+    ...baseAspects,
+    Brand: ["Unbranded"],
+    MPN: ["Does Not Apply"],
+    Department: [department],
+    "Age Group": baseAspects["Age Group"]?.length ? baseAspects["Age Group"] : ["Adult"],
+    Material: baseAspects.Material?.length ? baseAspects.Material : ["See Description"],
+    [colourKey]: colours,
+    Size: sizes,
+  };
   delete aspects[alternateColourKey];
-  aspects.Size = sizes;
+
+  if (!aspects[colourKey]?.length) aspects[colourKey] = colours;
+  if (!aspects.Size?.length) aspects.Size = sizes;
 
   const variesBy = {
     aspectsImageVariesBy: [colourKey],
@@ -514,7 +526,7 @@ function buildInventoryItemGroupBody(
     ],
   };
 
-  const body = {
+  return {
     inventoryItemGroupKey: groupKey,
     variantSKUs: variantSkus,
     title: listing.seoTitle,
@@ -523,11 +535,41 @@ function buildInventoryItemGroupBody(
     aspects,
     variesBy,
   };
+}
 
-  console.log("GROUP aspects:", JSON.stringify(body.aspects));
-  console.log("GROUP variesBy:", JSON.stringify(body.variesBy));
+function ensureGroupBodyHasAspects(
+  groupBody: ReturnType<typeof buildInventoryItemGroupBody>,
+  aspectOptions: EbayAspectBuildOptions,
+  marketplaceId: EbayMarketplaceId,
+): void {
+  const { colourKey, colours, sizes } = resolveGroupColourSizeArrays(aspectOptions, marketplaceId);
+  const safeColours = colours.length > 0 ? colours : ["Multicolor"];
+  const safeSizes = sizes.length > 0 ? sizes : ["One Size"];
+  const alternateColourKey = colourKey === "Colour" ? "Color" : "Colour";
 
-  return body;
+  const missingColour = !groupBody.aspects?.[colourKey]?.length;
+  const missingSize = !groupBody.aspects?.Size?.length;
+
+  if (!groupBody.aspects || missingColour || missingSize) {
+    groupBody.aspects = {
+      ...groupBody.aspects,
+      Brand: ["Unbranded"],
+      MPN: ["Does Not Apply"],
+      Department: groupBody.aspects?.Department ?? ["Unisex"],
+      "Age Group": ["Adult"],
+      Material: ["See Description"],
+      [colourKey]: safeColours,
+      Size: safeSizes,
+    };
+    delete groupBody.aspects[alternateColourKey];
+    groupBody.variesBy = {
+      aspectsImageVariesBy: [colourKey],
+      specifications: [
+        { name: colourKey, values: safeColours },
+        { name: "Size", values: safeSizes },
+      ],
+    };
+  }
 }
 
 export interface EbayAspectBuildOptions {
@@ -771,7 +813,7 @@ async function upsertInventoryItemGroup(
   await executeWithMissingAspectRetry(
     aspectOptions,
     async () => {
-      const body = buildInventoryItemGroupBody(
+      const groupBody = buildInventoryItemGroupBody(
         groupKey,
         listing,
         imageUrls,
@@ -780,10 +822,18 @@ async function upsertInventoryItemGroup(
         marketplaceId,
       );
 
+      ensureGroupBodyHasAspects(groupBody, aspectOptions, marketplaceId);
+
+      console.log("=== GROUP BODY BEING SENT ===");
+      console.log(JSON.stringify(groupBody, null, 2));
+      console.log("=== GROUP ASPECTS ===");
+      console.log("Colour:", groupBody.aspects?.Colour);
+      console.log("Size:", groupBody.aspects?.Size);
+
       const { response, bodyText } = await ebayFetch("inventory_item_group PUT", requestUrl, {
         method: "PUT",
         headers: inventoryHeaders(token, marketplaceId),
-        body: JSON.stringify(body),
+        body: JSON.stringify(groupBody),
         cache: "no-store",
       });
 
