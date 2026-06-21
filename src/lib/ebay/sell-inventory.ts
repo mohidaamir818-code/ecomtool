@@ -501,14 +501,9 @@ function buildGroupVariesBy(
     specifications.push({ name: colourKey, values: uniqueColours });
   }
 
-  const hasExplicitSize = labelsHaveExplicitSize(labels);
-  const sizesVary = uniqueSizes.length > 1;
-  const sizeEqualsSingleColour =
-    uniqueSizes.length === 1 &&
-    uniqueColours.length === 1 &&
-    uniqueSizes[0].toLowerCase() === uniqueColours[0].toLowerCase();
+  const hasSizeVariants = labelsHaveExplicitSize(labels);
 
-  if (hasExplicitSize && sizesVary && !sizeEqualsSingleColour) {
+  if (hasSizeVariants && uniqueSizes.length > 0) {
     specifications.push({ name: "Size", values: uniqueSizes });
   }
 
