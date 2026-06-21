@@ -572,44 +572,22 @@ function buildInventoryItemGroupBody(
   if (colours.length === 0) colours = ["Multicolor"];
   if (sizes.length === 0) sizes = ["One Size"];
 
-  const alternateColourKey = colourKey === "Colour" ? "Color" : "Colour";
   const baseAspects = buildEbayAspects(listing, aspectOptions);
   const department = baseAspects.Department?.[0] ?? "Unisex";
 
-  const aspects: Record<string, string[]> = {
+  const aspects = buildMultiSkuInventoryItemAspects({
     ...baseAspects,
     Brand: ["Unbranded"],
     MPN: ["Does Not Apply"],
     Department: [department],
     "Age Group": baseAspects["Age Group"]?.length ? baseAspects["Age Group"] : ["Adult"],
     Material: baseAspects.Material?.length ? baseAspects.Material : ["See Description"],
-    [colourKey]: colours,
-    Size: sizes,
-  };
-  delete aspects[alternateColourKey];
+  });
 
-  if (!aspects[colourKey]?.length) aspects[colourKey] = colours;
-  if (!aspects.Size?.length) aspects.Size = sizes;
+  let finalColours = colours;
+  let finalSizes = sizes;
 
-  const variesBy = {
-    aspectsImageVariesBy: [colourKey],
-    specifications: [
-      { name: colourKey, values: colours },
-      { name: "Size", values: sizes },
-    ],
-  };
-
-  const groupBody = {
-    inventoryItemGroupKey: groupKey,
-    variantSKUs: variantSkus,
-    title: listing.seoTitle,
-    description: resolveEbayDescription(listing.descriptionHtml),
-    imageUrls: normalizeImageUrls(imageUrls),
-    aspects,
-    variesBy,
-  };
-
-  if (!groupBody.aspects[colourKey]?.length) {
+  if (finalColours.length === 0 || (finalColours.length === 1 && finalColours[0] === "Multicolor")) {
     const emergencyColours = [
       ...new Set(
         aspectOptions.variantDrafts
@@ -617,11 +595,12 @@ function buildInventoryItemGroupBody(
           .filter((c): c is string => !!c && c.length > 0) ?? [],
       ),
     ];
-    groupBody.aspects[colourKey] =
-      emergencyColours.length > 0 ? emergencyColours : ["Multicolor"];
+    if (emergencyColours.length > 0) {
+      finalColours = emergencyColours;
+    }
   }
 
-  if (!groupBody.aspects.Size?.length) {
+  if (finalSizes.length === 0 || (finalSizes.length === 1 && finalSizes[0] === "One Size")) {
     const emergencySizes = [
       ...new Set(
         aspectOptions.variantDrafts
@@ -632,18 +611,28 @@ function buildInventoryItemGroupBody(
           .filter((s): s is string => !!s && s.length > 0) ?? [],
       ),
     ];
-    groupBody.aspects.Size = emergencySizes.length > 0 ? emergencySizes : ["One Size"];
+    if (emergencySizes.length > 0) {
+      finalSizes = emergencySizes;
+    }
   }
 
-  groupBody.variesBy = {
+  const variesBy = {
     aspectsImageVariesBy: [colourKey],
     specifications: [
-      { name: colourKey, values: groupBody.aspects[colourKey] },
-      { name: "Size", values: groupBody.aspects.Size },
+      { name: colourKey, values: finalColours },
+      { name: "Size", values: finalSizes },
     ],
   };
 
-  return groupBody;
+  return {
+    inventoryItemGroupKey: groupKey,
+    variantSKUs: variantSkus,
+    title: listing.seoTitle,
+    description: resolveEbayDescription(listing.descriptionHtml),
+    imageUrls: normalizeImageUrls(imageUrls),
+    aspects,
+    variesBy,
+  };
 }
 
 function ensureGroupBodyHasAspects(
@@ -656,29 +645,37 @@ function ensureGroupBodyHasAspects(
   const safeSizes = sizes.length > 0 ? sizes : ["One Size"];
   const alternateColourKey = colourKey === "Colour" ? "Color" : "Colour";
 
-  const missingColour = !groupBody.aspects?.[colourKey]?.length;
-  const missingSize = !groupBody.aspects?.Size?.length;
-
-  if (!groupBody.aspects || missingColour || missingSize) {
-    groupBody.aspects = {
-      ...groupBody.aspects,
-      Brand: ["Unbranded"],
-      MPN: ["Does Not Apply"],
-      Department: groupBody.aspects?.Department ?? ["Unisex"],
-      "Age Group": ["Adult"],
-      Material: ["See Description"],
-      [colourKey]: safeColours,
-      Size: safeSizes,
-    };
-    delete groupBody.aspects[alternateColourKey];
-    groupBody.variesBy = {
-      aspectsImageVariesBy: [colourKey],
-      specifications: [
-        { name: colourKey, values: safeColours },
-        { name: "Size", values: safeSizes },
-      ],
-    };
+  if (!groupBody.aspects) {
+    groupBody.aspects = {};
   }
+
+  delete groupBody.aspects[colourKey];
+  delete groupBody.aspects[alternateColourKey];
+  delete groupBody.aspects.Size;
+
+  groupBody.aspects = buildMultiSkuInventoryItemAspects({
+    ...groupBody.aspects,
+    Brand: groupBody.aspects.Brand?.length ? groupBody.aspects.Brand : ["Unbranded"],
+    MPN: groupBody.aspects.MPN?.length ? groupBody.aspects.MPN : ["Does Not Apply"],
+    Department: groupBody.aspects.Department?.length ? groupBody.aspects.Department : ["Unisex"],
+    "Age Group": groupBody.aspects["Age Group"]?.length ? groupBody.aspects["Age Group"] : ["Adult"],
+    Material: groupBody.aspects.Material?.length ? groupBody.aspects.Material : ["See Description"],
+  });
+
+  const existingColourSpec = groupBody.variesBy?.specifications?.find(
+    (spec) => spec.name === colourKey,
+  )?.values;
+  const existingSizeSpec = groupBody.variesBy?.specifications?.find(
+    (spec) => spec.name === "Size",
+  )?.values;
+
+  groupBody.variesBy = {
+    aspectsImageVariesBy: [colourKey],
+    specifications: [
+      { name: colourKey, values: existingColourSpec?.length ? existingColourSpec : safeColours },
+      { name: "Size", values: existingSizeSpec?.length ? existingSizeSpec : safeSizes },
+    ],
+  };
 }
 
 export interface EbayAspectBuildOptions {
