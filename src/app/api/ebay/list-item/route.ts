@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listDraftOnEbay } from "@/lib/ebay/sell-inventory";
+import { EbayApiError, listDraftOnEbay } from "@/lib/ebay/sell-inventory";
 import { checkVeroSafetyForDraft } from "@/lib/gemini/vero-check";
 import { logUserApiRequest } from "@/lib/requests/tracker";
 import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
@@ -29,6 +29,9 @@ function validateDraft(draft: ListingDraft): string | null {
 }
 
 export async function POST(request: NextRequest) {
+  console.log("=== LIST ON EBAY CALLED ===");
+  console.log("Starting listing process...");
+
   let userId: string | null = null;
 
   try {
@@ -70,11 +73,23 @@ export async function POST(request: NextRequest) {
     });
 
     return NextResponse.json({ success: true, result });
-  } catch (error) {
+  } catch (error: unknown) {
     const blocked = userBlockErrorResponse(error);
     if (blocked) return blocked;
 
     const message = error instanceof Error ? error.message : "Failed to list item on eBay.";
+
+    console.error("=== LIST ON EBAY ERROR ===");
+    console.error("Error message:", message);
+    if (error instanceof Error && error.stack) {
+      console.error("Error stack:", error.stack);
+    }
+    if (error instanceof EbayApiError) {
+      console.error("eBay URL:", error.url);
+      console.error("eBay status:", error.status);
+      console.error("eBay raw body:", error.rawBody);
+    }
+
     if (userId) {
       void logUserApiRequest({
         userId,
@@ -83,6 +98,23 @@ export async function POST(request: NextRequest) {
         status: "failed",
       });
     }
-    return NextResponse.json({ error: message }, { status: 500 });
+
+    const status = error instanceof EbayApiError ? error.status : 500;
+    const details =
+      error instanceof EbayApiError
+        ? error.rawBody
+        : error instanceof Error
+          ? error.stack
+          : undefined;
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: message,
+        details,
+        status,
+      },
+      { status },
+    );
   }
 }

@@ -69,10 +69,21 @@ export function ListingConfirmStep({
         body: JSON.stringify({ userId, draft }),
       });
 
-      const data = await response.json();
+      const data = (await response.json()) as {
+        error?: string;
+        details?: string;
+        status?: number;
+        result?: { listingUrl?: string | null };
+      };
 
       if (!response.ok) {
-        setMessage(data.error ?? "Failed to list on eBay.");
+        const parts = [data.error ?? "Failed to list on eBay."];
+        if (data.details) {
+          const detailsText = String(data.details);
+          parts.push(detailsText.length > 2000 ? `${detailsText.slice(0, 2000)}...` : detailsText);
+        }
+        if (data.status) parts.push(`HTTP ${data.status}`);
+        setMessage(parts.join("\n\n"));
         setIsError(true);
         return;
       }
@@ -168,7 +179,11 @@ export function ListingConfirmStep({
       </button>
 
       {message ? (
-        <p className={`text-sm ${isError ? "text-red-600" : "text-emerald-700"}`}>{message}</p>
+        <p
+          className={`text-sm whitespace-pre-wrap break-words ${isError ? "text-red-600" : "text-emerald-700"}`}
+        >
+          {message}
+        </p>
       ) : null}
 
       {listingUrl ? (

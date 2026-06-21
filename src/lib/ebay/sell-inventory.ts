@@ -30,6 +30,86 @@ function sellHeaders(token: string): HeadersInit {
   };
 }
 
+export class EbayApiError extends Error {
+  readonly status: number;
+  readonly rawBody: string;
+  readonly url: string;
+
+  constructor(message: string, status: number, rawBody: string, url: string) {
+    super(message);
+    this.name = "EbayApiError";
+    this.status = status;
+    this.rawBody = rawBody;
+    this.url = url;
+  }
+}
+
+function redactHeaders(headers: HeadersInit): Record<string, string> {
+  const result: Record<string, string> = {};
+
+  if (headers instanceof Headers) {
+    headers.forEach((value, key) => {
+      result[key] = key.toLowerCase() === "authorization" ? "Bearer [REDACTED]" : value;
+    });
+    return result;
+  }
+
+  if (Array.isArray(headers)) {
+    for (const [key, value] of headers) {
+      result[key] = key.toLowerCase() === "authorization" ? "Bearer [REDACTED]" : value;
+    }
+    return result;
+  }
+
+  for (const [key, value] of Object.entries(headers)) {
+    result[key] = key.toLowerCase() === "authorization" ? "Bearer [REDACTED]" : String(value);
+  }
+
+  return result;
+}
+
+async function ebayFetch(
+  label: string,
+  url: string,
+  init: RequestInit,
+): Promise<{ response: Response; bodyText: string }> {
+  console.log(`[eBay ${label}] Calling:`, url);
+  console.log(`[eBay ${label}] Headers:`, JSON.stringify(redactHeaders(init.headers ?? {})));
+  if (init.body) console.log(`[eBay ${label}] Body:`, init.body);
+
+  const response = await fetch(url, init);
+  const bodyText = await response.text();
+
+  console.log(`[eBay ${label}] Status:`, response.status);
+  console.log(`[eBay ${label}] Body:`, bodyText);
+
+  return { response, bodyText };
+}
+
+function parseEbayErrorMessage(bodyText: string, fallback: string): string {
+  try {
+    const data = JSON.parse(bodyText) as {
+      errors?: Array<{ message?: string; longMessage?: string }>;
+    };
+    return data.errors?.[0]?.longMessage ?? data.errors?.[0]?.message ?? fallback;
+  } catch {
+    return bodyText || fallback;
+  }
+}
+
+function parseJsonSafe<T>(bodyText: string, fallback: T): T {
+  if (!bodyText.trim()) return fallback;
+  try {
+    return JSON.parse(bodyText) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function throwEbayApiError(url: string, response: Response, bodyText: string, fallback: string): never {
+  throw new EbayApiError(parseEbayErrorMessage(bodyText, fallback), response.status, bodyText, url);
+}
+
 function mapCondition(condition: string): string {
   const normalized = condition.toLowerCase();
   if (normalized.includes("used")) return "USED_EXCELLENT";
@@ -102,19 +182,20 @@ export async function getCategorySuggestions(
   );
   url.searchParams.set("q", query.slice(0, 80));
 
-  const response = await fetch(url.toString(), {
+  const requestUrl = url.toString();
+  const { response, bodyText } = await ebayFetch("taxonomy/suggestions", requestUrl, {
     headers: sellHeaders(token),
     cache: "no-store",
   });
 
   if (!response.ok) return [];
 
-  const data = (await response.json()) as {
+  const data = parseJsonSafe(bodyText, {} as {
     categorySuggestions?: Array<{
       category?: { categoryId?: string; categoryName?: string };
       categoryTreeNodeAncestors?: Array<{ categoryName?: string }>;
     }>;
-  };
+  });
 
   return (data.categorySuggestions ?? [])
     .map((entry) => {
@@ -147,16 +228,17 @@ export async function getItemAspectsForCategory(
   );
   url.searchParams.set("category_id", categoryId);
 
-  const response = await fetch(url.toString(), {
+  const requestUrl = url.toString();
+  const { response, bodyText } = await ebayFetch("taxonomy/aspects", requestUrl, {
     headers: sellHeaders(token),
     cache: "no-store",
   });
 
   if (!response.ok) return [];
 
-  const data = (await response.json()) as {
+  const data = parseJsonSafe(bodyText, {} as {
     aspects?: Array<{ localizedAspectName?: string }>;
-  };
+  });
 
   return (data.aspects ?? [])
     .map((aspect) => aspect.localizedAspectName?.trim())
@@ -216,7 +298,8 @@ async function upsertInventoryItem(
     },
   };
 
-  const response = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, {
+  const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`;
+  const { response, bodyText } = await ebayFetch("inventory_item PUT", requestUrl, {
     method: "PUT",
     headers: sellHeaders(token),
     body: JSON.stringify(body),
@@ -224,8 +307,7 @@ async function upsertInventoryItem(
   });
 
   if (!response.ok) {
-    const error = (await response.json()) as { errors?: Array<{ message?: string }> };
-    throw new Error(error.errors?.[0]?.message ?? "Failed to create eBay inventory item.");
+    throwEbayApiError(requestUrl, response, bodyText, "Failed to create eBay inventory item.");
   }
 }
 
@@ -254,19 +336,16 @@ async function upsertInventoryItemGroup(
     aspects: aspectsFromListing(listing),
   };
 
-  const response = await fetch(
-    `${EBAY_API_BASE}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupKey)}`,
-    {
-      method: "PUT",
-      headers: sellHeaders(token),
-      body: JSON.stringify(body),
-      cache: "no-store",
-    },
-  );
+  const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupKey)}`;
+  const { response, bodyText } = await ebayFetch("inventory_item_group PUT", requestUrl, {
+    method: "PUT",
+    headers: sellHeaders(token),
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
 
   if (!response.ok) {
-    const error = (await response.json()) as { errors?: Array<{ message?: string }> };
-    throw new Error(error.errors?.[0]?.message ?? "Failed to create eBay inventory item group.");
+    throwEbayApiError(requestUrl, response, bodyText, "Failed to create eBay inventory item group.");
   }
 }
 
@@ -323,17 +402,18 @@ async function createOffer(
     body.sku = options.sku;
   }
 
-  const response = await fetch(`${EBAY_API_BASE}/sell/inventory/v1/offer`, {
+  const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/offer`;
+  const { response, bodyText } = await ebayFetch("offer POST", requestUrl, {
     method: "POST",
     headers: sellHeaders(token),
     body: JSON.stringify(body),
     cache: "no-store",
   });
 
-  const data = (await response.json()) as { offerId?: string; errors?: Array<{ message?: string }> };
+  const data = parseJsonSafe(bodyText, {} as { offerId?: string; errors?: Array<{ message?: string }> });
 
   if (!response.ok || !data.offerId) {
-    throw new Error(data.errors?.[0]?.message ?? "Failed to create eBay offer.");
+    throwEbayApiError(requestUrl, response, bodyText, "Failed to create eBay offer.");
   }
 
   return data.offerId;
@@ -345,26 +425,24 @@ async function publishOfferByGroup(
   marketplaceId: EbayMarketplaceId,
 ): Promise<{ listingId: string | null }> {
   const config = resolveMarketplaceConfig(marketplaceId);
-  const response = await fetch(
-    `${EBAY_API_BASE}/sell/inventory/v1/offer/publish_by_inventory_item_group`,
-    {
-      method: "POST",
-      headers: sellHeaders(token),
-      body: JSON.stringify({
-        inventoryItemGroupKey: groupKey,
-        marketplaceId: config.marketplaceId,
-      }),
-      cache: "no-store",
-    },
-  );
+  const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/offer/publish_by_inventory_item_group`;
+  const { response, bodyText } = await ebayFetch("publish_by_group POST", requestUrl, {
+    method: "POST",
+    headers: sellHeaders(token),
+    body: JSON.stringify({
+      inventoryItemGroupKey: groupKey,
+      marketplaceId: config.marketplaceId,
+    }),
+    cache: "no-store",
+  });
 
-  const data = (await response.json()) as {
+  const data = parseJsonSafe(bodyText, {} as {
     listingId?: string;
     errors?: Array<{ message?: string }>;
-  };
+  });
 
   if (!response.ok) {
-    throw new Error(data.errors?.[0]?.message ?? "Failed to publish eBay listing group.");
+    throwEbayApiError(requestUrl, response, bodyText, "Failed to publish eBay listing group.");
   }
 
   return { listingId: data.listingId ?? null };
@@ -374,22 +452,20 @@ async function publishOffer(
   token: string,
   offerId: string,
 ): Promise<{ listingId: string | null }> {
-  const response = await fetch(
-    `${EBAY_API_BASE}/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/publish`,
-    {
-      method: "POST",
-      headers: sellHeaders(token),
-      cache: "no-store",
-    },
-  );
+  const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/publish`;
+  const { response, bodyText } = await ebayFetch("publish POST", requestUrl, {
+    method: "POST",
+    headers: sellHeaders(token),
+    cache: "no-store",
+  });
 
-  const data = (await response.json()) as {
+  const data = parseJsonSafe(bodyText, {} as {
     listingId?: string;
     errors?: Array<{ message?: string }>;
-  };
+  });
 
   if (!response.ok) {
-    throw new Error(data.errors?.[0]?.message ?? "Failed to publish eBay listing.");
+    throwEbayApiError(requestUrl, response, bodyText, "Failed to publish eBay listing.");
   }
 
   return { listingId: data.listingId ?? null };
