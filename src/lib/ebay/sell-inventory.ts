@@ -413,6 +413,67 @@ function parseSkuColourAndSizeFromLabel(label: string): { colour: string; size: 
   return { colour, size };
 }
 
+function variantComboKey(label: string): string {
+  const { colour, size } = parseSkuColourAndSizeFromLabel(label);
+  return `${colour.trim().toLowerCase()}|${size.trim().toLowerCase()}`;
+}
+
+function dedupeVariationValues(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(trimmed);
+  }
+  return result;
+}
+
+function dedupeVariantsByCombo(
+  variants: ListingDraft["variants"],
+): ListingDraft["variants"] {
+  const seen = new Set<string>();
+  const result: ListingDraft["variants"] = [];
+  for (const variant of variants) {
+    const key = variantComboKey(variant.label ?? "");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(variant);
+  }
+  return result;
+}
+
+function buildVariationSpecsFromVariants(
+  aspectOptions: EbayAspectBuildOptions,
+  marketplaceId: EbayMarketplaceId,
+): { colourKey: "Colour" | "Color"; colours: string[]; sizes: string[] } {
+  const colourKey = marketplaceId === "EBAY_GB" ? "Colour" : "Color";
+  const labels = (aspectOptions.variantDrafts ?? [])
+    .map((variant) => variant.label?.trim() ?? "")
+    .filter(Boolean);
+  const colours: string[] = [];
+  const sizes: string[] = [];
+
+  for (const label of labels) {
+    const { colour, size } = parseSkuColourAndSizeFromLabel(label);
+    if (!colours.some((entry) => entry.toLowerCase() === colour.toLowerCase())) {
+      colours.push(colour);
+    }
+    if (!sizes.some((entry) => entry.toLowerCase() === size.toLowerCase())) {
+      sizes.push(size);
+    }
+  }
+
+  return {
+    colourKey,
+    colours: dedupeVariationValues(colours.length > 0 ? colours : ["Multicolor"]),
+    sizes: dedupeVariationValues(sizes.length > 0 ? sizes : ["One Size"]),
+  };
+}
+
 const MULTI_SKU_SHARED_ASPECT_KEYS = new Set([
   "Brand",
   "MPN",
@@ -568,9 +629,9 @@ function buildInventoryItemGroupBody(
     specifications: Array<{ name: string; values: string[] }>;
   };
 } {
-  let { colourKey, colours, sizes } = resolveGroupColourSizeArrays(aspectOptions, marketplaceId);
-  if (colours.length === 0) colours = ["Multicolor"];
-  if (sizes.length === 0) sizes = ["One Size"];
+  const { colourKey, colours, sizes } = buildVariationSpecsFromVariants(aspectOptions, marketplaceId);
+  let finalColours = colours;
+  let finalSizes = sizes;
 
   const baseAspects = buildEbayAspects(listing, aspectOptions);
   const department = baseAspects.Department?.[0] ?? "Unisex";
@@ -583,9 +644,6 @@ function buildInventoryItemGroupBody(
     "Age Group": baseAspects["Age Group"]?.length ? baseAspects["Age Group"] : ["Adult"],
     Material: baseAspects.Material?.length ? baseAspects.Material : ["See Description"],
   });
-
-  let finalColours = colours;
-  let finalSizes = sizes;
 
   if (finalColours.length === 0 || (finalColours.length === 1 && finalColours[0] === "Multicolor")) {
     const emergencyColours = [
@@ -616,6 +674,9 @@ function buildInventoryItemGroupBody(
     }
   }
 
+  finalColours = dedupeVariationValues(finalColours);
+  finalSizes = dedupeVariationValues(finalSizes);
+
   const variesBy = {
     aspectsImageVariesBy: [colourKey],
     specifications: [
@@ -640,9 +701,9 @@ function ensureGroupBodyHasAspects(
   aspectOptions: EbayAspectBuildOptions,
   marketplaceId: EbayMarketplaceId,
 ): void {
-  const { colourKey, colours, sizes } = resolveGroupColourSizeArrays(aspectOptions, marketplaceId);
-  const safeColours = colours.length > 0 ? colours : ["Multicolor"];
-  const safeSizes = sizes.length > 0 ? sizes : ["One Size"];
+  const { colourKey, colours, sizes } = buildVariationSpecsFromVariants(aspectOptions, marketplaceId);
+  const safeColours = dedupeVariationValues(colours.length > 0 ? colours : ["Multicolor"]);
+  const safeSizes = dedupeVariationValues(sizes.length > 0 ? sizes : ["One Size"]);
   const alternateColourKey = colourKey === "Colour" ? "Color" : "Colour";
 
   if (!groupBody.aspects) {
@@ -672,8 +733,14 @@ function ensureGroupBodyHasAspects(
   groupBody.variesBy = {
     aspectsImageVariesBy: [colourKey],
     specifications: [
-      { name: colourKey, values: existingColourSpec?.length ? existingColourSpec : safeColours },
-      { name: "Size", values: existingSizeSpec?.length ? existingSizeSpec : safeSizes },
+      {
+        name: colourKey,
+        values: dedupeVariationValues(existingColourSpec?.length ? existingColourSpec : safeColours),
+      },
+      {
+        name: "Size",
+        values: dedupeVariationValues(existingSizeSpec?.length ? existingSizeSpec : safeSizes),
+      },
     ],
   };
 }
@@ -1298,9 +1365,23 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
   }
 
   const groupKey = resolveGroupSkuKey(draft);
+  const groupVariants = dedupeVariantsByCombo(activeVariants);
+
+  if (groupVariants.length < activeVariants.length) {
+    console.log(
+      "[eBay group] Removed duplicate Colour+Size combos:",
+      activeVariants.length - groupVariants.length,
+    );
+  }
+
+  const { colors: groupColors, sizes: groupSizes } = extractColoursAndSizesFromLabels(
+    groupVariants.map((variant) => variant.label),
+  );
+  aspectOptions.variantDrafts = groupVariants;
+  aspectOptions.extractedAspects = { colours: groupColors, sizes: groupSizes };
 
   const variantResults = await Promise.all(
-    activeVariants.map(async (variant) => {
+    groupVariants.map(async (variant) => {
       const sku = resolveVariantSkuForEbay(variant);
 
       const images = variant.imageUrl ? [variant.imageUrl, ...selectedPhotos] : selectedPhotos;
@@ -1357,7 +1438,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
   await requireConfirmedLocation(userId);
   const reupsertAllInventory = async () => {
     await Promise.all(
-      activeVariants.map(async (variant) => {
+      groupVariants.map(async (variant) => {
         const sku = resolveVariantSkuForEbay(variant);
         const images = variant.imageUrl ? [variant.imageUrl, ...selectedPhotos] : selectedPhotos;
         const variantListing = { ...listing, suggestedPrice: variant.price };
