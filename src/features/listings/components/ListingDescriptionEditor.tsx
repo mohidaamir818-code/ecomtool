@@ -1,6 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import dynamic from "next/dynamic";
+import { useEffect, useState } from "react";
+import "react-quill-new/dist/quill.snow.css";
+
+const ReactQuill = dynamic(() => import("react-quill-new"), { ssr: false });
 
 interface ListingDescriptionEditorProps {
   value: string;
@@ -9,19 +13,14 @@ interface ListingDescriptionEditorProps {
 
 type DescriptionTab = "preview" | "editor";
 
-function wrapSelection(before: string, after: string) {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) return;
-
-  const range = selection.getRangeAt(0);
-  const selectedText = range.toString();
-  if (!selectedText) return;
-
-  const wrapped = document.createElement("span");
-  wrapped.innerHTML = `${before}${selectedText}${after}`;
-  range.deleteContents();
-  range.insertNode(wrapped);
-}
+const QUILL_MODULES = {
+  toolbar: [
+    ["bold", "italic"],
+    [{ header: 2 }],
+    [{ list: "bullet" }],
+    [{ list: "ordered" }],
+  ],
+};
 
 const previewClassName = [
   "min-h-[280px] rounded-lg border border-[#E5E5E5] bg-white p-5",
@@ -36,8 +35,21 @@ const previewClassName = [
   "[&_em]:italic",
 ].join(" ");
 
+const quillEditorClassName = [
+  "listing-description-quill rounded-lg border border-[#E5E5E5] bg-white overflow-hidden",
+  "[&_.ql-toolbar]:border-0 [&_.ql-toolbar]:border-b [&_.ql-toolbar]:border-[#E5E5E5] [&_.ql-toolbar]:bg-[#F7F7F7]",
+  "[&_.ql-container]:border-0 [&_.ql-container]:min-h-[240px] [&_.ql-editor]:min-h-[240px]",
+  "[&_.ql-editor]:text-[15px] [&_.ql-editor]:leading-relaxed [&_.ql-editor]:text-[#191919]",
+  "[&_.ql-editor_h2]:text-xl [&_.ql-editor_h2]:font-bold",
+].join(" ");
+
 export function ListingDescriptionEditor({ value, onChange }: ListingDescriptionEditorProps) {
   const [tab, setTab] = useState<DescriptionTab>("preview");
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   return (
     <div className="space-y-3">
@@ -76,37 +88,18 @@ export function ListingDescriptionEditor({ value, onChange }: ListingDescription
             </div>
           )}
         </div>
-      ) : (
-        <div className="space-y-3">
-          <div className="flex flex-wrap gap-2">
-            {[
-              { label: "Bold", action: () => wrapSelection("<strong>", "</strong>") },
-              { label: "Italic", action: () => wrapSelection("<em>", "</em>") },
-              { label: "Heading", action: () => wrapSelection("<h2>", "</h2>") },
-              { label: "List", action: () => wrapSelection("<ul><li>", "</li></ul>") },
-            ].map((tool) => (
-              <button
-                key={tool.label}
-                type="button"
-                onClick={tool.action}
-                className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-[#374151] hover:bg-gray-50"
-              >
-                {tool.label}
-              </button>
-            ))}
-          </div>
-
-          <label className="block text-xs font-semibold uppercase tracking-wide text-[#707070]">
-            HTML Editor
-            <textarea
-              value={value}
-              onChange={(event) => onChange(event.target.value)}
-              rows={6}
-              className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2.5 font-mono text-sm text-[#374151] outline-none focus:border-brand"
-              placeholder="HTML description..."
-            />
-          </label>
+      ) : mounted ? (
+        <div className={quillEditorClassName}>
+          <ReactQuill
+            value={value}
+            onChange={onChange}
+            modules={QUILL_MODULES}
+            theme="snow"
+            placeholder="Write your listing description..."
+          />
         </div>
+      ) : (
+        <div className={`${previewClassName} text-[#707070]`}>Loading editor...</div>
       )}
     </div>
   );
