@@ -293,14 +293,82 @@ function collectVariantLabels(context: EbayAspectSourceContext): string[] {
   return labels;
 }
 
-function extractAttributesFromLabels(labels: string[]): { colors: string[]; sizes: string[] } {
-  return extractVariantAttributes(labels.map((label, index) => ({
-    id: String(index),
-    label,
-    price: 0,
-    currency: "GBP",
-    stock: null,
-  })));
+const VARIANT_SIZE_PART = /^(XS|S|M|L|XL|XXL|XXXL|2XL|3XL|4XL|\d+)$/i;
+
+export function extractColoursAndSizesFromLabels(labels: string[]): {
+  colors: string[];
+  sizes: string[];
+} {
+  const colors = new Set<string>();
+  const sizes = new Set<string>();
+
+  for (const label of labels) {
+    const trimmed = label.trim();
+    if (!trimmed) continue;
+
+    const parts = trimmed
+      .split(/\s*\/\s*|\|/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    for (const part of parts) {
+      if (VARIANT_SIZE_PART.test(part)) {
+        sizes.add(part);
+      }
+    }
+
+    const colourPart = parts.find(
+      (part) => !/^\d/.test(part) && !VARIANT_SIZE_PART.test(part),
+    );
+    if (colourPart) {
+      colors.add(capitalizeColorWord(colourPart));
+    }
+  }
+
+  return {
+    colors: [...colors].slice(0, 10),
+    sizes: [...sizes].slice(0, 20),
+  };
+}
+
+export const EBAY_ASPECT_SAFE_DEFAULTS: Record<string, string[]> = {
+  Size: ["One Size"],
+  Colour: ["Multicolor"],
+  Color: ["Multicolor"],
+  Department: ["Unisex"],
+  Material: ["See Description"],
+  Pattern: ["See Description"],
+  Style: ["Casual"],
+  Fit: ["Regular"],
+  "Age Group": ["Adult"],
+  "Size Type": ["Regular"],
+  Occasion: ["Casual"],
+  Season: ["All Seasons"],
+  "Sleeve Length": ["See Description"],
+  Neckline: ["See Description"],
+  "Fabric Type": ["See Description"],
+  "Care Instructions": ["Machine Wash"],
+  Features: ["See Description"],
+  Theme: ["See Description"],
+  Closure: ["See Description"],
+  Lining: ["See Description"],
+  "Pocket Type": ["See Description"],
+};
+
+export function getSafeAspectDefault(fieldName: string): string[] {
+  const direct = EBAY_ASPECT_SAFE_DEFAULTS[fieldName];
+  if (direct) return direct;
+
+  const lower = fieldName.toLowerCase();
+  if (lower === "color" || lower === "colour") {
+    return EBAY_ASPECT_SAFE_DEFAULTS.Colour;
+  }
+
+  for (const [key, value] of Object.entries(EBAY_ASPECT_SAFE_DEFAULTS)) {
+    if (key.toLowerCase() === lower) return value;
+  }
+
+  return [SEE_DESCRIPTION];
 }
 
 function isPlaceholderAspectValue(value: string | undefined): boolean {
@@ -317,9 +385,9 @@ export function resolveColourValues(context: EbayAspectSourceContext): string[] 
   const description = product?.description ?? listing.descriptionHtml;
   const colours = new Set<string>();
 
-  const fromVariants = extractAttributesFromLabels(collectVariantLabels(context));
+  const fromVariants = extractColoursAndSizesFromLabels(collectVariantLabels(context));
   for (const colour of fromVariants.colors) {
-    colours.add(capitalizeColorWord(colour));
+    colours.add(colour);
   }
 
   const aiColour = findItemSpecificValue(listing.itemSpecifics, "Color")
@@ -347,7 +415,7 @@ export function resolveSizeValues(context: EbayAspectSourceContext): string[] {
   const description = product?.description ?? listing.descriptionHtml;
   const sizes = new Set<string>();
 
-  const fromVariants = extractAttributesFromLabels(collectVariantLabels(context));
+  const fromVariants = extractColoursAndSizesFromLabels(collectVariantLabels(context));
   for (const size of fromVariants.sizes) {
     sizes.add(size);
   }
@@ -367,7 +435,7 @@ export function resolveSizeValues(context: EbayAspectSourceContext): string[] {
   }
 
   if (sizes.size === 0) {
-    return [SEE_DESCRIPTION];
+    return ["One Size"];
   }
 
   return [...sizes];
@@ -481,7 +549,7 @@ export function buildDefaultEbayUkAspects(
     Fit: [pickSpecificValue(specifics, ["Fit"], "Regular")],
     "Sleeve Length": [pickSpecificValue(specifics, ["Sleeve Length"], SEE_DESCRIPTION)],
     Neckline: [pickSpecificValue(specifics, ["Neckline"], SEE_DESCRIPTION)],
-    Features: [pickSpecificValue(specifics, ["Features", "Feature"], "Lightweight")],
+    Features: [pickSpecificValue(specifics, ["Features", "Feature"], SEE_DESCRIPTION)],
     "Age Group": [
       pickSpecificValue(specifics, ["Age Group"], detectAgeGroupFromText(title, description)),
     ],
@@ -489,11 +557,14 @@ export function buildDefaultEbayUkAspects(
       pickSpecificValue(specifics, ["Size Type"], detectSizeTypeFromText(title, description)),
     ],
     Style: [pickSpecificValue(specifics, ["Style"], "Casual")],
-    Theme: [pickSpecificValue(specifics, ["Theme"], "Fashion")],
+    Theme: [pickSpecificValue(specifics, ["Theme"], SEE_DESCRIPTION)],
     "Fabric Type": [material],
     "Care Instructions": [
       pickSpecificValue(specifics, ["Care Instructions"], "Machine Wash"),
     ],
+    Closure: [pickSpecificValue(specifics, ["Closure"], SEE_DESCRIPTION)],
+    Lining: [pickSpecificValue(specifics, ["Lining"], SEE_DESCRIPTION)],
+    "Pocket Type": [pickSpecificValue(specifics, ["Pocket Type"], SEE_DESCRIPTION)],
     "Country/Region of Manufacture": [MPN_DOES_NOT_APPLY_EBAY],
   };
 }

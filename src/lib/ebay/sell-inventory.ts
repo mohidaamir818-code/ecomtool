@@ -12,9 +12,10 @@ import {
   aspectsFromListingSpecifics,
   buildDefaultEbayUkAspects,
   filterAspectsForCategory,
+  getSafeAspectDefault,
   mergeEbayAspects,
+  normalizeAspectNameForMarketplace,
   resolveRequiredEbayAspects,
-  SEE_DESCRIPTION,
 } from "@/lib/listings/item-specifics";
 import {
   buildEbayListingUrl,
@@ -193,7 +194,13 @@ function patchMissingAspectOverride(
   if (!aspectOptions.aspectOverrides) {
     aspectOptions.aspectOverrides = {};
   }
-  aspectOptions.aspectOverrides[missingField] = [SEE_DESCRIPTION];
+  const fieldKey =
+    aspectOptions.marketplaceId === "EBAY_GB"
+      ? normalizeAspectNameForMarketplace(missingField, aspectOptions.marketplaceId)
+      : missingField;
+  const safeValue = getSafeAspectDefault(fieldKey);
+  aspectOptions.aspectOverrides[fieldKey] = safeValue;
+  console.log(`Auto-fixing missing field: ${fieldKey}`, safeValue);
 }
 
 async function executeWithMissingAspectRetry(
@@ -211,9 +218,6 @@ async function executeWithMissingAspectRetry(
     if (!retried) {
       const missingField = extractMissingAspectField(bodyText);
       if (missingField) {
-        console.log(
-          `[eBay ${label}] Missing aspect "${missingField}", retrying with "${SEE_DESCRIPTION}"`,
-        );
         patchMissingAspectOverride(aspectOptions, missingField);
         retried = true;
         continue;
