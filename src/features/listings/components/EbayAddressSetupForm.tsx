@@ -21,6 +21,25 @@ function isAddressSaved(data: InventoryLocationResponse): boolean {
   return Boolean(data.city?.trim() && data.postalCode?.trim() && data.country?.trim());
 }
 
+const warehouseConfiguredKey = (userId: string) => `ebay-warehouse-configured-${userId}`;
+const parentNotifiedUsers = new Set<string>();
+
+function readStoredConfigured(userId: string): boolean {
+  if (typeof window === "undefined") return false;
+  return sessionStorage.getItem(warehouseConfiguredKey(userId)) === "1";
+}
+
+function storeConfigured(userId: string): void {
+  if (typeof window === "undefined") return;
+  sessionStorage.setItem(warehouseConfiguredKey(userId), "1");
+}
+
+function notifyParentOnce(userId: string, notify: () => void): void {
+  if (parentNotifiedUsers.has(userId)) return;
+  parentNotifiedUsers.add(userId);
+  notify();
+}
+
 interface EbayAddressSetupFormProps {
   userId: string;
   mode: "setup" | "edit";
@@ -40,13 +59,16 @@ export function EbayAddressSetupForm({
   onComplete,
   onCancel,
 }: EbayAddressSetupFormProps) {
+  const isSetup = mode === "setup";
+  const storedConfigured = isSetup && readStoredConfigured(userId);
+
   const [city, setCity] = useState(initialCity);
   const [postalCode, setPostalCode] = useState(initialPostalCode);
   const [country, setCountry] = useState(initialCountry);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [checkingExisting, setCheckingExisting] = useState(mode === "setup");
-  const [addressAlreadyExists, setAddressAlreadyExists] = useState(false);
+  const [checkingExisting, setCheckingExisting] = useState(isSetup && !storedConfigured);
+  const [addressAlreadyExists, setAddressAlreadyExists] = useState(storedConfigured);
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
 
@@ -58,6 +80,13 @@ export function EbayAddressSetupForm({
 
   useEffect(() => {
     if (mode !== "setup") return;
+
+    if (readStoredConfigured(userId)) {
+      setAddressAlreadyExists(true);
+      setCheckingExisting(false);
+      notifyParentOnce(userId, () => onCompleteRef.current());
+      return;
+    }
 
     let cancelled = false;
 
@@ -72,7 +101,10 @@ export function EbayAddressSetupForm({
 
         if (response.ok && isAddressSaved(data)) {
           setAddressAlreadyExists(true);
-          onCompleteRef.current();
+          if (data.addressConfirmed) {
+            storeConfigured(userId);
+            notifyParentOnce(userId, () => onCompleteRef.current());
+          }
         }
       } catch {
         // Fall through to showing the setup form.
@@ -121,13 +153,15 @@ export function EbayAddressSetupForm({
       if (!response.ok) {
         if (data.error?.includes("already set up")) {
           setAddressAlreadyExists(true);
-          onCompleteRef.current();
+          storeConfigured(userId);
+          notifyParentOnce(userId, () => onCompleteRef.current());
           return;
         }
         setError(data.error ?? "Failed to save warehouse address.");
         return;
       }
 
+      storeConfigured(userId);
       onComplete();
     } catch {
       setError("Network error while saving warehouse address.");
@@ -136,10 +170,14 @@ export function EbayAddressSetupForm({
     }
   }
 
-  const isSetup = mode === "setup";
-
   if (isSetup && checkingExisting) {
-    return null;
+    return (
+      <div
+        className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm"
+        aria-busy="true"
+        aria-label="Checking warehouse address"
+      />
+    );
   }
 
   if (isSetup && addressAlreadyExists) {
