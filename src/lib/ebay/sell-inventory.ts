@@ -365,8 +365,32 @@ async function upsertInventoryItemGroup(
   }
 }
 
-async function createOffer(
-  token: string,
+function parseOfferIdFromErrorBody(bodyText: string): string | null {
+  try {
+    const data = JSON.parse(bodyText) as {
+      errors?: Array<{
+        errorId?: number;
+        message?: string;
+        parameters?: Array<{ name?: string; value?: string }>;
+      }>;
+    };
+
+    for (const error of data.errors ?? []) {
+      const isDuplicate =
+        error.errorId === 25002 || error.message?.toLowerCase().includes("already exists");
+      if (!isDuplicate) continue;
+
+      const offerParam = error.parameters?.find((param) => param.name === "offerId");
+      if (offerParam?.value) return offerParam.value;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function buildOfferBody(
   listing: GeneratedListing,
   categoryId: string,
   quantity: number,
@@ -374,7 +398,7 @@ async function createOffer(
   policyIds: EbayBusinessPolicies,
   marketplaceId: EbayMarketplaceId,
   options: { sku?: string; inventoryItemGroupKey?: string; priceOverride?: number },
-): Promise<string> {
+): Record<string, unknown> {
   const config = resolveMarketplaceConfig(marketplaceId);
   const { fulfillmentPolicyId, paymentPolicyId, returnPolicyId } = policyIds;
 
@@ -418,6 +442,75 @@ async function createOffer(
     body.sku = options.sku;
   }
 
+  return body;
+}
+
+async function getOfferIdBySku(
+  token: string,
+  marketplaceId: EbayMarketplaceId,
+  sku: string,
+): Promise<string | null> {
+  const config = resolveMarketplaceConfig(marketplaceId);
+  const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${config.marketplaceId}`;
+
+  const { response, bodyText } = await ebayFetch("offer GET by sku", requestUrl, {
+    headers: inventoryHeaders(token, marketplaceId),
+    cache: "no-store",
+  });
+
+  if (!response.ok) return null;
+
+  const data = parseJsonSafe(bodyText, {} as { offers?: Array<{ offerId?: string }> });
+  return data.offers?.[0]?.offerId ?? null;
+}
+
+async function updateOffer(
+  token: string,
+  marketplaceId: EbayMarketplaceId,
+  offerId: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/offer/${encodeURIComponent(offerId)}`;
+  const { response, bodyText } = await ebayFetch("offer PUT", requestUrl, {
+    method: "PUT",
+    headers: inventoryHeaders(token, marketplaceId),
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throwEbayApiError(requestUrl, response, bodyText, "Failed to update eBay offer.");
+  }
+}
+
+async function createOffer(
+  token: string,
+  listing: GeneratedListing,
+  categoryId: string,
+  quantity: number,
+  promotions: VolumePromotionTier[],
+  policyIds: EbayBusinessPolicies,
+  marketplaceId: EbayMarketplaceId,
+  options: { sku?: string; inventoryItemGroupKey?: string; priceOverride?: number },
+): Promise<string> {
+  const body = buildOfferBody(
+    listing,
+    categoryId,
+    quantity,
+    promotions,
+    policyIds,
+    marketplaceId,
+    options,
+  );
+
+  if (options.sku) {
+    const existingId = await getOfferIdBySku(token, marketplaceId, options.sku);
+    if (existingId) {
+      await updateOffer(token, marketplaceId, existingId, body);
+      return existingId;
+    }
+  }
+
   const requestUrl = `${EBAY_API_BASE}/sell/inventory/v1/offer`;
   const { response, bodyText } = await ebayFetch("offer POST", requestUrl, {
     method: "POST",
@@ -426,13 +519,18 @@ async function createOffer(
     cache: "no-store",
   });
 
-  const data = parseJsonSafe(bodyText, {} as { offerId?: string; errors?: Array<{ message?: string }> });
-
-  if (!response.ok || !data.offerId) {
-    throwEbayApiError(requestUrl, response, bodyText, "Failed to create eBay offer.");
+  if (response.ok) {
+    const data = parseJsonSafe(bodyText, {} as { offerId?: string });
+    if (data.offerId) return data.offerId;
   }
 
-  return data.offerId;
+  const offerIdFromError = parseOfferIdFromErrorBody(bodyText);
+  if (offerIdFromError) {
+    await updateOffer(token, marketplaceId, offerIdFromError, body);
+    return offerIdFromError;
+  }
+
+  throwEbayApiError(requestUrl, response, bodyText, "Failed to create eBay offer.");
 }
 
 async function publishOfferByGroup(
