@@ -413,17 +413,44 @@ function normalizeImageUrls(urls: string[]): string[] {
     .filter(Boolean);
 }
 
-const EBAY_DESCRIPTION_MAX_LENGTH = 3999;
+const EBAY_DESCRIPTION_MAX_LENGTH = 500000;
 
 const EBAY_DESCRIPTION_FALLBACK = "Please see product images for details.";
 
 const EBAY_DESCRIPTION_EMPTY_FALLBACK =
   "Quality product. Please see images for full details. Contact us with any questions.";
 
+// Force any insecure or protocol-relative image/link URL to https so eBay accepts
+// it (eBay rejects mixed/insecure content in descriptions).
+function secureDescriptionUrls(html: string): string {
+  return html
+    .replace(/(\s(?:src|href)\s*=\s*")\/\//gi, "$1https://")
+    .replace(/(\s(?:src|href)\s*=\s*")http:\/\//gi, "$1https://");
+}
+
+// eBay descriptions support HTML but not active content. Preserve formatting and
+// <img> tags; only strip script/style/iframe blocks and inline event handlers.
 function cleanDescription(html: string): string {
-  const withoutTags = html.replace(/<[^>]*>/g, " ");
-  const cleaned = withoutTags.replace(/\s+/g, " ").trim();
-  return cleaned.substring(0, EBAY_DESCRIPTION_MAX_LENGTH);
+  let cleaned = html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi, "")
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, "");
+
+  cleaned = secureDescriptionUrls(cleaned);
+
+  // Collapse excessive blank lines/spaces without destroying tags.
+  cleaned = cleaned.replace(/[ \t]+/g, " ").replace(/(\s*\n\s*){3,}/g, "\n\n").trim();
+
+  if (cleaned.length <= EBAY_DESCRIPTION_MAX_LENGTH) {
+    return cleaned;
+  }
+
+  // If we ever exceed the cap, trim on a tag boundary so we never cut an <img> in half.
+  const truncated = cleaned.substring(0, EBAY_DESCRIPTION_MAX_LENGTH);
+  const lastTagClose = truncated.lastIndexOf(">");
+  return lastTagClose > 0 ? truncated.substring(0, lastTagClose + 1) : truncated;
 }
 
 function resolveEbayDescription(html: string | null | undefined): string {
