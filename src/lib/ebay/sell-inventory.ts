@@ -656,20 +656,6 @@ function buildGroupVariesBy(
   };
 }
 
-const MULTI_SKU_SHARED_ASPECT_KEYS = new Set([
-  "Brand",
-  "MPN",
-  "Department",
-  "Age Group",
-  "Material",
-  "Pattern",
-  "Occasion",
-  "Season",
-  "Style",
-  "Fit",
-  "Country/Region of Manufacture",
-]);
-
 function isMultiSkuListing(aspectOptions: EbayAspectBuildOptions): boolean {
   return (aspectOptions.variantDrafts?.length ?? 0) > 1;
 }
@@ -677,11 +663,15 @@ function isMultiSkuListing(aspectOptions: EbayAspectBuildOptions): boolean {
 function buildMultiSkuInventoryItemAspects(
   aspects: Record<string, string[]>,
 ): Record<string, string[]> {
+  // Variation dimensions (Colour/Size) must live only in the group's variesBy and
+  // in each member's own single value - never in the shared/common aspects. Keep
+  // all other item specifics (Type, Style, etc.) so required aspects are not dropped.
+  const variationKeys = new Set(["colour", "color", "size"]);
   const filtered: Record<string, string[]> = {};
   for (const [key, values] of Object.entries(aspects)) {
-    if (MULTI_SKU_SHARED_ASPECT_KEYS.has(key) && values.length > 0) {
-      filtered[key] = values;
-    }
+    if (variationKeys.has(key.toLowerCase())) continue;
+    if (values.length === 0) continue;
+    filtered[key] = values;
   }
   return filtered;
 }
