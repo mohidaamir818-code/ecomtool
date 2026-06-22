@@ -785,12 +785,32 @@ function ensureGroupBodyHasAspects(
     (spec) => spec.name === "Size",
   )?.values;
 
-  groupBody.variesBy = buildGroupVariesBy(
-    colourKey,
-    existingColourSpec?.length ? existingColourSpec : safeColours,
-    existingSizeSpec?.length ? existingSizeSpec : safeSizes,
-    aspectOptions,
-  );
+  const labels = (aspectOptions.variantDrafts ?? [])
+    .map((v) => v.label?.trim() ?? "")
+    .filter(Boolean);
+
+  const hasSizeVariants = labels.some((l) => l.includes("/"));
+
+  const specsForEnsure: Array<{ name: string; values: string[] }> = [];
+
+  const colourValues = existingColourSpec?.length ? existingColourSpec : safeColours;
+  specsForEnsure.push({
+    name: colourKey,
+    values: dedupeVariationValues(colourValues),
+  });
+
+  if (hasSizeVariants) {
+    const sizeValues = existingSizeSpec?.length ? existingSizeSpec : safeSizes;
+    specsForEnsure.push({
+      name: "Size",
+      values: dedupeVariationValues(sizeValues),
+    });
+  }
+
+  groupBody.variesBy = {
+    aspectsImageVariesBy: [colourKey],
+    specifications: specsForEnsure,
+  };
 }
 
 export interface EbayAspectBuildOptions {
