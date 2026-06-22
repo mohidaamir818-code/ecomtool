@@ -413,7 +413,7 @@ function normalizeImageUrls(urls: string[]): string[] {
     .filter(Boolean);
 }
 
-const EBAY_DESCRIPTION_MAX_LENGTH = 500000;
+const EBAY_DESCRIPTION_MAX_LENGTH = 4000;
 
 const EBAY_DESCRIPTION_FALLBACK = "Please see product images for details.";
 
@@ -443,14 +443,36 @@ function cleanDescription(html: string): string {
   // Collapse excessive blank lines/spaces without destroying tags.
   cleaned = cleaned.replace(/[ \t]+/g, " ").replace(/(\s*\n\s*){3,}/g, "\n\n").trim();
 
-  if (cleaned.length <= EBAY_DESCRIPTION_MAX_LENGTH) {
-    return cleaned;
+  return cleaned;
+}
+
+// eBay limits product.description to 4000 chars (error 25718). The images are
+// appended as a trailing <div> of <img> tags, so when we must truncate we keep
+// that image block intact and trim only the preceding text - otherwise the
+// images we fixed would get cut off again.
+function enforceEbayDescriptionLimit(html: string): string {
+  if (html.length <= EBAY_DESCRIPTION_MAX_LENGTH) {
+    return html;
   }
 
-  // If we ever exceed the cap, trim on a tag boundary so we never cut an <img> in half.
-  const truncated = cleaned.substring(0, EBAY_DESCRIPTION_MAX_LENGTH);
+  const imageBlockMatch = html.match(/\s*<div[^>]*>\s*(?:<img\b[^>]*>\s*)+<\/div>\s*$/i);
+  if (imageBlockMatch) {
+    const imageBlock = imageBlockMatch[0];
+    const room = EBAY_DESCRIPTION_MAX_LENGTH - imageBlock.length - 3; // 3 for the ellipsis
+    if (room > 0) {
+      let textPart = html.slice(0, html.length - imageBlock.length).slice(0, room);
+      const lastTagClose = textPart.lastIndexOf(">");
+      if (lastTagClose > 0) {
+        textPart = textPart.slice(0, lastTagClose + 1);
+      }
+      return `${textPart}...${imageBlock}`;
+    }
+  }
+
+  const truncated = html.substring(0, EBAY_DESCRIPTION_MAX_LENGTH - 3);
   const lastTagClose = truncated.lastIndexOf(">");
-  return lastTagClose > 0 ? truncated.substring(0, lastTagClose + 1) : truncated;
+  const safe = lastTagClose > 0 ? truncated.substring(0, lastTagClose + 1) : truncated;
+  return `${safe}...`;
 }
 
 function resolveEbayDescription(html: string | null | undefined): string {
@@ -460,6 +482,8 @@ function resolveEbayDescription(html: string | null | undefined): string {
   if (!description || description.length === 0) {
     description = EBAY_DESCRIPTION_EMPTY_FALLBACK;
   }
+
+  description = enforceEbayDescriptionLimit(description);
 
   return description;
 }
