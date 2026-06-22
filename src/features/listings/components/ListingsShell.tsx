@@ -52,6 +52,7 @@ export function ListingsShell() {
   const [veroLoading, setVeroLoading] = useState(false);
   const [generateLoading, setGenerateLoading] = useState(false);
   const [showVeroModal, setShowVeroModal] = useState(false);
+  const [veroAcknowledged, setVeroAcknowledged] = useState(false);
   const [notice, setNotice] = useState("");
   const [isError, setIsError] = useState(false);
   const [listedUrl, setListedUrl] = useState<string | null>(null);
@@ -260,6 +261,7 @@ export function ListingsShell() {
     setDraft(null);
     setVero(null);
     setShowVeroModal(false);
+    setVeroAcknowledged(false);
     setListedUrl(null);
     setNotice("");
     setIsError(false);
@@ -278,6 +280,7 @@ export function ListingsShell() {
     }
 
     setVeroLoading(true);
+    setVeroAcknowledged(false);
     setNotice("");
 
     try {
@@ -311,6 +314,14 @@ export function ListingsShell() {
     } finally {
       setVeroLoading(false);
     }
+  }
+
+  function handleVeroAcknowledgeProceed() {
+    setVeroAcknowledged(true);
+    setShowVeroModal(false);
+    setNotice("");
+    setIsError(false);
+    setCurrentStep(2);
   }
 
   async function generateListing(sourceProduct: ListingProductSource) {
@@ -418,7 +429,8 @@ export function ListingsShell() {
 
   function validateStep(step: number): string | null {
     if (step === 0 && !url.trim()) return "Please paste an AliExpress product URL.";
-    if (step === 1 && vero && !vero.safe) return "VeRO check must pass before continuing.";
+    if (step === 1 && vero && !vero.safe && !veroAcknowledged)
+      return "Acknowledge the VeRO risk to continue, or start a new listing.";
     if (step === 2 && !pricingBreakdown) return "Apply your pricing preferences before continuing.";
     if (step === 4) {
       if (!listing?.seoTitle.trim()) return "Title is required.";
@@ -459,7 +471,7 @@ export function ListingsShell() {
     }
 
     if (currentStep === 1) {
-      if (!vero?.safe) {
+      if (!vero?.safe && !veroAcknowledged) {
         setShowVeroModal(true);
         return;
       }
@@ -795,7 +807,7 @@ export function ListingsShell() {
             onNext={() => void handleNext()}
             nextDisabled={busy || (currentStep === 3 && generateLoading)}
             nextLabel={currentStep === 0 ? "Check & Generate Listing" : "Next"}
-            hideNext={currentStep === 1 && Boolean(vero && !vero.safe)}
+            hideNext={currentStep === 1 && Boolean(vero && !vero.safe) && !veroAcknowledged}
           />
         ) : null}
           </>
@@ -805,6 +817,7 @@ export function ListingsShell() {
       {showVeroModal && vero && !vero.safe ? (
         <VeroBlockModal
           result={vero}
+          onProceed={handleVeroAcknowledgeProceed}
           onStartNew={() => {
             setShowVeroModal(false);
             resetWizard();
