@@ -1096,7 +1096,24 @@ async function upsertInventoryItem(
       let aspects = buildEbayAspects(listing, aspectOptions);
 
       if (isMultiSkuListing(aspectOptions)) {
-        aspects = buildMultiSkuInventoryItemAspects(aspects);
+        // Each member SKU in a group MUST carry its own variation values so eBay
+        // can place it uniquely in the matrix. Keep the shared aspects, then add
+        // this SKU's single Colour (+ Size when the group varies by size). Without
+        // it every member looks identical -> 25013 "Duplicate name-value combination".
+        const memberAspects = buildMultiSkuInventoryItemAspects(aspects);
+        const colourKey = marketplaceId === "EBAY_GB" ? "Colour" : "Color";
+        const alternateColourKey = colourKey === "Colour" ? "Color" : "Colour";
+        const { colour, size } = parseSkuColourAndSizeFromLabel(variantLabel ?? "");
+        memberAspects[colourKey] = [colour];
+        delete memberAspects[alternateColourKey];
+
+        const groupHasSize = (aspectOptions.variantDrafts ?? []).some((variant) =>
+          String(variant.label ?? "").includes("/"),
+        );
+        if (groupHasSize) {
+          memberAspects.Size = [size];
+        }
+        aspects = memberAspects;
       } else {
         if (variantLabel) {
           const colourKey = marketplaceId === "EBAY_GB" ? "Colour" : "Color";
