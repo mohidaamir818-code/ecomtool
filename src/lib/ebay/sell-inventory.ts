@@ -41,6 +41,7 @@ import { DEFAULT_PROMOTIONS } from "@/types/listing-generator";
 const EBAY_API_BASE = "https://api.ebay.com";
 const MAX_PHOTOS = 24;
 const MAX_ASPECT_RETRIES = 5;
+const EBAY_FETCH_TIMEOUT_MS = 30000;
 
 function taxonomyHeaders(token: string, marketplaceId: EbayMarketplaceId): HeadersInit {
   const { acceptLanguage } = resolveMarketplaceConfig(marketplaceId);
@@ -117,13 +118,25 @@ async function ebayFetch(
   console.log(`[eBay ${label}] Headers:`, JSON.stringify(redactHeaders(init.headers ?? {})));
   if (init.body) console.log(`[eBay ${label}] Body:`, init.body);
 
-  const response = await fetch(url, init);
-  const bodyText = await response.text();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), EBAY_FETCH_TIMEOUT_MS);
 
-  console.log(`[eBay ${label}] Status:`, response.status);
-  console.log(`[eBay ${label}] Body:`, bodyText);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    const bodyText = await response.text();
 
-  return { response, bodyText };
+    console.log(`[eBay ${label}] Status:`, response.status);
+    console.log(`[eBay ${label}] Body:`, bodyText);
+
+    return { response, bodyText };
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`[eBay ${label}] Request timed out after ${EBAY_FETCH_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export function parseEbayErrorDetails(
@@ -178,10 +191,16 @@ export function extractMissingAspectField(bodyText: string): string | null {
     );
     if (combined.includes("already exists") || hasOfferId) return null;
 
+    const isValueConflict =
+      combined.includes("should contain only one value") ||
+      combined.includes("remove the extra value") ||
+      combined.includes("duplicate");
+    if (isValueConflict) return null;
+
     const isMissingAspect =
-      first.errorId === 25002 ||
-      combined.includes("item specific") ||
-      (combined.includes("missing") && combined.includes("specific"));
+      combined.includes("missing required") ||
+      (combined.includes("missing") && combined.includes("specific")) ||
+      (combined.includes("item specific") && combined.includes("missing"));
 
     if (!isMissingAspect) return null;
 
@@ -193,7 +212,38 @@ export function extractMissingAspectField(bodyText: string): string | null {
       return messageMatch[1].trim();
     }
 
+    const requiredMatch = messageText.match(/missing required field[:\s]+([A-Za-z /]+)/i);
+    if (requiredMatch?.[1]?.trim()) {
+      return requiredMatch[1].trim();
+    }
+
     return null;
+  } catch {
+    return null;
+  }
+}
+
+export function extractAspectConflictField(bodyText: string): string | null {
+  try {
+    const data = JSON.parse(bodyText) as {
+      errors?: Array<{
+        message?: string;
+        longMessage?: string;
+        parameters?: Array<{ name?: string; value?: string }>;
+      }>;
+    };
+    const first = data.errors?.[0];
+    if (!first) return null;
+
+    const combined = `${first.message ?? ""} ${first.longMessage ?? ""}`.toLowerCase();
+    const isConflict =
+      combined.includes("should contain only one value") ||
+      combined.includes("remove the extra value") ||
+      combined.includes("duplicate");
+    if (!isConflict) return null;
+
+    const paramField = first.parameters?.find((param) => param.name === "2")?.value?.trim();
+    return paramField ?? null;
   } catch {
     return null;
   }
@@ -244,6 +294,13 @@ async function executeWithMissingAspectRetry(
       }
     }
 
+    const conflictField = extractAspectConflictField(bodyText);
+    if (conflictField) {
+      console.log(
+        `[eBay ${label}] Value conflict on "${conflictField}" - stopping retries (would inject more data).`,
+      );
+    }
+
     throwEbayApiError(url, response, bodyText, fallbackMessage);
   }
 }
@@ -274,6 +331,13 @@ async function executePublishWithAspectRetry(
         attempts++;
         continue;
       }
+    }
+
+    const conflictField = extractAspectConflictField(bodyText);
+    if (conflictField) {
+      console.log(
+        `[eBay ${label}] Value conflict on "${conflictField}" - stopping retries (would inject more data).`,
+      );
     }
 
     throwEbayApiError(url, response, bodyText, fallbackMessage);
@@ -547,6 +611,7 @@ function applyNuclearColourSizeFallback(
   aspects: Record<string, string[]>,
   variants: AspectVariantSource[],
   marketplaceId: EbayMarketplaceId,
+  isMultiSku = false,
 ): Record<string, string[]> {
   const colourKey = marketplaceId === "EBAY_GB" ? "Colour" : "Color";
   const alternateColourKey = colourKey === "Colour" ? "Color" : "Colour";
@@ -559,39 +624,47 @@ function applyNuclearColourSizeFallback(
   console.log("Final aspects Colour:", aspects.Colour);
   console.log("=== END DEBUG ===");
 
-  if (
+  const colourMissing =
     !aspects[colourKey] ||
     aspects[colourKey].length === 0 ||
-    aspects[colourKey][0] === undefined
-  ) {
-    const colourFromVariants = variants
-      .map((variant) => {
-        const parts = String(variant.label ?? variant.name ?? "")
-          .split("/")
-          .map((part) => part.trim());
-        return parts[0];
-      })
-      .filter((colour) => colour && colour.length > 0 && colour !== "undefined");
+    aspects[colourKey][0] === undefined;
 
-    aspects[colourKey] =
-      colourFromVariants.length > 0 ? [...new Set(colourFromVariants)] : ["Multicolor"];
+  if (colourMissing) {
+    if (isMultiSku) {
+      aspects[colourKey] = ["Multicolor"];
+    } else {
+      const colourFromVariants = variants
+        .map((variant) =>
+          String(variant.label ?? variant.name ?? "").split("/").map((part) => part.trim())[0],
+        )
+        .filter((colour) => colour && colour.length > 0 && colour !== "undefined");
+
+      aspects[colourKey] =
+        colourFromVariants.length > 0 ? [...new Set(colourFromVariants)] : ["Multicolor"];
+    }
   }
 
   delete aspects[alternateColourKey];
 
-  if (!aspects.Size || aspects.Size.length === 0) {
-    const sizeFromVariants = variants
-      .map((variant) => {
-        const parts = String(variant.label ?? variant.name ?? "")
-          .split("/")
-          .map((part) => part.trim());
-        return parts[parts.length - 1];
-      })
-      .filter((size) => size && size.length > 0 && size !== "undefined");
+  const sizeMissing = !aspects.Size || aspects.Size.length === 0;
 
-    aspects.Size =
-      sizeFromVariants.length > 0 ? [...new Set(sizeFromVariants)] : ["One Size"];
-  } else if (extractedSizes.length > 0 && aspects.Size.every((size) => !size?.trim())) {
+  if (sizeMissing) {
+    if (isMultiSku) {
+      aspects.Size = ["One Size"];
+    } else {
+      const sizeFromVariants = variants
+        .map((variant) => {
+          const parts = String(variant.label ?? variant.name ?? "")
+            .split("/")
+            .map((part) => part.trim());
+          return parts[parts.length - 1];
+        })
+        .filter((size) => size && size.length > 0 && size !== "undefined");
+
+      aspects.Size =
+        sizeFromVariants.length > 0 ? [...new Set(sizeFromVariants)] : ["One Size"];
+    }
+  } else if (!isMultiSku && extractedSizes.length > 0 && aspects.Size.every((size) => !size?.trim())) {
     aspects.Size = extractedSizes;
   }
 
@@ -969,6 +1042,13 @@ async function resolveCategoryId(
   return categoryId;
 }
 
+// eBay accepts GTINs of 8, 12, 13, or 14 digits. Anything else is rejected,
+// so we only forward a GTIN when it matches one of those formats.
+function isValidGtin(value: string | undefined | null): boolean {
+  if (!value) return false;
+  return /^(\d{8}|\d{12}|\d{13}|\d{14})$/.test(value.trim());
+}
+
 async function upsertInventoryItem(
   token: string,
   marketplaceId: EbayMarketplaceId,
@@ -998,14 +1078,17 @@ async function upsertInventoryItem(
           aspects.Size = [size];
           delete aspects[alternateColourKey];
         }
-        if (gtin?.trim()) {
-          aspects.GTIN = [gtin.trim()];
+        if (isValidGtin(gtin)) {
+          aspects.GTIN = [gtin!.trim()];
+        } else if (gtin?.trim()) {
+          console.log(`[eBay inventory_item PUT] Skipping invalid GTIN: ${gtin.trim()}`);
         }
 
         applyNuclearColourSizeFallback(
           aspects,
           getAspectVariantSources(aspectOptions),
           marketplaceId,
+          isMultiSkuListing(aspectOptions),
         );
       }
 
@@ -1355,11 +1438,31 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
   );
 
   const activeVariants = draft.variants.length > 0 ? draft.variants : [];
-  const isMultiVariant = activeVariants.length > 1;
   assertUniqueVariantSkus(activeVariants);
 
+  // Drive the single-vs-multi decision off the post-dedupe variant set so that
+  // isMultiVariant (group path) and isMultiSkuListing (per-SKU aspect stripping)
+  // always agree, even when duplicate Colour+Size combos collapse to one.
+  const dedupedVariants =
+    activeVariants.length > 1 ? dedupeVariantsByCombo(activeVariants) : activeVariants;
+
+  if (dedupedVariants.length < activeVariants.length) {
+    console.log(
+      "[eBay group] Removed duplicate Colour+Size combos:",
+      activeVariants.length - dedupedVariants.length,
+    );
+  }
+
+  const { colors: dedupedColors, sizes: dedupedSizes } = extractColoursAndSizesFromLabels(
+    dedupedVariants.map((variant) => variant.label),
+  );
+  aspectOptions.variantDrafts = dedupedVariants;
+  aspectOptions.extractedAspects = { colours: dedupedColors, sizes: dedupedSizes };
+
+  const isMultiVariant = dedupedVariants.length > 1;
+
   if (!isMultiVariant) {
-    const variant = activeVariants[0];
+    const variant = dedupedVariants[0];
     const sku = variant
       ? resolveVariantSkuForEbay(variant)
       : resolveVariantSkuForEbay({
@@ -1433,23 +1536,11 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
   }
 
   const groupKey = resolveGroupSkuKey(draft);
-  const groupVariants = dedupeVariantsByCombo(activeVariants);
-
-  if (groupVariants.length < activeVariants.length) {
-    console.log(
-      "[eBay group] Removed duplicate Colour+Size combos:",
-      activeVariants.length - groupVariants.length,
-    );
-  }
-
-  const { colors: groupColors, sizes: groupSizes } = extractColoursAndSizesFromLabels(
-    groupVariants.map((variant) => variant.label),
-  );
-  aspectOptions.variantDrafts = groupVariants;
-  aspectOptions.extractedAspects = { colours: groupColors, sizes: groupSizes };
+  const groupVariants = dedupedVariants;
 
   const variantResults = await Promise.all(
     groupVariants.map(async (variant) => {
+      const variantAspectOptions = structuredClone(aspectOptions);
       const sku = resolveVariantSkuForEbay(variant);
 
       const images = variant.imageUrl ? [variant.imageUrl, ...selectedPhotos] : selectedPhotos;
@@ -1463,7 +1554,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
         variantListing,
         images,
         quantity,
-        aspectOptions,
+        variantAspectOptions,
         variant.label,
         variant.ean,
       );
@@ -1507,6 +1598,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
   const reupsertAllInventory = async () => {
     await Promise.all(
       groupVariants.map(async (variant) => {
+        const variantAspectOptions = structuredClone(aspectOptions);
         const sku = resolveVariantSkuForEbay(variant);
         const images = variant.imageUrl ? [variant.imageUrl, ...selectedPhotos] : selectedPhotos;
         const variantListing = { ...listing, suggestedPrice: variant.price };
@@ -1519,7 +1611,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
           variantListing,
           images,
           quantity,
-          aspectOptions,
+          variantAspectOptions,
           variant.label,
           variant.ean,
         );
