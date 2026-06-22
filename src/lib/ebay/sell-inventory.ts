@@ -718,6 +718,10 @@ function buildInventoryItemGroupBody(
 
   const variesBy = buildGroupVariesBy(colourKey, finalColours, finalSizes, aspectOptions);
 
+  console.log("=== VARIES BY BEING SENT ===");
+  console.log(JSON.stringify(variesBy, null, 2));
+  console.log("=== END VARIES BY ===");
+
   return {
     inventoryItemGroupKey: groupKey,
     variantSKUs: variantSkus,
