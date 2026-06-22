@@ -1149,6 +1149,21 @@ async function upsertInventoryItemGroup(
 
       ensureGroupBodyHasAspects(groupBody, aspectOptions, marketplaceId);
 
+      const variationSpecifics = groupBody.variesBy?.specifications ?? [];
+      const uniqueSpecifics: typeof variationSpecifics = [];
+      const seen = new Set<string>();
+      for (const item of variationSpecifics) {
+        if (!seen.has(item.name)) {
+          uniqueSpecifics.push(item);
+          seen.add(item.name);
+        }
+      }
+      if (groupBody.variesBy) {
+        groupBody.variesBy.specifications = uniqueSpecifics;
+      }
+
+      console.log("FINAL PAYLOAD TO EBAY:", JSON.stringify(uniqueSpecifics, null, 2));
+
       console.log("=== GROUP BODY BEING SENT ===");
       console.log(JSON.stringify(groupBody, null, 2));
       console.log("=== GROUP ASPECTS ===");
