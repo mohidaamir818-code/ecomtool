@@ -333,6 +333,16 @@ async function executePublishWithAspectRetry(
       }
     }
 
+    if (attempts < MAX_ASPECT_RETRIES && isAvailabilityPropagationError(bodyText)) {
+      console.log(
+        `[eBay ${label}] Availability not found (25604) - re-upserting inventory and retrying after delay`,
+      );
+      await reupsertInventory();
+      await sleep(2000 * (attempts + 1));
+      attempts++;
+      continue;
+    }
+
     const conflictField = extractAspectConflictField(bodyText);
     if (conflictField) {
       console.log(
@@ -351,6 +361,24 @@ function parseJsonSafe<T>(bodyText: string, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// eBay sometimes returns 25604 "Availability not found" when publishing a group
+// immediately after creating its inventory items, because availability has not
+// finished propagating on their side. This is transient and resolved by a retry.
+function isAvailabilityPropagationError(bodyText: string): boolean {
+  const data = parseJsonSafe(bodyText, {} as {
+    errors?: Array<{ errorId?: number; message?: string }>;
+  });
+  return (data.errors ?? []).some(
+    (error) =>
+      error.errorId === 25604 ||
+      (error.message?.toLowerCase().includes("availability not found") ?? false),
+  );
 }
 
 function throwEbayApiError(url: string, response: Response, bodyText: string, fallback: string): never {
