@@ -716,7 +716,25 @@ function buildInventoryItemGroupBody(
   finalColours = dedupeVariationValues(finalColours);
   finalSizes = dedupeVariationValues(finalSizes);
 
-  const variesBy = buildGroupVariesBy(colourKey, finalColours, finalSizes, aspectOptions);
+  const hasSize = (aspectOptions.variantDrafts ?? []).some((variant) =>
+    String(variant.label ?? "").includes("/"),
+  );
+
+  const specifications: Array<{ name: string; values: string[] }> = [
+    { name: colourKey, values: finalColours },
+  ];
+
+  if (hasSize) {
+    specifications.push({
+      name: "Size",
+      values: finalSizes,
+    });
+  }
+
+  const variesBy = {
+    aspectsImageVariesBy: [colourKey],
+    specifications,
+  };
 
   console.log("=== VARIES BY BEING SENT ===");
   console.log(JSON.stringify(variesBy, null, 2));
