@@ -1,6 +1,7 @@
 import "server-only";
 
 import { fetchAliExpressProduct, fetchDescriptionHtmlFromPage, extractImagesFromHtml, finalizeDescriptionImages } from "@/lib/aliexpress/client";
+import { fetchAliExpressShippingDaysLabel } from "@/lib/listings/aliexpress-shipping-days";
 import { cleanLabel, filterListingImages, sanitizeListingText } from "@/lib/listings/listing-sanitize";
 import type { ListingProductSource } from "@/types/listing-generator";
 
@@ -88,6 +89,8 @@ export async function fetchListingProductSource(url: string): Promise<ListingPro
   ];
   const descriptionFilter = await finalizeDescriptionImages(rawDescriptionImages, images);
 
+  const shippingDaysLabel = await fetchAliExpressShippingDaysLabel(product.productUrl);
+
   const variants = product.variants
     ?.filter((variant) => variant.stock != null && variant.stock > 0)
     .map((variant) => {
@@ -129,5 +132,6 @@ export async function fetchListingProductSource(url: string): Promise<ListingPro
     description,
     stock: product.stock,
     variants,
+    shippingDaysLabel,
   };
 }

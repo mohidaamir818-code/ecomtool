@@ -2,6 +2,7 @@ import "server-only";
 
 import { serverEnv } from "@/lib/env";
 import { getAmazefEmail } from "@/lib/amazef/connection";
+import { fetchAliExpressShippingDaysLabel } from "@/lib/listings/aliexpress-shipping-days";
 import type { ListingDraft, ListOnEbayResult } from "@/types/listing-generator";
 
 const AMAZEF_FETCH_TIMEOUT_MS = 30000;
@@ -48,6 +49,21 @@ export async function listDraftOnAmazef(
     );
   }
 
+  let shippingDaysLabel = draft.product.shippingDaysLabel?.trim() || null;
+  if (!shippingDaysLabel && draft.product.productUrl) {
+    shippingDaysLabel = await fetchAliExpressShippingDaysLabel(draft.product.productUrl);
+  }
+
+  const listingDraft: ListingDraft = shippingDaysLabel
+    ? {
+        ...draft,
+        product: {
+          ...draft.product,
+          shippingDaysLabel,
+        },
+      }
+    : draft;
+
   const secret = serverEnv.amazefListingSecret();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), AMAZEF_FETCH_TIMEOUT_MS);
@@ -61,7 +77,12 @@ export async function listDraftOnAmazef(
         "Content-Type": "application/json",
         ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
       },
-      body: JSON.stringify({ userId, externalUserRef: amazefEmail, draft }),
+      body: JSON.stringify({
+        userId,
+        externalUserRef: amazefEmail,
+        draft: listingDraft,
+        shippingDays: shippingDaysLabel,
+      }),
       cache: "no-store",
       signal: controller.signal,
     });

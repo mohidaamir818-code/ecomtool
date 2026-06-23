@@ -28,6 +28,7 @@ export interface ListingProductSource {
   stock: number | null;
   variants?: ListingProductVariant[];
   internalProductSku?: string;
+  shippingDaysLabel?: string | null;
 }
 
 export interface GeneratedListingItemSpecific {

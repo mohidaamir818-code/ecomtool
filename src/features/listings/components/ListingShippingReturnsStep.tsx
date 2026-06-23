@@ -72,13 +72,32 @@ export function ListingShippingReturnsStep({
   }, [loadPolicies, platform]);
 
   if (platform === "amazef") {
+    const shippingDaysLabel = draft.product.shippingDaysLabel?.trim();
     return (
       <div className="space-y-4">
         <div>
           <h2 className="text-base font-semibold text-[#111827]">Shipping &amp; Returns</h2>
           <p className="mt-1 text-sm text-[#6B7280]">
-            Shipping and return settings are managed in your {platformName} seller account. You can
-            continue to the next step.
+            Shipping and return settings are managed in your {platformName} seller account.
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
+          <p className="text-sm font-semibold text-[#111827]">Estimated shipping time</p>
+          {shippingDaysLabel ? (
+            <p className="mt-2 text-sm text-[#374151]">
+              Calculated from AliExpress delivery dates:{" "}
+              <span className="font-semibold text-brand">{shippingDaysLabel}</span>
+            </p>
+          ) : (
+            <p className="mt-2 text-sm text-amber-700">
+              Could not detect AliExpress delivery dates for this product. Shipping days will be
+              recalculated when you list on {platformName}.
+            </p>
+          )}
+          <p className="mt-3 text-xs text-[#9CA3AF]">
+            AliExpress shows calendar dates (for example Jul 24 - 26). We convert that to day
+            counts for your {platformName} listing (for example 10 to 12 days).
           </p>
         </div>
       </div>
