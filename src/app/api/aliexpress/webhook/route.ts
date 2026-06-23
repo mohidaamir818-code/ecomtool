@@ -18,6 +18,8 @@ interface WebhookBody {
   productUrl?: string;
   product_url?: string;
   url?: string;
+  message_type?: string | number;
+  messageType?: string | number;
 }
 
 function resolveExternalId(body: WebhookBody): string | null {
@@ -57,10 +59,14 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = (await request.json()) as WebhookBody;
+    const messageType = body.message_type ?? body.messageType;
     const externalId = resolveExternalId(body);
 
-    if (!externalId) {
-      return NextResponse.json({ error: "Missing AliExpress product id." }, { status: 400 });
+    // AliExpress sends test/non-product events (message_type 0 or payloads with no
+    // product id). Acknowledge them with 200 so the "Verify" handshake succeeds and
+    // AliExpress does not keep retrying with 400 errors.
+    if (String(messageType) === "0" || !externalId) {
+      return NextResponse.json({ status: "received", message: "Ignored test/non-product event" });
     }
 
     const supabase = getSupabaseAdmin();
