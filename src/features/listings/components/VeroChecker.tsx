@@ -1,13 +1,15 @@
 "use client";
 
-import type { VeroCheckResult } from "@/types/listing-generator";
+import type { ListingPlatform, VeroCheckResult } from "@/types/listing-generator";
+import { localizeVeroText } from "@/features/listings/lib/vero-platform";
 
 interface VeroCheckerProps {
   result: VeroCheckResult | null;
   loading?: boolean;
+  platform?: ListingPlatform;
 }
 
-export function VeroChecker({ result, loading = false }: VeroCheckerProps) {
+export function VeroChecker({ result, loading = false, platform = "ebay" }: VeroCheckerProps) {
   if (loading) {
     return (
       <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
@@ -33,7 +35,9 @@ export function VeroChecker({ result, loading = false }: VeroCheckerProps) {
   if (!result.safe) {
     return (
       <div className="rounded-xl border-2 border-red-300 bg-red-50 p-5">
-        <p className="whitespace-pre-line text-sm font-semibold text-red-800">{result.summary}</p>
+        <p className="whitespace-pre-line text-sm font-semibold text-red-800">
+          {localizeVeroText(result.summary, platform)}
+        </p>
         {result.warnings.length > 0 ? (
           <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-red-700">
             {result.warnings.map((warning) => (
@@ -56,7 +60,9 @@ export function VeroChecker({ result, loading = false }: VeroCheckerProps) {
         </span>
         <div>
           <p className="text-sm font-semibold text-emerald-800">Safe to list</p>
-          <p className="mt-1 text-sm text-emerald-700">{result.summary}</p>
+          <p className="mt-1 text-sm text-emerald-700">
+            {localizeVeroText(result.summary, platform)}
+          </p>
         </div>
       </div>
     </div>

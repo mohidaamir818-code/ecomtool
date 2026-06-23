@@ -2,16 +2,25 @@
 
 import { useState } from "react";
 
-import type { VeroCheckResult } from "@/types/listing-generator";
+import type { ListingPlatform, VeroCheckResult } from "@/types/listing-generator";
+import { listingPlatformLabel, localizeVeroText } from "@/features/listings/lib/vero-platform";
 
 interface VeroBlockModalProps {
   result: VeroCheckResult;
+  platform?: ListingPlatform;
   onProceed: () => void;
   onStartNew: () => void;
 }
 
-export function VeroBlockModal({ result, onProceed, onStartNew }: VeroBlockModalProps) {
+export function VeroBlockModal({
+  result,
+  platform = "ebay",
+  onProceed,
+  onStartNew,
+}: VeroBlockModalProps) {
   const [checked, setChecked] = useState(false);
+  const platformName = listingPlatformLabel(platform);
+  const summary = localizeVeroText(result.summary, platform);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
@@ -22,7 +31,7 @@ export function VeroBlockModal({ result, onProceed, onStartNew }: VeroBlockModal
           </span>
           <div>
             <h2 className="text-lg font-bold text-red-700">VeRO warning</h2>
-            <p className="mt-3 whitespace-pre-line text-sm text-red-800">{result.summary}</p>
+            <p className="mt-3 whitespace-pre-line text-sm text-red-800">{summary}</p>
             {result.warnings.length > 0 ? (
               <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-red-700">
                 {result.warnings.map((warning) => (
@@ -31,8 +40,8 @@ export function VeroBlockModal({ result, onProceed, onStartNew }: VeroBlockModal
               </ul>
             ) : null}
             <p className="mt-4 text-sm font-medium text-red-800">
-              Listing this may result in your eBay account being suspended or the listing being
-              removed by eBay.
+              Listing this may result in your {platformName} account being suspended or the listing
+              being removed by {platformName}.
             </p>
           </div>
         </div>

@@ -852,7 +852,9 @@ export function ListingsShell() {
         ) : null}
 
         <div className="mt-6 space-y-6">
-          {currentStep === 1 ? <VeroChecker result={vero} loading={veroLoading} /> : null}
+          {currentStep === 1 ? (
+            <VeroChecker result={vero} loading={veroLoading} platform={activePlatform} />
+          ) : null}
 
           {currentStep === 2 && product && userId ? (
             <ListingProfitCalculatorStep
@@ -989,6 +991,7 @@ export function ListingsShell() {
       {showVeroModal && vero && !vero.safe ? (
         <VeroBlockModal
           result={vero}
+          platform={activePlatform}
           onProceed={handleVeroAcknowledgeProceed}
           onStartNew={() => {
             setShowVeroModal(false);
