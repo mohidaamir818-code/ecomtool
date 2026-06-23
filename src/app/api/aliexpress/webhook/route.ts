@@ -48,6 +48,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  console.log("Webhook Headers:", Object.fromEntries(request.headers));
+  console.log("Webhook Body:", await request.clone().json().catch(() => "Invalid JSON"));
+
   if (!verifySecret(request)) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
