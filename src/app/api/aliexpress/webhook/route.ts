@@ -4,7 +4,7 @@ import { checkHandlingProductUpdate } from "@/lib/handling/service";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 
 function verifySecret(request: NextRequest): boolean {
-  const secret = process.env.ALIEXPRESS_WEBHOOK_SECRET?.trim();
+  const secret = process.env.ALIEXPRESS_APP_SECRET?.trim();
   if (!secret) return true; // mirror cron: permissive when unset (dev)
   if (request.headers.get("authorization") === `Bearer ${secret}`) return true;
   if (request.headers.get("x-aliexpress-webhook-secret") === secret) return true;
