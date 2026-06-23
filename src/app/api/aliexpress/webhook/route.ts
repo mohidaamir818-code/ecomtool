@@ -27,6 +27,26 @@ function resolveExternalId(body: WebhookBody): string | null {
   return url ? extractAliExpressProductId(String(url)) : null;
 }
 
+// AliExpress performs a verification handshake (the "Verify" button) by sending a
+// GET request with a challenge parameter that must be echoed back.
+export async function GET(request: NextRequest) {
+  const params = request.nextUrl.searchParams;
+  const challenge =
+    params.get("challenge") ??
+    params.get("echostr") ??
+    params.get("challenge_code") ??
+    params.get("verify_token");
+
+  if (challenge) {
+    return new NextResponse(challenge, {
+      status: 200,
+      headers: { "Content-Type": "text/plain" },
+    });
+  }
+
+  return NextResponse.json({ success: true });
+}
+
 export async function POST(request: NextRequest) {
   if (!verifySecret(request)) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
