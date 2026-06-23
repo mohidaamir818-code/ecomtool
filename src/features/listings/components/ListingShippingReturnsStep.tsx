@@ -96,8 +96,8 @@ export function ListingShippingReturnsStep({
             </p>
           )}
           <p className="mt-3 text-xs text-[#9CA3AF]">
-            AliExpress shows calendar dates (for example Jul 24 - 26). We convert that to day
-            counts for your {platformName} listing (for example 10 to 12 days).
+            AliExpress may show calendar dates or day ranges. We convert whatever format they use
+            into day counts for your {platformName} listing.
           </p>
         </div>
       </div>
