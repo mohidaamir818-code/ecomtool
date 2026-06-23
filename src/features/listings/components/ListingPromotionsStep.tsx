@@ -1,14 +1,16 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { SellerPreferences, VolumePromotionTier } from "@/types/listing-generator";
+import type { ListingPlatform, SellerPreferences, VolumePromotionTier } from "@/types/listing-generator";
 import { promotionsToSellerPreferences } from "@/lib/listings/seller-preferences-mappers";
+import { listingPlatformLabel } from "@/features/listings/lib/vero-platform";
 import { persistSellerPreferences } from "@/features/listings/lib/seller-preferences-client";
 
 interface ListingPromotionsStepProps {
   userId: string;
   promotions: VolumePromotionTier[];
   sellerPreferences: SellerPreferences;
+  platform?: ListingPlatform;
   onChange: (promotions: VolumePromotionTier[]) => void;
   onSellerPreferencesChange: (preferences: SellerPreferences) => void;
   onSaved?: () => void;
@@ -18,10 +20,12 @@ export function ListingPromotionsStep({
   userId,
   promotions,
   sellerPreferences,
+  platform = "ebay",
   onChange,
   onSellerPreferencesChange,
   onSaved,
 }: ListingPromotionsStepProps) {
+  const platformName = listingPlatformLabel(platform);
   const saveTimerRef = useRef<number | null>(null);
   const sellerPrefsRef = useRef(sellerPreferences);
 
@@ -58,7 +62,8 @@ export function ListingPromotionsStep({
       <div>
         <h2 className="text-base font-semibold text-[#111827]">Volume discounts</h2>
         <p className="mt-1 text-sm text-[#6B7280]">
-          Would you like to add volume discounts? Enable any tier to include in your eBay listing.
+          Would you like to add volume discounts? Enable any tier to include in your {platformName}{" "}
+          listing.
         </p>
       </div>
 

@@ -713,7 +713,8 @@ export function ListingsShell() {
           <div>
             <h1 className="text-2xl font-bold text-[#111827]">AI Listing Generator</h1>
             <p className="mt-1 text-sm text-[#6B7280]">
-              Professional 9-step wizard to create optimized eBay listings from AliExpress.
+              Professional 9-step wizard to create optimized{" "}
+              {isAmazef ? "Amazef" : "eBay"} listings from AliExpress.
             </p>
           </div>
 
@@ -864,6 +865,7 @@ export function ListingsShell() {
               manualPriceOverride={manualPriceOverride}
               sellerPreferences={sellerPrefs}
               sellerPreferencesLoading={sellerPrefsLoading}
+              platform={activePlatform}
               onChange={handlePricingChange}
               onSellerPreferencesChange={setSellerPrefs}
               onSaved={triggerSavedToast}
@@ -876,6 +878,7 @@ export function ListingsShell() {
               product={product}
               listing={listing}
               loading={generateLoading}
+              platform={activePlatform}
               errorMessage={isError && currentStep === 3 ? notice : undefined}
               onRetry={retryGenerateListing}
               onListingChange={updateListing}
@@ -888,6 +891,7 @@ export function ListingsShell() {
               product={product}
               listing={listing}
               loading={false}
+              platform={activePlatform}
               onListingChange={updateListing}
               descriptionPhotos={draft?.descriptionPhotos}
             />
@@ -908,6 +912,7 @@ export function ListingsShell() {
             <ListingShippingReturnsStep
               userId={userId}
               draft={draft}
+              platform={activePlatform}
               onChange={updateDraft}
             />
           ) : null}
@@ -917,13 +922,16 @@ export function ListingsShell() {
               userId={userId}
               promotions={draft.promotions}
               sellerPreferences={sellerPrefs}
+              platform={activePlatform}
               onChange={(promotions) => updateDraft({ promotions })}
               onSellerPreferencesChange={setSellerPrefs}
               onSaved={triggerSavedToast}
             />
           ) : null}
 
-          {currentStep === 8 && draft ? <ListingQualityScoreStep draft={draft} /> : null}
+          {currentStep === 8 && draft ? (
+            <ListingQualityScoreStep draft={draft} platform={activePlatform} />
+          ) : null}
 
           {currentStep === 9 && draft && userId && !isAmazef ? (
             <>

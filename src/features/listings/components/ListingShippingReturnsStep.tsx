@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { EbayBusinessPolicies, EbayPoliciesResponse, ListingDraft } from "@/types/listing-generator";
+import type { EbayBusinessPolicies, EbayPoliciesResponse, ListingDraft, ListingPlatform } from "@/types/listing-generator";
+import { listingPlatformLabel } from "@/features/listings/lib/vero-platform";
 
 const SELLER_HUB_URLS: Record<string, string> = {
   EBAY_GB: "https://www.ebay.co.uk/sh/landing",
@@ -12,14 +13,17 @@ const SELLER_HUB_URLS: Record<string, string> = {
 interface ListingShippingReturnsStepProps {
   userId: string;
   draft: ListingDraft;
+  platform?: ListingPlatform;
   onChange: (patch: Partial<ListingDraft>) => void;
 }
 
 export function ListingShippingReturnsStep({
   userId,
   draft,
+  platform = "ebay",
   onChange,
 }: ListingShippingReturnsStepProps) {
+  const platformName = listingPlatformLabel(platform);
   const [policies, setPolicies] = useState<(EbayPoliciesResponse & { marketplaceId?: string }) | null>(
     null,
   );
@@ -63,8 +67,23 @@ export function ListingShippingReturnsStep({
   }, [userId, onChange]);
 
   useEffect(() => {
+    if (platform === "amazef") return;
     void loadPolicies();
-  }, [loadPolicies]);
+  }, [loadPolicies, platform]);
+
+  if (platform === "amazef") {
+    return (
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-base font-semibold text-[#111827]">Shipping &amp; Returns</h2>
+          <p className="mt-1 text-sm text-[#6B7280]">
+            Shipping and return settings are managed in your {platformName} seller account. You can
+            continue to the next step.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   function updatePolicy(patch: Partial<EbayBusinessPolicies>) {
     const current = draft.ebayPolicies ?? policies?.selected;

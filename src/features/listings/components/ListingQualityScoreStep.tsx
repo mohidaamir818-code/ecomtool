@@ -1,14 +1,17 @@
 "use client";
 
-import type { ListingDraft } from "@/types/listing-generator";
+import type { ListingDraft, ListingPlatform } from "@/types/listing-generator";
 import { computeListingQualityScore } from "@/features/listings/lib/listing-quality";
+import { listingPlatformLabel } from "@/features/listings/lib/vero-platform";
 
 interface ListingQualityScoreStepProps {
   draft: ListingDraft;
+  platform?: ListingPlatform;
 }
 
-export function ListingQualityScoreStep({ draft }: ListingQualityScoreStepProps) {
-  const score = computeListingQualityScore(draft);
+export function ListingQualityScoreStep({ draft, platform = "ebay" }: ListingQualityScoreStepProps) {
+  const platformName = listingPlatformLabel(platform);
+  const score = computeListingQualityScore(draft, platform);
   const pct = score.maxTotal > 0 ? Math.round((score.total / score.maxTotal) * 100) : 0;
 
   return (
@@ -16,7 +19,7 @@ export function ListingQualityScoreStep({ draft }: ListingQualityScoreStepProps)
       <div>
         <h2 className="text-base font-semibold text-[#111827]">Listing Quality Score</h2>
         <p className="mt-1 text-sm text-[#6B7280]">
-          Higher scores improve eBay visibility. Review the checklist before publishing.
+          Higher scores improve {platformName} visibility. Review the checklist before publishing.
         </p>
       </div>
 

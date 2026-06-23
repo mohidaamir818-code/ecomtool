@@ -1,6 +1,7 @@
 "use client";
 
-import type { GeneratedListing, ListingPhotoDraft, ListingProductSource } from "@/types/listing-generator";
+import type { GeneratedListing, ListingPhotoDraft, ListingPlatform, ListingProductSource } from "@/types/listing-generator";
+import { listingPlatformLabel } from "@/features/listings/lib/vero-platform";
 import { ListingPreviewEditor } from "./ListingPreviewEditor";
 import { ProxiedImage } from "./ProxiedImage";
 
@@ -9,6 +10,7 @@ interface AiListingGeneratorProps {
   product: ListingProductSource | null;
   listing: GeneratedListing | null;
   loading?: boolean;
+  platform?: ListingPlatform;
   errorMessage?: string;
   onRetry?: () => void;
   onListingChange?: (listing: GeneratedListing) => void;
@@ -20,11 +22,13 @@ export function AiListingGenerator({
   product,
   listing,
   loading = false,
+  platform = "ebay",
   errorMessage,
   onRetry,
   onListingChange,
   descriptionPhotos,
 }: AiListingGeneratorProps) {
+  const platformName = listingPlatformLabel(platform);
   if (loading) {
     return (
       <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
@@ -33,7 +37,7 @@ export function AiListingGenerator({
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
-          <p className="text-sm text-[#6B7280]">Generating eBay listing with AI...</p>
+          <p className="text-sm text-[#6B7280]">Generating {platformName} listing with AI...</p>
         </div>
       </div>
     );

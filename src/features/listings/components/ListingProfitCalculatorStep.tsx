@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type {
+  ListingPlatform,
   ListingPricingPreferences,
   ListingProductSource,
   PricingBreakdown,
@@ -14,6 +15,7 @@ import {
   sellerPreferencesToFeePrefs,
 } from "@/lib/listings/seller-preferences-mappers";
 import { formatListingPrice } from "@/features/listings/lib/draft-utils";
+import { listingPlatformLabel } from "@/features/listings/lib/vero-platform";
 import { persistSellerPreferences } from "@/features/listings/lib/seller-preferences-client";
 
 interface ListingProfitCalculatorStepProps {
@@ -23,6 +25,7 @@ interface ListingProfitCalculatorStepProps {
   manualPriceOverride: number | null;
   sellerPreferences: SellerPreferences | null;
   sellerPreferencesLoading: boolean;
+  platform?: ListingPlatform;
   onChange: (prefs: ListingPricingPreferences, breakdown: PricingBreakdown, manualPrice: number | null) => void;
   onSellerPreferencesChange: (preferences: SellerPreferences) => void;
   onSaved?: () => void;
@@ -35,10 +38,12 @@ export function ListingProfitCalculatorStep({
   manualPriceOverride,
   sellerPreferences,
   sellerPreferencesLoading,
+  platform = "ebay",
   onChange,
   onSellerPreferencesChange,
   onSaved,
 }: ListingProfitCalculatorStepProps) {
+  const platformName = listingPlatformLabel(platform);
   const currency = product.currency === "USD" ? "GBP" : product.currency;
   const symbol = currency === "GBP" ? "£" : currency === "EUR" ? "€" : "$";
 
@@ -128,13 +133,14 @@ export function ListingProfitCalculatorStep({
       <div>
         <h2 className="text-base font-semibold text-[#111827]">Set Your Pricing Preferences</h2>
         <p className="mt-1 text-sm text-[#6B7280]">
-          Configure fees and profit margin. We&apos;ll calculate your recommended eBay price automatically.
+          Configure fees and profit margin. We&apos;ll calculate your recommended {platformName} price
+          automatically.
         </p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block text-sm font-medium text-[#111827]">
-          eBay Final Value Fee (%)
+          {platformName} Final Value Fee (%)
           <input
             type="number"
             step="0.01"
@@ -144,7 +150,7 @@ export function ListingProfitCalculatorStep({
           />
         </label>
         <label className="block text-sm font-medium text-[#111827]">
-          eBay Transaction Fee ({symbol})
+          {platformName} Transaction Fee ({symbol})
           <input
             type="number"
             step="0.01"
@@ -192,7 +198,7 @@ export function ListingProfitCalculatorStep({
             <dd className="font-semibold text-[#111827]">{formatListingPrice(baseAliPrice, currency)}</dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-[#6B7280]">eBay + Payment Fees</dt>
+            <dt className="text-[#6B7280]">{platformName} + Payment Fees</dt>
             <dd className="font-semibold text-[#111827]">{formatListingPrice(breakdown.ebayFees, currency)}</dd>
           </div>
           <div className="flex justify-between">
@@ -202,7 +208,7 @@ export function ListingProfitCalculatorStep({
             </dd>
           </div>
           <div className="flex justify-between border-t border-brand/10 pt-2">
-            <dt className="font-semibold text-[#111827]">Recommended eBay Price</dt>
+            <dt className="font-semibold text-[#111827]">Recommended {platformName} Price</dt>
             <dd className="text-lg font-bold text-brand">
               {formatListingPrice(breakdown.recommendedPrice, currency)}
             </dd>

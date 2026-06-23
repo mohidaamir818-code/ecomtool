@@ -1,6 +1,7 @@
-import type { ListingDraft, ListingQualityCheck, ListingQualityScore } from "@/types/listing-generator";
+import type { ListingDraft, ListingPlatform, ListingQualityCheck, ListingQualityScore } from "@/types/listing-generator";
 import { countFilledItemSpecifics } from "@/lib/listings/item-specifics";
 import { getEnabledPromotions, getSelectedPhotos } from "@/features/listings/lib/draft-utils";
+import { listingPlatformLabel } from "@/features/listings/lib/vero-platform";
 
 function countDescriptionPlainTextLength(html: string): number {
   return html.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim().length;
@@ -28,7 +29,11 @@ function scoreDescriptionLength(len: number): { points: number; passed: boolean 
   return { points: 0, passed: false };
 }
 
-export function computeListingQualityScore(draft: ListingDraft): ListingQualityScore {
+export function computeListingQualityScore(
+  draft: ListingDraft,
+  platform: ListingPlatform = "ebay",
+): ListingQualityScore {
+  const platformName = listingPlatformLabel(platform);
   const checks: ListingQualityCheck[] = [];
   const tips: string[] = [];
 
@@ -44,7 +49,7 @@ export function computeListingQualityScore(draft: ListingDraft): ListingQualityS
     tip: titleScore.passed ? undefined : "Expand your title to 75–80 characters with keywords at the start.",
   });
   if (!titleScore.passed) {
-    tips.push("Expand your title to 75–80 characters for maximum eBay visibility.");
+    tips.push(`Expand your title to 75–80 characters for maximum ${platformName} visibility.`);
   }
 
   const photoCount = getSelectedPhotos(draft).length;
@@ -87,7 +92,9 @@ export function computeListingQualityScore(draft: ListingDraft): ListingQualityS
     maxPoints: 15,
     tip: specificsPassed ? undefined : "Fill in at least 10 item specifics to improve search ranking.",
   });
-  if (!specificsPassed) tips.push("Fill in more item specifics — eBay uses these for search ranking.");
+  if (!specificsPassed) {
+    tips.push(`Fill in more item specifics — ${platformName} uses these for search ranking.`);
+  }
 
   const variantsOk = draft.variants.every(
     (v) => v.price > 0 && v.quantity >= 1 && v.imageUrl,
