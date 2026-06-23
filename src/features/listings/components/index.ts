@@ -1,4 +1,6 @@
 export { AiListingGenerator } from "./AiListingGenerator";
+export { AmazefConfirmStep } from "./AmazefConfirmStep";
+export { AmazefConnectModal } from "./AmazefConnectModal";
 export { EbayConditionSelector } from "./EbayConditionSelector";
 export { EbayConnect } from "./EbayConnect";
 export { EbayConnectedBanner } from "./EbayConnectedBanner";

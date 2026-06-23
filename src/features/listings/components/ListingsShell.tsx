@@ -9,6 +9,8 @@ import { draftNeedsSkuBackfill } from "@/lib/listings/internal-sku";
 import { fetchSellerPreferences, persistSellerPreferences } from "@/features/listings/lib/seller-preferences-client";
 import { sellerPreferencesToPromotions, promotionsToSellerPreferences } from "@/lib/listings/seller-preferences-mappers";
 import { AiListingGenerator } from "./AiListingGenerator";
+import { AmazefConfirmStep } from "./AmazefConfirmStep";
+import { AmazefConnectModal } from "./AmazefConnectModal";
 import { EbayAddressSetupForm } from "./EbayAddressSetupForm";
 import { EbayConnect } from "./EbayConnect";
 import { EbayConnectedBanner } from "./EbayConnectedBanner";
@@ -24,9 +26,11 @@ import { ListingWizardProgress } from "./ListingWizardProgress";
 import { VeroBlockModal } from "./VeroBlockModal";
 import { VeroChecker } from "./VeroChecker";
 import type {
+  AmazefConnectionStatus,
   EbayConnectionStatus,
   GeneratedListing,
   ListingDraft,
+  ListingPlatform,
   ListingPricingPreferences,
   ListingProductSource,
   PricingBreakdown,
@@ -72,6 +76,15 @@ export function ListingsShell() {
   });
   const [ebayStatusLoading, setEbayStatusLoading] = useState(true);
   const [showEbayConnectedToast, setShowEbayConnectedToast] = useState(false);
+  const [activePlatform, setActivePlatform] = useState<ListingPlatform>("ebay");
+  const [amazefStatus, setAmazefStatus] = useState<AmazefConnectionStatus>({
+    connected: false,
+    amazefEmail: null,
+  });
+  const [amazefStatusLoading, setAmazefStatusLoading] = useState(true);
+  const [showAmazefConnectModal, setShowAmazefConnectModal] = useState(false);
+  const [amazefRefreshKey, setAmazefRefreshKey] = useState(0);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const generateStarted = useRef(false);
   const savedToastTimer = useRef<number | null>(null);
   const ebayConnectedToastTimer = useRef<number | null>(null);
@@ -119,10 +132,78 @@ export function ListingsShell() {
     }
   }, [userId]);
 
+  const loadAmazefStatus = useCallback(async (options?: { silent?: boolean }) => {
+    if (!userId) return null;
+    if (!options?.silent) setAmazefStatusLoading(true);
+    try {
+      const response = await fetch(`/api/amazef/status?userId=${encodeURIComponent(userId)}`);
+      const data = await response.json();
+      if (response.ok) {
+        const nextStatus: AmazefConnectionStatus = {
+          connected: Boolean(data.connected),
+          amazefEmail: data.amazefEmail ?? null,
+        };
+        setAmazefStatus(nextStatus);
+        return nextStatus;
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      if (!options?.silent) setAmazefStatusLoading(false);
+    }
+  }, [userId]);
+
   useEffect(() => {
     const id = sessionStorage.getItem("ecomtools_user_id");
     if (id) setUserId(id);
+    const email = sessionStorage.getItem("ecomtools_user_email");
+    if (email) setUserEmail(email);
   }, []);
+
+  useEffect(() => {
+    if (!userId) return;
+    void loadAmazefStatus();
+  }, [userId, loadAmazefStatus]);
+
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    void fetch(`/api/listings/platform?userId=${encodeURIComponent(userId)}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.platform === "amazef") {
+          setActivePlatform("amazef");
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  const persistPlatform = useCallback(
+    (platform: ListingPlatform) => {
+      if (!userId) return;
+      void fetch("/api/listings/platform", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, platform }),
+      }).catch(() => {});
+    },
+    [userId],
+  );
+
+  const handlePlatformChange = useCallback(
+    (platform: ListingPlatform) => {
+      setActivePlatform(platform);
+      persistPlatform(platform);
+      if (platform === "amazef" && !amazefStatus.connected) {
+        setShowAmazefConnectModal(true);
+      }
+    },
+    [persistPlatform, amazefStatus.connected],
+  );
 
   useEffect(() => {
     if (!userId) return;
@@ -445,7 +526,7 @@ export function ListingsShell() {
         if (!variant.imageUrl) return "Each variant must have a photo.";
       }
     }
-    if (step === 6) {
+    if (step === 6 && activePlatform !== "amazef") {
       if (!draft?.ebayPolicies?.fulfillmentPolicyId) return "Select a shipping policy.";
       if (!draft?.ebayPolicies?.paymentPolicyId) return "Select a payment policy.";
       if (!draft?.ebayPolicies?.returnPolicyId) return "Select a return policy.";
@@ -569,12 +650,28 @@ export function ListingsShell() {
 
   const busy = veroLoading || generateLoading;
   const wizardStarted = currentStep > 0 || Boolean(vero) || Boolean(draft);
+  const isAmazef = activePlatform === "amazef";
   const showConnectGate =
+    !isAmazef &&
     !ebayStatusLoading &&
     !ebayStatus.connected &&
     !wizardStarted &&
     !resumeOffer;
+  const showAmazefConnectGate =
+    isAmazef &&
+    !amazefStatusLoading &&
+    !amazefStatus.connected &&
+    !wizardStarted &&
+    !resumeOffer;
+  const showEbaySpinner =
+    !isAmazef &&
+    ebayStatusLoading &&
+    !ebayStatus.connected &&
+    !isOAuthReturn &&
+    !isOAuthFailure;
+  const showAmazefSpinner = isAmazef && amazefStatusLoading && !amazefStatus.connected;
   const showAddressSetup =
+    !isAmazef &&
     ebayStatus.connected &&
     !ebayStatus.addressConfirmed &&
     Boolean(userId);
@@ -589,6 +686,26 @@ export function ListingsShell() {
     });
   }
 
+  function handleAmazefConnected(email: string | null) {
+    setAmazefStatus({ connected: true, amazefEmail: email });
+    setShowAmazefConnectModal(false);
+    setAmazefRefreshKey((key) => key + 1);
+  }
+
+  function handleAmazefDisconnect() {
+    if (!userId) return;
+    void fetch("/api/amazef/disconnect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId }),
+    })
+      .then(() => {
+        setAmazefStatus({ connected: false, amazefEmail: null });
+        setAmazefRefreshKey((key) => key + 1);
+      })
+      .catch(() => {});
+  }
+
   return (
     <DashboardLayout>
       <div className="mx-auto max-w-[960px] p-6 lg:p-8">
@@ -600,18 +717,32 @@ export function ListingsShell() {
             </p>
           </div>
 
-          {wizardStarted ? (
-            <button
-              type="button"
-              onClick={resetWizard}
-              className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-[#374151] hover:bg-gray-50"
-            >
-              Start new listing
-            </button>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-xs font-semibold text-[#374151]">
+              <span>Platform</span>
+              <select
+                value={activePlatform}
+                onChange={(event) => handlePlatformChange(event.target.value as ListingPlatform)}
+                className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-[#374151] outline-none focus:border-brand"
+              >
+                <option value="ebay">eBay</option>
+                <option value="amazef">Amazef</option>
+              </select>
+            </label>
+
+            {wizardStarted ? (
+              <button
+                type="button"
+                onClick={resetWizard}
+                className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-[#374151] hover:bg-gray-50"
+              >
+                Start new listing
+              </button>
+            ) : null}
+          </div>
         </div>
 
-        {ebayStatusLoading && !ebayStatus.connected && !isOAuthReturn && !isOAuthFailure ? (
+        {showEbaySpinner || showAmazefSpinner ? (
           <div className="flex justify-center py-16">
             <svg
               className="h-8 w-8 animate-spin text-brand"
@@ -636,9 +767,23 @@ export function ListingsShell() {
           </div>
         ) : showConnectGate && userId ? (
           <EbayStoreConnectGate userId={userId} errorMessage={isError ? notice : undefined} />
+        ) : showAmazefConnectGate && userId ? (
+          <div className="rounded-2xl border border-gray-100 bg-white p-8 text-center shadow-sm">
+            <h2 className="text-xl font-bold text-[#111827]">Connect Your Amazef Store</h2>
+            <p className="mx-auto mt-2 max-w-md text-sm text-[#6B7280]">
+              Sign in with your Amazef account to start listing products directly to your store.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowAmazefConnectModal(true)}
+              className="mt-6 rounded-lg bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark"
+            >
+              Connect Amazef Account
+            </button>
+          </div>
         ) : (
           <>
-            {ebayStatus.connected && userId ? (
+            {!isAmazef && ebayStatus.connected && userId ? (
               <EbayConnectedBanner
                 userId={userId}
                 ebayUsername={ebayStatus.ebayUsername}
@@ -646,6 +791,22 @@ export function ListingsShell() {
                 onDisconnected={handleEbayDisconnected}
                 onAddressUpdated={() => void loadEbayStatus()}
               />
+            ) : null}
+
+            {isAmazef && amazefStatus.connected && userId ? (
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3">
+                <p className="text-sm font-medium text-emerald-800">
+                  Amazef connected
+                  {amazefStatus.amazefEmail ? ` as ${amazefStatus.amazefEmail}` : ""}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleAmazefDisconnect}
+                  className="rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                >
+                  Disconnect
+                </button>
+              </div>
             ) : null}
 
             {showAddressSetup ? (
@@ -762,7 +923,7 @@ export function ListingsShell() {
 
           {currentStep === 8 && draft ? <ListingQualityScoreStep draft={draft} /> : null}
 
-          {currentStep === 9 && draft && userId ? (
+          {currentStep === 9 && draft && userId && !isAmazef ? (
             <>
               <EbayConnect userId={userId} refreshKey={oauthRefreshKey} />
               <ListingConfirmStep
@@ -773,6 +934,17 @@ export function ListingsShell() {
                 onListed={setListedUrl}
               />
             </>
+          ) : null}
+
+          {currentStep === 9 && draft && userId && isAmazef ? (
+            <AmazefConfirmStep
+              userId={userId}
+              draft={draft}
+              disabled={isBlocked}
+              refreshKey={amazefRefreshKey}
+              onConnectRequest={() => setShowAmazefConnectModal(true)}
+              onListed={setListedUrl}
+            />
           ) : null}
 
           {notice ? (
@@ -794,7 +966,7 @@ export function ListingsShell() {
               rel="noreferrer"
               className="inline-flex text-sm font-semibold text-brand hover:underline"
             >
-              View listing on eBay
+              View listing on {isAmazef ? "Amazef" : "eBay"}
             </a>
           ) : null}
         </div>
@@ -822,6 +994,15 @@ export function ListingsShell() {
             setShowVeroModal(false);
             resetWizard();
           }}
+        />
+      ) : null}
+
+      {showAmazefConnectModal && userId ? (
+        <AmazefConnectModal
+          userId={userId}
+          defaultEmail={userEmail}
+          onConnected={handleAmazefConnected}
+          onClose={() => setShowAmazefConnectModal(false)}
         />
       ) : null}
 

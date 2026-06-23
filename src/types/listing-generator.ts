@@ -65,6 +65,13 @@ export interface EbayConnectionStatus {
   addressConfirmed?: boolean;
 }
 
+export type ListingPlatform = "ebay" | "amazef";
+
+export interface AmazefConnectionStatus {
+  connected: boolean;
+  amazefEmail: string | null;
+}
+
 export interface EbaySellerInventoryLocation {
   sellerId: string;
   city: string;

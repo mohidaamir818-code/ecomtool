@@ -43,6 +43,11 @@ export const serverEnv = {
   smtpFrom: () => process.env.SMTP_FROM ?? process.env.SMTP_USER ?? "",
   amazefApiUrl: () => process.env.AMAZEF_API_URL ?? "",
   amazefApiKey: () => process.env.AMAZEF_API_KEY ?? "",
+  amazefListingUrl: () =>
+    (process.env.AMAZEF_LISTING_API_URL ?? process.env.AMAZEF_API_URL ?? "")
+      .trim()
+      .replace(/\/$/, ""),
+  amazefListingSecret: () => process.env.AMAZEF_LISTING_SECRET?.trim() ?? "",
   appUrl: () => process.env.APP_URL?.trim().replace(/\/$/, "") ?? "",
 } as const;
 
