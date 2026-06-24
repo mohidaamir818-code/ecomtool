@@ -1149,19 +1149,22 @@ export function ListingsShell() {
         ) : null}
 
         {currentStep === 0 ? (
-          <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
-            <h2 className="text-lg font-semibold text-[#111827]">Start New Listing</h2>
-            <label className="mt-4 block text-sm font-medium text-[#111827]">
-              AliExpress Product URL
-              <input
-                type="url"
-                value={url}
-                disabled={isBlocked || busy}
-                onChange={(event) => setUrl(event.target.value)}
-                placeholder="https://www.aliexpress.com/item/..."
-                className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand disabled:opacity-60"
-              />
-            </label>
+          <div className="space-y-4">
+            {amazefAutoListingPanel}
+            <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-[#111827]">Start New Listing</h2>
+              <label className="mt-4 block text-sm font-medium text-[#111827]">
+                AliExpress Product URL
+                <input
+                  type="url"
+                  value={url}
+                  disabled={isBlocked || busy}
+                  onChange={(event) => setUrl(event.target.value)}
+                  placeholder="https://www.aliexpress.com/item/..."
+                  className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand disabled:opacity-60"
+                />
+              </label>
+            </div>
           </div>
         ) : null}
 
