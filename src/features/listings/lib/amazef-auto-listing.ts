@@ -85,8 +85,5 @@ export function validateAutoListingSettingsInput(
   if (settings.minStock > settings.maxStock) {
     return "Minimum stock cannot be greater than maximum stock.";
   }
-  if (settings.listVeroProducts && !settings.veroWarningAcknowledged) {
-    return "Acknowledge the VeRO risk before listing VeRO products.";
-  }
   return null;
 }

@@ -101,16 +101,23 @@ export async function runAmazefAutoListPipeline(
   userId: string,
   productUrl: string,
   rawSettings: Partial<AmazefAutoListingSettings>,
+  options?: { acknowledgeVero?: boolean },
 ): Promise<AmazefAutoListResult> {
   const settings = normalizeAutoListingSettings(rawSettings);
+  const acknowledgeVero = Boolean(options?.acknowledgeVero);
 
   const product = await fetchListingProductSource(productUrl.trim());
   const vero = await checkVeroSafety(product);
 
-  if (!vero.safe && !settings.listVeroProducts) {
-    throw new Error(
-      "This product failed the VeRO check. Enable “List VeRO products” in auto listing settings to continue.",
-    );
+  if (!vero.safe) {
+    if (!settings.listVeroProducts) {
+      throw new Error(
+        "This product failed the VeRO check. Enable “List VeRO products” in auto listing settings to continue.",
+      );
+    }
+    if (!acknowledgeVero) {
+      throw new Error("VERO_ACK_REQUIRED");
+    }
   }
 
   const currency = product.currency === "USD" ? "GBP" : product.currency;

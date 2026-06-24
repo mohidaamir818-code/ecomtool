@@ -13,6 +13,7 @@ export async function POST(request: NextRequest) {
       userId?: string;
       url?: string;
       settings?: Partial<AmazefAutoListingSettings>;
+      acknowledgeVero?: boolean;
     };
 
     userId = body.userId?.trim() ?? null;
@@ -33,7 +34,9 @@ export async function POST(request: NextRequest) {
     const accessDenied = await requireActiveUser(userId);
     if (accessDenied) return accessDenied;
 
-    const result = await runAmazefAutoListPipeline(userId, url, body.settings);
+    const result = await runAmazefAutoListPipeline(userId, url, body.settings, {
+      acknowledgeVero: body.acknowledgeVero,
+    });
 
     void logUserApiRequest({
       userId,

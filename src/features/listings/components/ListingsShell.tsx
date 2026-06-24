@@ -17,7 +17,6 @@ import { sellerPreferencesToPromotions, promotionsToSellerPreferences } from "@/
 import { AiListingGenerator } from "./AiListingGenerator";
 import { AmazefAutoListingPanel } from "./AmazefAutoListingPanel";
 import { AmazefAutoListingSettingsModal } from "./AmazefAutoListingSettingsModal";
-import { AmazefVeroWarningModal } from "./AmazefVeroWarningModal";
 import { AmazefConfirmStep } from "./AmazefConfirmStep";
 import { AmazefConnectModal } from "./AmazefConnectModal";
 import { EbayAddressSetupForm } from "./EbayAddressSetupForm";
@@ -121,8 +120,7 @@ export function ListingsShell() {
     normalizeAutoListingSettings(null),
   );
   const [showAutoSettingsModal, setShowAutoSettingsModal] = useState(false);
-  const [showVeroWarningModal, setShowVeroWarningModal] = useState(false);
-  const [pendingAutoSettings, setPendingAutoSettings] = useState<AmazefAutoListingSettings | null>(null);
+  const [pendingAmazefAutoList, setPendingAmazefAutoList] = useState(false);
   const [autoListProcessing, setAutoListProcessing] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const generateStarted = useRef(false);
@@ -459,6 +457,13 @@ export function ListingsShell() {
     setVeroAcknowledged(true);
     veroAcknowledgedRef.current = true;
     setShowVeroModal(false);
+
+    if (pendingAmazefAutoList) {
+      setPendingAmazefAutoList(false);
+      void runAmazefAutoList(true);
+      return;
+    }
+
     setNotice("");
     setIsError(false);
     setCurrentStep(2);
@@ -586,7 +591,6 @@ export function ListingsShell() {
     const wasEnabled = amazefAutoSettings.enabled;
     persistAmazefAutoSettings({ ...settings, enabled: true });
     setShowAutoSettingsModal(false);
-    setPendingAutoSettings(null);
     setCurrentStep(0);
     setNotice(
       wasEnabled
@@ -597,22 +601,7 @@ export function ListingsShell() {
   }
 
   function handleAutoSettingsSave(settings: AmazefAutoListingSettings) {
-    if (settings.listVeroProducts && !settings.veroWarningAcknowledged) {
-      setPendingAutoSettings(settings);
-      setShowAutoSettingsModal(false);
-      setShowVeroWarningModal(true);
-      return;
-    }
     finalizeAutoSettings(settings);
-  }
-
-  function handleVeroWarningConfirm() {
-    if (!pendingAutoSettings) return;
-    finalizeAutoSettings({
-      ...pendingAutoSettings,
-      veroWarningAcknowledged: true,
-    });
-    setShowVeroWarningModal(false);
   }
 
   function handleAutoListingToggle(enabled: boolean) {
@@ -625,7 +614,7 @@ export function ListingsShell() {
     setIsError(false);
   }
 
-  async function runAmazefAutoList() {
+  async function runAmazefAutoList(acknowledgeVero = false) {
     if (!userId || !url.trim()) {
       setNotice("Please paste an AliExpress product URL.");
       setIsError(true);
@@ -636,6 +625,52 @@ export function ListingsShell() {
       setNotice("Turn on auto listing first.");
       setIsError(true);
       return;
+    }
+
+    if (!acknowledgeVero) {
+      setAutoListProcessing(true);
+      setNotice("");
+      setIsError(false);
+      setListedUrl(null);
+
+      try {
+        const veroResponse = await fetch("/api/vero-check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, url: url.trim() }),
+        });
+        const veroData = await veroResponse.json();
+
+        if (!veroResponse.ok) {
+          setNotice(veroData.error ?? "VeRO check failed.");
+          setIsError(true);
+          return;
+        }
+
+        const veroResult = veroData.vero as VeroCheckResult | null;
+        setVero(veroResult);
+        veroRef.current = veroResult;
+
+        if (veroResult && !veroResult.safe) {
+          if (!amazefAutoSettings.listVeroProducts) {
+            setNotice(
+              "This product failed the VeRO check. Enable “List VeRO products” in auto listing settings to continue.",
+            );
+            setIsError(true);
+            return;
+          }
+
+          setPendingAmazefAutoList(true);
+          setShowVeroModal(true);
+          return;
+        }
+      } catch {
+        setNotice("Network error while running VeRO check.");
+        setIsError(true);
+        return;
+      } finally {
+        setAutoListProcessing(false);
+      }
     }
 
     setAutoListProcessing(true);
@@ -651,6 +686,7 @@ export function ListingsShell() {
           userId,
           url: url.trim(),
           settings: amazefAutoSettings,
+          acknowledgeVero,
         }),
       });
       const data = await response.json();
@@ -1203,6 +1239,13 @@ export function ListingsShell() {
           onProceed={handleVeroAcknowledgeProceed}
           onStartNew={() => {
             setShowVeroModal(false);
+            setPendingAmazefAutoList(false);
+            if (isAmazef && amazefAutoSettings.enabled) {
+              setUrl("");
+              setNotice("");
+              setIsError(false);
+              return;
+            }
             resetWizard();
           }}
         />
@@ -1222,19 +1265,6 @@ export function ListingsShell() {
           initialSettings={amazefAutoSettings}
           onSave={handleAutoSettingsSave}
           onClose={() => setShowAutoSettingsModal(false)}
-        />
-      ) : null}
-
-      {showVeroWarningModal ? (
-        <AmazefVeroWarningModal
-          onConfirm={handleVeroWarningConfirm}
-          onCancel={() => {
-            setShowVeroWarningModal(false);
-            setPendingAutoSettings(null);
-            if (!amazefAutoSettings.enabled) {
-              setShowAutoSettingsModal(true);
-            }
-          }}
         />
       ) : null}
 

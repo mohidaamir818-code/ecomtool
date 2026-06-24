@@ -36,10 +36,7 @@ export function AmazefAutoListingSettingsModal({
 
   function handleSubmit() {
     const next = normalizeAutoListingSettings(form);
-    const validationError = validateAutoListingSettingsInput({
-      ...next,
-      veroWarningAcknowledged: next.listVeroProducts ? next.veroWarningAcknowledged : true,
-    });
+    const validationError = validateAutoListingSettingsInput(next);
     if (validationError) {
       setError(validationError);
       return;
