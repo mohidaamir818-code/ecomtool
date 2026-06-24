@@ -5,10 +5,26 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { DashboardLayout } from "@/features/dashboard/components/DashboardLayout";
 import { useUserBlock } from "@/features/dashboard/context/UserBlockContext";
 import { assignInternalSkusToDraft, buildInitialDraft, normalizeDraftVariants, recalculateDraftPricing } from "@/features/listings/lib/draft-utils";
+import {
+  getNextWizardStepIndex,
+  getPrevVisibleStep,
+  loadVisibleStepsFromStorage,
+  normalizeVisibleSteps,
+  saveVisibleStepsToStorage,
+  visibleStepsToSet,
+  amazefShippingStorageKey,
+} from "@/features/listings/lib/amazef-auto-listing";
 import { draftNeedsSkuBackfill } from "@/lib/listings/internal-sku";
+import { calculatePricingBreakdown, resolveBaseAliPrice } from "@/lib/listings/pricing";
 import { fetchSellerPreferences, persistSellerPreferences } from "@/features/listings/lib/seller-preferences-client";
-import { sellerPreferencesToPromotions, promotionsToSellerPreferences } from "@/lib/listings/seller-preferences-mappers";
+import {
+  sellerPreferencesToFeePrefs,
+  sellerPreferencesToPromotions,
+  promotionsToSellerPreferences,
+} from "@/lib/listings/seller-preferences-mappers";
 import { AiListingGenerator } from "./AiListingGenerator";
+import { AmazefAutoListingModal } from "./AmazefAutoListingModal";
+import { AmazefAutoListingPanel } from "./AmazefAutoListingPanel";
 import { AmazefConfirmStep } from "./AmazefConfirmStep";
 import { AmazefConnectModal } from "./AmazefConnectModal";
 import { EbayAddressSetupForm } from "./EbayAddressSetupForm";
@@ -108,13 +124,30 @@ export function ListingsShell() {
   const [amazefStatusLoading, setAmazefStatusLoading] = useState(true);
   const [showAmazefConnectModal, setShowAmazefConnectModal] = useState(false);
   const [amazefRefreshKey, setAmazefRefreshKey] = useState(0);
+  const [amazefAutoListingEnabled, setAmazefAutoListingEnabled] = useState(false);
+  const [amazefVisibleSteps, setAmazefVisibleSteps] = useState<Set<number>>(() =>
+    visibleStepsToSet(normalizeVisibleSteps([0, 1, 2, 3, 4, 5, 6, 8, 9])),
+  );
+  const [showAutoListingModal, setShowAutoListingModal] = useState(false);
+  const [autoListingProcessing, setAutoListingProcessing] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const generateStarted = useRef(false);
+  const listingRef = useRef(listing);
+  const draftRef = useRef(draft);
+  const pricingBreakdownRef = useRef(pricingBreakdown);
+  const veroRef = useRef(vero);
+  const veroAcknowledgedRef = useRef(veroAcknowledged);
   const savedToastTimer = useRef<number | null>(null);
   const ebayConnectedToastTimer = useRef<number | null>(null);
   const oauthJustSucceeded = useRef(false);
   const oauthReturnHandled = useRef(false);
   const oauthFailureHandled = useRef(false);
+
+  listingRef.current = listing;
+  draftRef.current = draft;
+  pricingBreakdownRef.current = pricingBreakdown;
+  veroRef.current = vero;
+  veroAcknowledgedRef.current = veroAcknowledged;
 
   const oauthRefreshKey =
     searchParams.get("connected") ?? searchParams.get("error") ?? searchParams.get("ebay") ?? undefined;
@@ -236,6 +269,12 @@ export function ListingsShell() {
       .then(({ preferences }) => setSellerPrefs(preferences))
       .catch(() => setSellerPrefs(defaultSellerPreferences()))
       .finally(() => setSellerPrefsLoading(false));
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId) return;
+    const saved = loadVisibleStepsFromStorage(userId);
+    if (saved) setAmazefVisibleSteps(visibleStepsToSet(saved));
   }, [userId]);
 
   function triggerSavedToast() {
@@ -374,6 +413,9 @@ export function ListingsShell() {
     setPricingBreakdown(null);
     setManualPriceOverride(null);
     generateStarted.current = false;
+    setAmazefAutoListingEnabled(false);
+    setShowAutoListingModal(false);
+    setAutoListingProcessing(false);
     void clearSavedDraft();
   }
 
@@ -405,6 +447,7 @@ export function ListingsShell() {
 
       setProduct(data.product ?? null);
       setVero(data.vero ?? null);
+      veroRef.current = data.vero ?? null;
 
       if (!data.vero?.safe) {
         setShowVeroModal(true);
@@ -423,6 +466,7 @@ export function ListingsShell() {
 
   function handleVeroAcknowledgeProceed() {
     setVeroAcknowledged(true);
+    veroAcknowledgedRef.current = true;
     setShowVeroModal(false);
     setNotice("");
     setIsError(false);
@@ -456,6 +500,7 @@ export function ListingsShell() {
 
       setProduct(nextProduct);
       setListing(nextListing);
+      listingRef.current = nextListing;
 
       if (nextListing) {
         const promotions = sellerPreferencesToPromotions(
@@ -473,6 +518,7 @@ export function ListingsShell() {
           initial,
         );
         setDraft(withSkus);
+        draftRef.current = withSkus;
       }
 
       setNotice("Listing generated. Review and edit before continuing.");
@@ -503,7 +549,11 @@ export function ListingsShell() {
   }, [currentStep, product, listing]);
 
   function updateDraft(patch: Partial<ListingDraft>) {
-    setDraft((current) => (current ? { ...current, ...patch } : current));
+    setDraft((current) => {
+      const next = current ? { ...current, ...patch } : current;
+      draftRef.current = next;
+      return next;
+    });
   }
 
   function updateListing(nextListing: GeneratedListing) {
@@ -526,34 +576,230 @@ export function ListingsShell() {
     setPricingPrefs(prefs);
     setPricingBreakdown(breakdown);
     setManualPriceOverride(manualPrice);
+    pricingBreakdownRef.current = breakdown;
 
     if (draft) {
-      setDraft(recalculateDraftPricing(draft, prefs, manualPrice));
+      const nextDraft = recalculateDraftPricing(draft, prefs, manualPrice);
+      setDraft(nextDraft);
+      draftRef.current = nextDraft;
     }
   }
 
-  function validateStep(step: number): string | null {
-    if (step === 0 && !url.trim()) return "Please paste an AliExpress product URL.";
-    if (step === 1 && vero && !vero.safe && !veroAcknowledged)
-      return "Acknowledge the VeRO risk to continue, or start a new listing.";
-    if (step === 2 && !pricingBreakdown) return "Apply your pricing preferences before continuing.";
+  function autoApplyPricing(): { ok: boolean; error?: string } {
+    if (!product) return { ok: false, error: "Product not loaded." };
+    if (pricingBreakdownRef.current) return { ok: true };
+
+    const currency = product.currency === "USD" ? "GBP" : product.currency;
+    const prefs = sellerPreferencesToFeePrefs(
+      sellerPrefs ?? defaultSellerPreferences(currency),
+    );
+    const baseAliPrice = resolveBaseAliPrice(product);
+    const breakdown = calculatePricingBreakdown(baseAliPrice, prefs);
+    handlePricingChange(prefs, breakdown, null);
+    return { ok: true };
+  }
+
+  async function autoApplyShipping(): Promise<{ ok: boolean; error?: string }> {
+    if (!draftRef.current) return { ok: false, error: "Listing draft not ready." };
+    if (draftRef.current.product.shippingDaysLabel?.trim()) return { ok: true };
+
+    if (userId) {
+      const savedLabel = localStorage.getItem(amazefShippingStorageKey(userId))?.trim();
+      if (savedLabel) {
+        const nextDraft = {
+          ...draftRef.current,
+          product: { ...draftRef.current.product, shippingDaysLabel: savedLabel },
+        };
+        setDraft(nextDraft);
+        draftRef.current = nextDraft;
+        return { ok: true };
+      }
+    }
+
+    const productUrl = draftRef.current.product.productUrl?.trim();
+    if (!productUrl) return { ok: true };
+
+    try {
+      const response = await fetch(
+        `/api/listings/shipping-days?url=${encodeURIComponent(productUrl)}`,
+      );
+      const data = (await response.json()) as { shippingDaysLabel?: string | null };
+      if (data.shippingDaysLabel) {
+        const nextDraft = {
+          ...draftRef.current,
+          product: {
+            ...draftRef.current.product,
+            shippingDaysLabel: data.shippingDaysLabel ?? null,
+          },
+        };
+        setDraft(nextDraft);
+        draftRef.current = nextDraft;
+      }
+    } catch {
+      // Shipping detection is best-effort for auto mode.
+    }
+
+    return { ok: true };
+  }
+
+  async function executeAutoStep(step: number): Promise<{ ok: boolean; error?: string }> {
+    if (step === 0) {
+      if (!url.trim()) return { ok: false, error: "Please paste an AliExpress product URL." };
+      return { ok: true };
+    }
+
+    if (step === 1) {
+      if (!veroRef.current) {
+        const ok = await runVeroCheck();
+        if (!ok) return { ok: false, error: "VeRO check failed." };
+      }
+      if (veroRef.current && !veroRef.current.safe && !veroAcknowledgedRef.current) {
+        return { ok: false, error: "Acknowledge the VeRO risk to continue." };
+      }
+      return { ok: true };
+    }
+
+    if (step === 2) {
+      return autoApplyPricing();
+    }
+
+    if (step === 3) {
+      if (generateLoading) {
+        return { ok: false, error: "AI listing is still generating. Please wait." };
+      }
+      if (!listingRef.current && product) {
+        const ok = await generateListing(product);
+        if (!ok) return { ok: false, error: "Failed to generate listing." };
+      } else if (!listingRef.current) {
+        return { ok: false, error: "Listing preview not ready." };
+      }
+      return { ok: true };
+    }
+
     if (step === 4) {
-      if (!listing?.seoTitle.trim()) return "Title is required.";
-      if (listing.seoTitle.length > 80) return "Title must be 80 characters or less.";
-      if ((listing?.suggestedPrice ?? 0) <= 0) return "Price must be greater than 0.";
+      if (!listingRef.current?.seoTitle.trim()) return { ok: false, error: "Title is required." };
+      return { ok: true };
+    }
+
+    if (step === 5) {
+      if (!draftRef.current) return { ok: false, error: "Photos and variations not ready." };
+      return { ok: true };
+    }
+
+    if (step === 6) {
+      return autoApplyShipping();
+    }
+
+    if (step === 8) {
+      return { ok: true };
+    }
+
+    return { ok: true };
+  }
+
+  async function autoProcessHiddenStepsAfter(
+    fromStep: number,
+    visible: Set<number>,
+  ): Promise<{ ok: boolean; error?: string; targetStep: number }> {
+    let step = getNextWizardStepIndex(fromStep);
+
+    while (step <= MAX_STEP) {
+      if (visible.has(step)) {
+        return { ok: true, targetStep: step };
+      }
+
+      const result = await executeAutoStep(step);
+      if (!result.ok) {
+        return { ok: false, error: result.error, targetStep: step };
+      }
+
+      const validationError = validateStep(step);
+      if (validationError) {
+        return { ok: false, error: validationError, targetStep: step };
+      }
+
+      step = getNextWizardStepIndex(step);
+    }
+
+    return { ok: true, targetStep: MAX_STEP };
+  }
+
+  async function handleStartAutoListing(selectedSteps: number[]) {
+    const visible = visibleStepsToSet(selectedSteps);
+    setAmazefVisibleSteps(visible);
+    setAmazefAutoListingEnabled(true);
+    setShowAutoListingModal(false);
+    if (userId) saveVisibleStepsToStorage(userId, [...visible]);
+
+    if (!visible.has(3)) {
+      setAutoListingProcessing(true);
+      setNotice("");
+      setIsError(false);
+      try {
+        const step3 = await executeAutoStep(3);
+        if (!step3.ok) {
+          setNotice(step3.error ?? "Failed to auto-run AI Generate.");
+          setIsError(true);
+          return;
+        }
+
+        const result = await autoProcessHiddenStepsAfter(3, visible);
+        if (!result.ok) {
+          setNotice(result.error ?? "Auto listing step failed.");
+          setIsError(true);
+          setCurrentStep(result.targetStep);
+          return;
+        }
+
+        setCurrentStep(result.targetStep);
+        setNotice("Auto listing active. Hidden steps were processed automatically.");
+        setIsError(false);
+      } finally {
+        setAutoListingProcessing(false);
+      }
+    } else {
+      setNotice("Auto listing active. Unchecked steps will run automatically.");
+      setIsError(false);
+    }
+  }
+
+  function handleAutoListingToggle(enabled: boolean) {
+    if (enabled) {
+      setShowAutoListingModal(true);
+      return;
+    }
+    setAmazefAutoListingEnabled(false);
+    setNotice("");
+    setIsError(false);
+  }
+
+  function validateStep(step: number): string | null {
+    const currentListing = listingRef.current;
+    const currentDraft = draftRef.current;
+    const currentVero = veroRef.current;
+    const currentPricingBreakdown = pricingBreakdownRef.current;
+
+    if (step === 0 && !url.trim()) return "Please paste an AliExpress product URL.";
+    if (step === 1 && currentVero && !currentVero.safe && !veroAcknowledgedRef.current)
+      return "Acknowledge the VeRO risk to continue, or start a new listing.";
+    if (step === 2 && !currentPricingBreakdown) return "Apply your pricing preferences before continuing.";
+    if (step === 4) {
+      if (!currentListing?.seoTitle.trim()) return "Title is required.";
+      if (currentListing.seoTitle.length > 80) return "Title must be 80 characters or less.";
+      if ((currentListing?.suggestedPrice ?? 0) <= 0) return "Price must be greater than 0.";
     }
     if (step === 5) {
-      if (!draft?.photos.length) return "Add at least one photo.";
-      for (const variant of draft?.variants ?? []) {
+      if (!currentDraft?.photos.length) return "Add at least one photo.";
+      for (const variant of currentDraft?.variants ?? []) {
         if (variant.price <= 0) return "All variant prices must be greater than 0.";
         if (variant.quantity < 1) return "All variant quantities must be at least 1.";
         if (!variant.imageUrl) return "Each variant must have a photo.";
       }
     }
     if (step === 6 && activePlatform !== "amazef") {
-      if (!draft?.ebayPolicies?.fulfillmentPolicyId) return "Select a shipping policy.";
-      if (!draft?.ebayPolicies?.paymentPolicyId) return "Select a payment policy.";
-      if (!draft?.ebayPolicies?.returnPolicyId) return "Select a return policy.";
+      if (!currentDraft?.ebayPolicies?.fulfillmentPolicyId) return "Select a shipping policy.";
+      if (!currentDraft?.ebayPolicies?.paymentPolicyId) return "Select a payment policy.";
+      if (!currentDraft?.ebayPolicies?.returnPolicyId) return "Select a return policy.";
     }
     return null;
   }
@@ -607,10 +853,33 @@ export function ListingsShell() {
       }
     }
 
+    if (isAmazef && amazefAutoListingEnabled && currentStep >= 3) {
+      if (currentStep === 3 && generateLoading) return;
+
+      setAutoListingProcessing(true);
+      try {
+        const result = await autoProcessHiddenStepsAfter(currentStep, amazefVisibleSteps);
+        if (!result.ok) {
+          setNotice(result.error ?? "Auto listing step failed.");
+          setIsError(true);
+          setCurrentStep(result.targetStep);
+          return;
+        }
+        setCurrentStep(result.targetStep);
+      } finally {
+        setAutoListingProcessing(false);
+      }
+      return;
+    }
+
     setCurrentStep((step) => advanceWizardStep(step, activePlatform));
   }
 
   function handleBack() {
+    if (isAmazef && amazefAutoListingEnabled && currentStep >= 3) {
+      setCurrentStep(getPrevVisibleStep(currentStep, amazefVisibleSteps));
+      return;
+    }
     setCurrentStep((step) => retreatWizardStep(step, activePlatform));
   }
 
@@ -858,7 +1127,15 @@ export function ListingsShell() {
         ) : null}
 
         {wizardStarted ? (
-          <ListingWizardProgress currentStep={currentStep} platform={activePlatform} />
+          <ListingWizardProgress
+            currentStep={currentStep}
+            platform={activePlatform}
+            visibleSteps={
+              isAmazef && amazefAutoListingEnabled
+                ? [...amazefVisibleSteps].sort((a, b) => a - b)
+                : undefined
+            }
+          />
         ) : null}
 
         {currentStep === 0 ? (
@@ -899,16 +1176,27 @@ export function ListingsShell() {
           ) : null}
 
           {currentStep === 3 ? (
-            <AiListingGenerator
-              userId={userId ?? ""}
-              product={product}
-              listing={listing}
-              loading={generateLoading}
-              platform={activePlatform}
-              errorMessage={isError && currentStep === 3 ? notice : undefined}
-              onRetry={retryGenerateListing}
-              onListingChange={updateListing}
-            />
+            <div className="space-y-4">
+              {isAmazef ? (
+                <AmazefAutoListingPanel
+                  enabled={amazefAutoListingEnabled}
+                  manualStepCount={amazefVisibleSteps.size}
+                  processing={autoListingProcessing}
+                  onToggle={handleAutoListingToggle}
+                  onEditSteps={() => setShowAutoListingModal(true)}
+                />
+              ) : null}
+              <AiListingGenerator
+                userId={userId ?? ""}
+                product={product}
+                listing={listing}
+                loading={generateLoading}
+                platform={activePlatform}
+                errorMessage={isError && currentStep === 3 ? notice : undefined}
+                onRetry={retryGenerateListing}
+                onListingChange={updateListing}
+              />
+            </div>
           ) : null}
 
           {currentStep === 4 && userId && listing ? (
@@ -1013,7 +1301,7 @@ export function ListingsShell() {
             maxStep={MAX_STEP}
             onBack={handleBack}
             onNext={() => void handleNext()}
-            nextDisabled={busy || (currentStep === 3 && generateLoading)}
+            nextDisabled={busy || autoListingProcessing || (currentStep === 3 && generateLoading)}
             nextLabel={currentStep === 0 ? "Check & Generate Listing" : "Next"}
             hideNext={currentStep === 1 && Boolean(vero && !vero.safe) && !veroAcknowledged}
           />
@@ -1040,6 +1328,20 @@ export function ListingsShell() {
           defaultEmail={userEmail}
           onConnected={handleAmazefConnected}
           onClose={() => setShowAmazefConnectModal(false)}
+        />
+      ) : null}
+
+      {showAutoListingModal ? (
+        <AmazefAutoListingModal
+          initialVisibleSteps={[...amazefVisibleSteps]}
+          onConfirm={(steps) => void handleStartAutoListing(steps)}
+          onClose={() => {
+            setShowAutoListingModal(false);
+            if (!amazefAutoListingEnabled) {
+              setNotice("");
+              setIsError(false);
+            }
+          }}
         />
       ) : null}
 

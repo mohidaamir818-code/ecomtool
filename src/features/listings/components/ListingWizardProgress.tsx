@@ -24,32 +24,48 @@ function progressIndexForStep(step: number, platform: ListingPlatform): number {
 interface ListingWizardProgressProps {
   currentStep: number;
   platform?: ListingPlatform;
+  visibleSteps?: number[];
 }
 
 export function ListingWizardProgress({
   currentStep,
   platform = "ebay",
+  visibleSteps,
 }: ListingWizardProgressProps) {
-  const steps = getWizardSteps(platform);
-  const displayIndex = progressIndexForStep(currentStep, platform);
+  const useAutoMode = platform === "amazef" && visibleSteps && visibleSteps.length > 0;
+  const sortedVisible = useAutoMode ? [...visibleSteps].sort((a, b) => a - b) : [];
+  const steps = useAutoMode
+    ? sortedVisible.map((stepId) => LISTING_WIZARD_STEPS[stepId])
+    : getWizardSteps(platform);
+
+  const displayIndex = useAutoMode
+    ? Math.max(0, sortedVisible.indexOf(currentStep))
+    : progressIndexForStep(currentStep, platform);
 
   return (
     <div className="mb-6">
       <div className="mb-3 flex items-center justify-between text-xs font-medium text-[#6B7280]">
         <span>
           Step {displayIndex + 1} of {steps.length}
+          {useAutoMode ? " (auto listing)" : ""}
         </span>
         <span className="hidden sm:inline">{steps[displayIndex]}</span>
       </div>
 
-      <div className="grid grid-cols-5 gap-1 sm:grid-cols-9 sm:gap-2">
+      <div
+        className={`grid gap-1 sm:gap-2 ${
+          steps.length <= 5 ? "grid-cols-5" : steps.length <= 7 ? "grid-cols-7" : "grid-cols-9"
+        }`}
+      >
         {steps.map((label, index) => {
-          const stepIndex = stepForProgressIndex(index, platform);
+          const stepIndex = useAutoMode
+            ? sortedVisible[index]
+            : stepForProgressIndex(index, platform);
           const active = stepIndex === currentStep;
           const complete = stepIndex < currentStep;
 
           return (
-            <div key={label} className="min-w-0">
+            <div key={`${label}-${stepIndex}`} className="min-w-0">
               <div
                 className={`h-2 rounded-full transition-colors ${
                   complete || active ? "bg-brand" : "bg-gray-200"
