@@ -20,6 +20,7 @@ import {
   normalizeAspectNameForMarketplace,
   resolveRequiredEbayAspects,
 } from "@/lib/listings/item-specifics";
+import { ensureDraftVariantEans, isValidGtin } from "@/lib/listings/ensure-draft-variant-eans";
 import {
   buildEbayListingUrl,
   getSellerMarketplaceId,
@@ -261,6 +262,18 @@ function patchMissingAspectOverride(
     aspectOptions.marketplaceId === "EBAY_GB"
       ? normalizeAspectNameForMarketplace(missingField, aspectOptions.marketplaceId)
       : missingField;
+
+  const fieldLower = fieldKey.toLowerCase();
+  if ((fieldLower === "ean" || fieldLower === "gtin") && !isMultiSkuListing(aspectOptions)) {
+    const variantEan = aspectOptions.variantDrafts
+      ?.map((variant) => variant.ean?.trim())
+      .find((value) => isValidGtin(value));
+    if (variantEan) {
+      aspectOptions.aspectOverrides[fieldKey] = [variantEan];
+      console.log(`Auto-retry ${attempt}: fixing ${fieldKey} from variant`, variantEan);
+      return;
+    }
+  }
 
   const extracted = aspectOptions.extractedAspects;
   const safeDefaults = extracted
@@ -1113,9 +1126,17 @@ async function resolveCategoryId(
 
 // eBay accepts GTINs of 8, 12, 13, or 14 digits. Anything else is rejected,
 // so we only forward a GTIN when it matches one of those formats.
-function isValidGtin(value: string | undefined | null): boolean {
-  if (!value) return false;
-  return /^(\d{8}|\d{12}|\d{13}|\d{14})$/.test(value.trim());
+function applyGtinAspects(aspects: Record<string, string[]>, gtin?: string): void {
+  if (!isValidGtin(gtin)) {
+    if (gtin?.trim()) {
+      console.log(`[eBay inventory_item PUT] Skipping invalid GTIN: ${gtin.trim()}`);
+    }
+    return;
+  }
+
+  const value = gtin!.trim();
+  aspects.GTIN = [value];
+  aspects.EAN = [value];
 }
 
 async function upsertInventoryItem(
@@ -1154,6 +1175,7 @@ async function upsertInventoryItem(
         if (groupHasSize) {
           memberAspects.Size = [size];
         }
+        applyGtinAspects(memberAspects, gtin);
         aspects = memberAspects;
       } else {
         if (variantLabel) {
@@ -1164,11 +1186,7 @@ async function upsertInventoryItem(
           aspects.Size = [size];
           delete aspects[alternateColourKey];
         }
-        if (isValidGtin(gtin)) {
-          aspects.GTIN = [gtin!.trim()];
-        } else if (gtin?.trim()) {
-          console.log(`[eBay inventory_item PUT] Skipping invalid GTIN: ${gtin.trim()}`);
-        }
+        applyGtinAspects(aspects, gtin);
 
         applyNuclearColourSizeFallback(
           aspects,
@@ -1474,6 +1492,8 @@ async function publishOffer(
 }
 
 export async function listDraftOnEbay(userId: string, draft: ListingDraft): Promise<ListOnEbayResult> {
+  draft = await ensureDraftVariantEans(draft);
+
   const token = await getEbayUserAccessToken(userId);
   if (!token) {
     throw new Error("eBay account is not connected. Connect your eBay account first.");
