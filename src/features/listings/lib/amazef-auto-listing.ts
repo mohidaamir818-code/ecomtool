@@ -1,81 +1,92 @@
-import { LISTING_WIZARD_STEPS } from "@/types/listing-generator";
+export interface AmazefAutoListingSettings {
+  enabled: boolean;
+  minProfitPercent: number;
+  maxProfitPercent: number;
+  minStock: number;
+  maxStock: number;
+  listVeroProducts: boolean;
+  veroWarningAcknowledged: boolean;
+}
 
-export const CONFIRM_STEP = 9;
-export const VOLUME_DISCOUNTS_STEP = 7;
+export const DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS: AmazefAutoListingSettings = {
+  enabled: false,
+  minProfitPercent: 20,
+  maxProfitPercent: 45,
+  minStock: 1,
+  maxStock: 50,
+  listVeroProducts: false,
+  veroWarningAcknowledged: false,
+};
 
-export const AMAZEF_SELECTABLE_STEPS = [
-  { id: 0, label: LISTING_WIZARD_STEPS[0] },
-  { id: 1, label: LISTING_WIZARD_STEPS[1] },
-  { id: 2, label: LISTING_WIZARD_STEPS[2] },
-  { id: 3, label: LISTING_WIZARD_STEPS[3] },
-  { id: 4, label: LISTING_WIZARD_STEPS[4] },
-  { id: 5, label: LISTING_WIZARD_STEPS[5] },
-  { id: 6, label: LISTING_WIZARD_STEPS[6] },
-  { id: 8, label: LISTING_WIZARD_STEPS[8] },
-  { id: 9, label: LISTING_WIZARD_STEPS[9] },
-] as const;
-
-export function amazefAutoListingStorageKey(userId: string) {
-  return `amazef-auto-listing-visible-steps-${userId}`;
+export function amazefAutoListingSettingsKey(userId: string) {
+  return `amazef-auto-listing-settings-${userId}`;
 }
 
 export function amazefShippingStorageKey(userId: string) {
   return `amazef-default-shipping-days-${userId}`;
 }
 
-export function isAmazefSkippedStep(step: number): boolean {
-  return step === VOLUME_DISCOUNTS_STEP;
+export function normalizeAutoListingSettings(
+  input: Partial<AmazefAutoListingSettings> | null | undefined,
+): AmazefAutoListingSettings {
+  const base = { ...DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS };
+  if (!input) return base;
+
+  const minProfitPercent = clampNumber(input.minProfitPercent, 1, 90, base.minProfitPercent);
+  const maxProfitPercent = clampNumber(
+    input.maxProfitPercent,
+    minProfitPercent,
+    95,
+    Math.max(minProfitPercent, base.maxProfitPercent),
+  );
+  const minStock = clampNumber(input.minStock, 1, 9999, base.minStock);
+  const maxStock = clampNumber(input.maxStock, minStock, 99999, Math.max(minStock, base.maxStock));
+
+  return {
+    enabled: Boolean(input.enabled),
+    minProfitPercent,
+    maxProfitPercent,
+    minStock,
+    maxStock,
+    listVeroProducts: Boolean(input.listVeroProducts),
+    veroWarningAcknowledged: Boolean(input.veroWarningAcknowledged),
+  };
 }
 
-export function getNextWizardStepIndex(step: number): number {
-  let next = step + 1;
-  if (next === VOLUME_DISCOUNTS_STEP) next += 1;
-  return Math.min(next, CONFIRM_STEP);
+function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
 }
 
-export function normalizeVisibleSteps(steps: number[]): number[] {
-  const filtered = steps.filter((step) => !isAmazefSkippedStep(step));
-  if (!filtered.includes(CONFIRM_STEP)) {
-    filtered.push(CONFIRM_STEP);
+export function loadAutoListingSettings(userId: string): AmazefAutoListingSettings {
+  try {
+    const raw = localStorage.getItem(amazefAutoListingSettingsKey(userId));
+    if (!raw) return { ...DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS };
+    return normalizeAutoListingSettings(JSON.parse(raw) as Partial<AmazefAutoListingSettings>);
+  } catch {
+    return { ...DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS };
   }
-  return [...new Set(filtered)].sort((a, b) => a - b);
 }
 
-export function visibleStepsToSet(steps: number[]): Set<number> {
-  return new Set(normalizeVisibleSteps(steps));
+export function saveAutoListingSettings(userId: string, settings: AmazefAutoListingSettings) {
+  localStorage.setItem(
+    amazefAutoListingSettingsKey(userId),
+    JSON.stringify(normalizeAutoListingSettings(settings)),
+  );
 }
 
-export function getPrevVisibleStep(current: number, visible: Set<number>): number {
-  let best = -1;
-  for (const step of visible) {
-    if (step < current && !isAmazefSkippedStep(step) && step > best) {
-      best = step;
-    }
+export function validateAutoListingSettingsInput(
+  settings: AmazefAutoListingSettings,
+): string | null {
+  if (settings.minProfitPercent > settings.maxProfitPercent) {
+    return "Minimum profit % cannot be greater than maximum profit %.";
   }
-  if (best >= 0) return best;
-  return Math.max(0, current - 1);
-}
-
-export function getNextVisibleStep(current: number, visible: Set<number>): number | null {
-  for (let step = getNextWizardStepIndex(current); step <= CONFIRM_STEP; step = getNextWizardStepIndex(step)) {
-    if (visible.has(step)) return step;
+  if (settings.minStock > settings.maxStock) {
+    return "Minimum stock cannot be greater than maximum stock.";
+  }
+  if (settings.listVeroProducts && !settings.veroWarningAcknowledged) {
+    return "Acknowledge the VeRO risk before listing VeRO products.";
   }
   return null;
-}
-
-export function loadVisibleStepsFromStorage(userId: string): number[] | null {
-  try {
-    const raw = localStorage.getItem(amazefAutoListingStorageKey(userId));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return null;
-    const steps = parsed.map((value) => Number(value)).filter((value) => Number.isFinite(value));
-    return normalizeVisibleSteps(steps);
-  } catch {
-    return null;
-  }
-}
-
-export function saveVisibleStepsToStorage(userId: string, steps: number[]) {
-  localStorage.setItem(amazefAutoListingStorageKey(userId), JSON.stringify(normalizeVisibleSteps(steps)));
 }

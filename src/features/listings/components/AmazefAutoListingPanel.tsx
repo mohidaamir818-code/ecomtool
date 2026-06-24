@@ -2,18 +2,16 @@
 
 interface AmazefAutoListingPanelProps {
   enabled: boolean;
-  manualStepCount: number;
   processing?: boolean;
   onToggle: (enabled: boolean) => void;
-  onEditSteps: () => void;
+  onEditSettings: () => void;
 }
 
 export function AmazefAutoListingPanel({
   enabled,
-  manualStepCount,
   processing = false,
   onToggle,
-  onEditSteps,
+  onEditSettings,
 }: AmazefAutoListingPanelProps) {
   return (
     <div className="rounded-xl border border-violet-100 bg-violet-50/60 p-4">
@@ -21,12 +19,12 @@ export function AmazefAutoListingPanel({
         <div>
           <h3 className="text-sm font-semibold text-[#111827]">Auto listing</h3>
           <p className="mt-1 text-xs text-[#6B7280]">
-            Skip wizard steps you do not need to review. Unchecked steps are processed automatically.
+            Paste a URL only — AI handles VeRO, profit, listing, stock, shipping, and publishes to
+            Amazef.
           </p>
           {enabled ? (
             <p className="mt-2 text-xs font-medium text-violet-800">
-              Active — showing {manualStepCount} manual step{manualStepCount === 1 ? "" : "s"}
-              {processing ? " · processing…" : ""}
+              Active{processing ? " · listing in progress…" : " · paste URL and click Auto list"}
             </p>
           ) : null}
         </div>
@@ -55,11 +53,11 @@ export function AmazefAutoListingPanel({
       {enabled ? (
         <button
           type="button"
-          onClick={onEditSteps}
+          onClick={onEditSettings}
           disabled={processing}
           className="mt-3 text-xs font-semibold text-brand hover:underline disabled:opacity-60"
         >
-          Edit manual steps
+          Edit auto listing settings
         </button>
       ) : null}
     </div>
