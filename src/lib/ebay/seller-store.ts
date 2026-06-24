@@ -4,11 +4,17 @@ import { serverEnv } from "@/lib/env";
 import { buildEbayListingUrl, getSellerMarketplaceId, resolveMarketplaceConfig } from "@/lib/ebay/marketplace";
 import { getEbayConnectionStatus, getEbayUserAccessToken } from "@/lib/ebay/oauth-user";
 import { getListedProducts } from "@/lib/listings/listed-products-service";
+import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type { StoreImportListing, StoreImportVariant } from "@/types/store-import";
 
 const EBAY_API_BASE = "https://api.ebay.com";
 const BROWSE_PAGE_SIZE = 200;
 const MIGRATE_BATCH_SIZE = 5;
+const TRADING_SITE_ID: Record<string, string> = {
+  EBAY_GB: "3",
+  EBAY_US: "0",
+  EBAY_DE: "77",
+};
 
 interface EbayItemSummary {
   itemId?: string;
@@ -307,6 +313,192 @@ function groupBrowseRows(rows: BrowseStoreRow[]): Map<string, BrowseStoreRow[]> 
   return grouped;
 }
 
+function tradingSiteId(marketplaceId: Awaited<ReturnType<typeof getSellerMarketplaceId>>): string {
+  return TRADING_SITE_ID[marketplaceId] ?? TRADING_SITE_ID.EBAY_GB;
+}
+
+function xmlTagValue(block: string, tag: string): string | null {
+  const match = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, "i"));
+  return match?.[1]?.trim() ?? null;
+}
+
+async function tradingApiRequest(
+  accessToken: string,
+  siteId: string,
+  callName: string,
+  body: string,
+): Promise<string> {
+  const response = await fetch("https://api.ebay.com/ws/api.dll", {
+    method: "POST",
+    headers: {
+      "Content-Type": "text/xml",
+      "X-EBAY-API-CALL-NAME": callName,
+      "X-EBAY-API-SITEID": siteId,
+      "X-EBAY-API-COMPATIBILITY-LEVEL": "967",
+      "X-EBAY-API-IAF-TOKEN": accessToken,
+    },
+    body,
+    cache: "no-store",
+  });
+  return response.text();
+}
+
+async function fetchTradingApiUsername(
+  accessToken: string,
+  marketplaceId: Awaited<ReturnType<typeof getSellerMarketplaceId>>,
+): Promise<string | null> {
+  try {
+    const xml = await tradingApiRequest(
+      accessToken,
+      tradingSiteId(marketplaceId),
+      "GetUser",
+      `<?xml version="1.0" encoding="utf-8"?>
+<GetUserRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <DetailLevel>ReturnSummary</DetailLevel>
+</GetUserRequest>`,
+    );
+    if (/Ack>Failure</i.test(xml)) return null;
+    return xmlTagValue(xml, "UserID");
+  } catch {
+    return null;
+  }
+}
+
+async function resolveSellerUsername(
+  userId: string,
+  accessToken: string,
+  cachedUsername: string | null | undefined,
+  marketplaceId: Awaited<ReturnType<typeof getSellerMarketplaceId>>,
+): Promise<string | null> {
+  const trimmed = cachedUsername?.trim();
+  if (trimmed) return trimmed;
+
+  let username: string | null = null;
+
+  try {
+    const response = await fetch(`${EBAY_API_BASE}/commerce/identity/v1/user/`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = (await response.json()) as { username?: string };
+      username = data.username?.trim() ?? null;
+    }
+  } catch {
+    // continue to Trading API
+  }
+
+  if (!username) {
+    username = await fetchTradingApiUsername(accessToken, marketplaceId);
+  }
+
+  if (username) {
+    try {
+      const supabase = getSupabaseAdmin();
+      await supabase.from("ebay_oauth_tokens").update({ ebay_username: username }).eq("user_id", userId);
+    } catch {
+      // username cache is best-effort
+    }
+  }
+
+  return username;
+}
+
+function parseVariationLabel(varBlock: string): string | null {
+  const values = [...varBlock.matchAll(/<NameValueList>[\s\S]*?<Value>([^<]*)<\/Value>/gi)]
+    .map((match) => match[1]?.trim())
+    .filter((value): value is string => Boolean(value));
+  return values.length > 0 ? values.join(" / ") : null;
+}
+
+async function fetchSellerActiveListRows(
+  accessToken: string,
+  marketplaceId: Awaited<ReturnType<typeof getSellerMarketplaceId>>,
+): Promise<BrowseStoreRow[]> {
+  const siteId = tradingSiteId(marketplaceId);
+  const config = resolveMarketplaceConfig(marketplaceId);
+  const rows: BrowseStoreRow[] = [];
+  let page = 1;
+  let totalPages = 1;
+
+  while (page <= totalPages && page <= 20) {
+    let xml = "";
+    try {
+      xml = await tradingApiRequest(
+        accessToken,
+        siteId,
+        "GetMyeBaySelling",
+        `<?xml version="1.0" encoding="utf-8"?>
+<GetMyeBaySellingRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <ActiveList>
+    <Include>true</Include>
+    <Pagination>
+      <EntriesPerPage>200</EntriesPerPage>
+      <PageNumber>${page}</PageNumber>
+    </Pagination>
+  </ActiveList>
+  <DetailLevel>ReturnAll</DetailLevel>
+</GetMyeBaySellingRequest>`,
+      );
+    } catch {
+      break;
+    }
+
+    if (/Ack>Failure</i.test(xml)) break;
+
+    const totalPagesStr = xmlTagValue(xml, "TotalNumberOfPages");
+    totalPages = Number(totalPagesStr) || 1;
+
+    const itemBlocks = xml.match(/<Item>[\s\S]*?<\/Item>/gi) ?? [];
+    for (const block of itemBlocks) {
+      const listingId = xmlTagValue(block, "ItemID");
+      if (!listingId) continue;
+
+      const title = xmlTagValue(block, "Title") ?? `Listing ${listingId}`;
+      const galleryUrl = xmlTagValue(block, "GalleryURL");
+      const priceMatch = block.match(
+        /<SellingStatus>[\s\S]*?<CurrentPrice[^>]*currencyID="([^"]*)"[^>]*>([^<]*)<\/CurrentPrice>/i,
+      );
+      const currency = priceMatch?.[1] ?? config.currency;
+      const price = Number(priceMatch?.[2] ?? 0);
+      if (!Number.isFinite(price) || price <= 0) continue;
+
+      const variationBlocks = block.match(/<Variation>[\s\S]*?<\/Variation>/gi) ?? [];
+      if (variationBlocks.length > 0) {
+        for (const varBlock of variationBlocks) {
+          const varPrice = Number(xmlTagValue(varBlock, "StartPrice") ?? price);
+          rows.push({
+            listingId,
+            listingUrl: buildEbayListingUrl(listingId, marketplaceId),
+            title,
+            imageUrl: galleryUrl,
+            price: Number.isFinite(varPrice) && varPrice > 0 ? varPrice : price,
+            currency,
+            label: parseVariationLabel(varBlock) ?? "Default",
+          });
+        }
+      } else {
+        rows.push({
+          listingId,
+          listingUrl: buildEbayListingUrl(listingId, marketplaceId),
+          title,
+          imageUrl: galleryUrl,
+          price,
+          currency,
+          label: "Default",
+        });
+      }
+    }
+
+    page += 1;
+  }
+
+  return rows;
+}
+
 async function resolveOffersByListingIds(
   token: string,
   marketplaceId: Awaited<ReturnType<typeof getSellerMarketplaceId>>,
@@ -399,13 +591,22 @@ export async function fetchSellerEbayStore(userId: string): Promise<StoreImportL
   }
 
   const status = await getEbayConnectionStatus(userId);
-  const sellerUsername = status.ebayUsername?.trim();
-  if (!sellerUsername) {
-    throw new Error("eBay store username not found. Reconnect your eBay account.");
+  const marketplaceId = await getSellerMarketplaceId(userId);
+  const sellerUsername = await resolveSellerUsername(userId, token, status.ebayUsername, marketplaceId);
+
+  let browseRows: BrowseStoreRow[] = [];
+  if (sellerUsername) {
+    try {
+      browseRows = await fetchSellerBrowseRows(sellerUsername, marketplaceId);
+    } catch {
+      browseRows = [];
+    }
   }
 
-  const marketplaceId = await getSellerMarketplaceId(userId);
-  const browseRows = await fetchSellerBrowseRows(sellerUsername, marketplaceId);
+  if (browseRows.length === 0) {
+    browseRows = await fetchSellerActiveListRows(token, marketplaceId);
+  }
+
   const grouped = groupBrowseRows(browseRows);
   const listingIds = [...grouped.keys()];
 
