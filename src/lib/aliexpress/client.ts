@@ -1560,3 +1560,29 @@ export async function fetchAliExpressProduct(url: string): Promise<HandlingProdu
     "Could not fetch product details from official AliExpress APIs (Dropship/Affiliate). Please reconnect AliExpress OAuth and try again.",
   );
 }
+
+/** Raw MTOP product-detail JSON for parsing logistics / delivery fields. */
+export async function fetchAliExpressDeliveryRawText(productUrl: string): Promise<string | null> {
+  try {
+    const trimmedUrl = productUrl.trim();
+    if (!isAliExpressUrl(trimmedUrl)) return null;
+
+    const resolvedUrl = await resolveAliExpressUrl(trimmedUrl);
+    const productId = extractAliExpressProductId(resolvedUrl);
+    if (!productId) return null;
+
+    let cookies = await bootstrapMtopCookies();
+    let modules = await callMtopProductDetail(productId, cookies);
+
+    if (!modules) {
+      cookies = await bootstrapMtopCookies();
+      modules = await callMtopProductDetail(productId, cookies);
+    }
+
+    if (!modules) return null;
+
+    return JSON.stringify(modules);
+  } catch {
+    return null;
+  }
+}

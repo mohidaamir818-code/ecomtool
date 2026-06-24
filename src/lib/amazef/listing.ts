@@ -54,15 +54,7 @@ export async function listDraftOnAmazef(
     shippingDaysLabel = await fetchAliExpressShippingDaysLabel(draft.product.productUrl);
   }
 
-  const listingDraft: ListingDraft = shippingDaysLabel
-    ? {
-        ...draft,
-        product: {
-          ...draft.product,
-          shippingDaysLabel,
-        },
-      }
-    : draft;
+  const listingDraft = normalizeDraftForAmazef(draft, shippingDaysLabel);
 
   const secret = serverEnv.amazefListingSecret();
   const controller = new AbortController();
@@ -105,6 +97,42 @@ export async function listDraftOnAmazef(
     offerId: payload.productId != null ? String(payload.productId) : "",
     listingId: payload.productId != null ? String(payload.productId) : null,
     listingUrl: payload.listingUrl ?? null,
+  };
+}
+
+function resolveSellableQuantity(variant: ListingDraft["variants"][number]): number {
+  if (variant.quantity >= 1) return variant.quantity;
+  if (variant.stock >= 1) return variant.stock;
+  return 1;
+}
+
+/** Amazef reads variant.stock; the wizard edits variant.quantity (same as eBay). */
+function normalizeDraftForAmazef(
+  draft: ListingDraft,
+  shippingDaysLabel: string | null,
+): ListingDraft {
+  const variants = draft.variants.map((variant) => {
+    const sellable = resolveSellableQuantity(variant);
+    return {
+      ...variant,
+      stock: sellable,
+      quantity: sellable,
+    };
+  });
+
+  const productStock =
+    variants.length === 1
+      ? variants[0].stock
+      : variants.reduce((sum, variant) => sum + variant.stock, 0);
+
+  return {
+    ...draft,
+    variants,
+    product: {
+      ...draft.product,
+      stock: productStock,
+      ...(shippingDaysLabel ? { shippingDaysLabel } : {}),
+    },
   };
 }
 

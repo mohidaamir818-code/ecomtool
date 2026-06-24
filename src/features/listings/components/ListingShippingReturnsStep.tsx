@@ -31,6 +31,35 @@ export function ListingShippingReturnsStep({
   const [error, setError] = useState("");
   const initialPoliciesSet = useRef(false);
   const draftPoliciesRef = useRef(draft.ebayPolicies);
+  const productRef = useRef(draft.product);
+  const [shippingLoading, setShippingLoading] = useState(false);
+
+  useEffect(() => {
+    productRef.current = draft.product;
+  }, [draft.product]);
+
+  useEffect(() => {
+    if (platform !== "amazef") return;
+
+    const productUrl = draft.product.productUrl?.trim();
+    if (!productUrl || draft.product.shippingDaysLabel?.trim()) return;
+
+    setShippingLoading(true);
+    void fetch(`/api/listings/shipping-days?url=${encodeURIComponent(productUrl)}`)
+      .then(async (response) => {
+        const data = (await response.json()) as { shippingDaysLabel?: string | null };
+        if (data.shippingDaysLabel) {
+          onChange({
+            product: {
+              ...productRef.current,
+              shippingDaysLabel: data.shippingDaysLabel,
+            },
+          });
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => setShippingLoading(false));
+  }, [platform, draft.product.productUrl, draft.product.shippingDaysLabel, onChange]);
 
   useEffect(() => {
     draftPoliciesRef.current = draft.ebayPolicies;
@@ -84,7 +113,9 @@ export function ListingShippingReturnsStep({
 
         <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
           <p className="text-sm font-semibold text-[#111827]">Estimated shipping time</p>
-          {shippingDaysLabel ? (
+          {shippingLoading ? (
+            <p className="mt-2 text-sm text-[#6B7280]">Detecting AliExpress delivery dates…</p>
+          ) : shippingDaysLabel ? (
             <p className="mt-2 text-sm text-[#374151]">
               Calculated from AliExpress delivery dates:{" "}
               <span className="font-semibold text-brand">{shippingDaysLabel}</span>

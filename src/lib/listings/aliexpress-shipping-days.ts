@@ -1,5 +1,7 @@
 import "server-only";
 
+import { fetchAliExpressDeliveryRawText } from "@/lib/aliexpress/client";
+
 const BROWSER_HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -219,11 +221,62 @@ function parseJsonDayFields(html: string): ShippingDaysResult | null {
     return toResult(Number(rangeInJson[1]), Number(rangeInJson[2]));
   }
 
+  const etaMin = html.match(/"etaMinDays"\s*:\s*"?(\d{1,3})"?/i);
+  const etaMax = html.match(/"etaMaxDays"\s*:\s*"?(\d{1,3})"?/i);
+  if (etaMin && etaMax) {
+    return toResult(Number(etaMin[1]), Number(etaMax[1]));
+  }
+  if (etaMin && !etaMax) {
+    return toResult(Number(etaMin[1]), Number(etaMin[1]));
+  }
+
   if (mins.length && maxs.length) {
     return toResult(Math.min(...mins), Math.max(...maxs));
   }
   if (mins.length === 1 && maxs.length === 0) {
     return toResult(mins[0], mins[0]);
+  }
+
+  return null;
+}
+
+function parseTimestampDeliveryFields(
+  html: string,
+  referenceDate = new Date(),
+): ShippingDaysResult | null {
+  const toDate = (epoch: number): Date => new Date(epoch < 1e12 ? epoch * 1000 : epoch);
+
+  const minMaxPatterns: Array<{ min: RegExp; max: RegExp }> = [
+    {
+      min: /"(?:min|start)(?:Delivery|Arrival|Ship)(?:Time|Date)"\s*:\s*(\d{10,13})/i,
+      max: /"(?:max|end)(?:Delivery|Arrival|Ship)(?:Time|Date)"\s*:\s*(\d{10,13})/i,
+    },
+    {
+      min: /"etaMin(?:Time|Date)?"\s*:\s*(\d{10,13})/i,
+      max: /"etaMax(?:Time|Date)?"\s*:\s*(\d{10,13})/i,
+    },
+  ];
+
+  for (const { min, max } of minMaxPatterns) {
+    const minMatch = html.match(min);
+    const maxMatch = html.match(max);
+    if (!minMatch || !maxMatch) continue;
+
+    const startDate = toDate(Number(minMatch[1]));
+    const endDate = toDate(Number(maxMatch[1]));
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) continue;
+
+    return calculateShippingDaysFromDeliveryDates(startDate, endDate, referenceDate);
+  }
+
+  const singleTimestamp = html.match(
+    /"(?:delivery|arrival|estimatedDelivery)(?:Time|Date)"\s*:\s*(\d{10,13})/i,
+  );
+  if (singleTimestamp) {
+    const target = toDate(Number(singleTimestamp[1]));
+    if (!Number.isNaN(target.getTime())) {
+      return calculateShippingDaysFromDeliveryDates(target, target, referenceDate);
+    }
   }
 
   return null;
@@ -239,6 +292,10 @@ function collectDeliverySnippets(html: string): string[] {
     /"logisticsDesc(?:ription)?"\s*:\s*"([^"]{2,120})"/gi,
     /"shippingInfo(?:Text)?"\s*:\s*"([^"]{2,120})"/gi,
     /"arriveTime(?:Text)?"\s*:\s*"([^"]{2,120})"/gi,
+    /"timeDesc"\s*:\s*"([^"]{2,120})"/gi,
+    /"arriveDate(?:Desc)?"\s*:\s*"([^"]{2,120})"/gi,
+    /"deliveryDateDesc"\s*:\s*"([^"]{2,120})"/gi,
+    /"etaText"\s*:\s*"([^"]{2,120})"/gi,
     /"time"\s*:\s*"([^"]{2,120})"/gi,
   ];
 
@@ -274,6 +331,9 @@ export function parseAliExpressShippingDays(
   const jsonDays = parseJsonDayFields(htmlOrText);
   if (jsonDays) return jsonDays;
 
+  const timestampDays = parseTimestampDeliveryFields(htmlOrText, referenceDate);
+  if (timestampDays) return timestampDays;
+
   const candidates = collectDeliverySnippets(htmlOrText);
   if (!candidates.includes(htmlOrText)) {
     candidates.unshift(htmlOrText);
@@ -294,6 +354,12 @@ export async function fetchAliExpressShippingDaysLabel(
   productUrl: string,
 ): Promise<string | null> {
   try {
+    const mtopRaw = await fetchAliExpressDeliveryRawText(productUrl);
+    if (mtopRaw) {
+      const fromMtop = parseAliExpressShippingDays(mtopRaw);
+      if (fromMtop) return fromMtop.label;
+    }
+
     const response = await fetch(productUrl, {
       headers: BROWSER_HEADERS,
       cache: "no-store",
