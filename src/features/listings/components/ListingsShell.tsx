@@ -40,6 +40,30 @@ import type {
 import { defaultSellerPreferences } from "@/types/listing-generator";
 
 const MAX_STEP = 9;
+const VOLUME_DISCOUNTS_STEP = 7;
+
+function advanceWizardStep(step: number, platform: ListingPlatform): number {
+  let next = Math.min(step + 1, MAX_STEP);
+  if (platform === "amazef" && next === VOLUME_DISCOUNTS_STEP) {
+    next = VOLUME_DISCOUNTS_STEP + 1;
+  }
+  return next;
+}
+
+function retreatWizardStep(step: number, platform: ListingPlatform): number {
+  let prev = Math.max(step - 1, 0);
+  if (platform === "amazef" && prev === VOLUME_DISCOUNTS_STEP) {
+    prev = VOLUME_DISCOUNTS_STEP - 1;
+  }
+  return prev;
+}
+
+function normalizeWizardStep(step: number, platform: ListingPlatform): number {
+  if (platform === "amazef" && step === VOLUME_DISCOUNTS_STEP) {
+    return VOLUME_DISCOUNTS_STEP + 1;
+  }
+  return step;
+}
 
 export function ListingsShell() {
   const searchParams = useSearchParams();
@@ -583,11 +607,11 @@ export function ListingsShell() {
       }
     }
 
-    setCurrentStep((step) => Math.min(step + 1, MAX_STEP));
+    setCurrentStep((step) => advanceWizardStep(step, activePlatform));
   }
 
   function handleBack() {
-    setCurrentStep((step) => Math.max(step - 1, 0));
+    setCurrentStep((step) => retreatWizardStep(step, activePlatform));
   }
 
   async function resumeSavedDraft() {
@@ -612,7 +636,7 @@ export function ListingsShell() {
     setPricingPrefs(saved.pricing ?? null);
     setPricingBreakdown(saved.pricingBreakdown ?? null);
     setManualPriceOverride(saved.manualPriceOverride ?? null);
-    let step = data.draft.currentStep ?? 0;
+    let step = normalizeWizardStep(data.draft.currentStep ?? 0, activePlatform);
     setCurrentStep(step);
     setResumeOffer(null);
     generateStarted.current = true;
@@ -833,7 +857,9 @@ export function ListingsShell() {
           </div>
         ) : null}
 
-        {wizardStarted ? <ListingWizardProgress currentStep={currentStep} /> : null}
+        {wizardStarted ? (
+          <ListingWizardProgress currentStep={currentStep} platform={activePlatform} />
+        ) : null}
 
         {currentStep === 0 ? (
           <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
@@ -917,7 +943,7 @@ export function ListingsShell() {
             />
           ) : null}
 
-          {currentStep === 7 && draft && userId && sellerPrefs ? (
+          {currentStep === 7 && draft && userId && sellerPrefs && !isAmazef ? (
             <ListingPromotionsStep
               userId={userId}
               promotions={draft.promotions}
