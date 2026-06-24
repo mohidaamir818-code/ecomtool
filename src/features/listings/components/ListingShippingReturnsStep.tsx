@@ -42,7 +42,7 @@ export function ListingShippingReturnsStep({
     if (platform !== "amazef") return;
 
     const productUrl = draft.product.productUrl?.trim();
-    if (!productUrl || draft.product.shippingDaysLabel?.trim()) return;
+    if (!productUrl) return;
 
     setShippingLoading(true);
     void fetch(`/api/listings/shipping-days?url=${encodeURIComponent(productUrl)}`)
@@ -59,7 +59,7 @@ export function ListingShippingReturnsStep({
       })
       .catch(() => undefined)
       .finally(() => setShippingLoading(false));
-  }, [platform, draft.product.productUrl, draft.product.shippingDaysLabel, onChange]);
+  }, [platform, draft.product.productUrl, onChange]);
 
   useEffect(() => {
     draftPoliciesRef.current = draft.ebayPolicies;

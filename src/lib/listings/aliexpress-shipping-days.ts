@@ -1,6 +1,10 @@
 import "server-only";
 
-import { fetchAliExpressDeliveryRawText } from "@/lib/aliexpress/client";
+import {
+  extractAliExpressProductId,
+  fetchAliExpressDeliveryRawText,
+  fetchAliExpressShippingRawViaFreightApi,
+} from "@/lib/aliexpress/client";
 
 const BROWSER_HEADERS = {
   "User-Agent":
@@ -84,14 +88,26 @@ export function calculateShippingDaysFromDeliveryDates(
   return toResult(minDays, maxDays);
 }
 
-/** AliExpress sometimes already shows "7-15 days" or "12 days". */
+/** AliExpress sometimes already shows "7-15 days", "12 days", or API "5-8day". */
 function parseDirectDayCount(text: string): ShippingDaysResult | null {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (isReturnOrRefundContext(normalized)) return null;
 
-  const rangeMatch = normalized.match(
+  const compactRange = normalized.match(
     /\b(\d{1,3})\s*(?:-|–|~|to)\s*(\d{1,3})\s*(?:business\s+)?days?\b/i,
   );
+  if (!compactRange) {
+    const gluedRange = normalized.match(/\b(\d{1,3})\s*(?:-|–|~|to)\s*(\d{1,3})days?\b/i);
+    if (gluedRange) {
+      const min = Number(gluedRange[1]);
+      const max = Number(gluedRange[2]);
+      if (min > 0 && max > 0 && min <= 60 && max <= 60) {
+        return toResult(min, max);
+      }
+    }
+  }
+
+  const rangeMatch = compactRange;
   if (rangeMatch) {
     const min = Number(rangeMatch[1]);
     const max = Number(rangeMatch[2]);
@@ -100,7 +116,9 @@ function parseDirectDayCount(text: string): ShippingDaysResult | null {
     }
   }
 
-  const singleMatch = normalized.match(/\b(\d{1,3})\s*(?:business\s+)?days?\b/i);
+  const singleMatch =
+    normalized.match(/\b(\d{1,3})\s*(?:business\s+)?days?\b/i) ??
+    normalized.match(/\b(\d{1,3})days?\b/i);
   if (singleMatch) {
     const days = Number(singleMatch[1]);
     const hasDeliveryContext = /\b(deliver|shipping|arriv|eta|transit|dispatch)\b/i.test(normalized);
@@ -249,6 +267,55 @@ function parseJsonDayFields(html: string): ShippingDaysResult | null {
   return null;
 }
 
+function parseIsoDeliveryDateFields(
+  html: string,
+  referenceDate = new Date(),
+): ShippingDaysResult | null {
+  const isoDates = [
+    ...html.matchAll(/"(?:delivery_date|deliveryDate|arrivalDate)"\s*:\s*"(\d{4}-\d{2}-\d{2})"/gi),
+  ].map((match) => match[1]);
+
+  if (isoDates.length >= 2) {
+    const startDate = new Date(isoDates[0]);
+    const endDate = new Date(isoDates[1]);
+    if (!Number.isNaN(startDate.getTime()) && !Number.isNaN(endDate.getTime())) {
+      return calculateShippingDaysFromDeliveryDates(startDate, endDate, referenceDate);
+    }
+  }
+
+  if (isoDates.length === 1) {
+    const target = new Date(isoDates[0]);
+    if (!Number.isNaN(target.getTime())) {
+      return calculateShippingDaysFromDeliveryDates(target, target, referenceDate);
+    }
+  }
+
+  return null;
+}
+
+function parseFreightApiDeliveryFields(html: string): ShippingDaysResult | null {
+  const parsedResults: ShippingDaysResult[] = [];
+
+  for (const match of html.matchAll(/"estimated_delivery_time"\s*:\s*"([^"]+)"/gi)) {
+    const value = match[1]?.trim();
+    if (!value) continue;
+    const direct = parseDirectDayCount(value.replace(/day(s)?$/i, " days"));
+    if (direct) parsedResults.push(direct);
+  }
+
+  for (const match of html.matchAll(/"commit(?:Day|_day)"\s*:\s*"?(\d{1,3})"?/gi)) {
+    const days = Number(match[1]);
+    if (days > 0 && days <= 60) {
+      parsedResults.push(toResult(days, days));
+    }
+  }
+
+  if (parsedResults.length === 0) return null;
+
+  parsedResults.sort((a, b) => a.minDays - b.minDays || a.maxDays - b.maxDays);
+  return parsedResults[0];
+}
+
 function parseTimestampDeliveryFields(
   html: string,
   referenceDate = new Date(),
@@ -307,6 +374,8 @@ function collectDeliverySnippets(html: string): string[] {
     /"etaText"\s*:\s*"([^"]{2,120})"/gi,
     /"displayEta"\s*:\s*"([^"]{2,120})"/gi,
     /"formattedDelivery(?:Time|Date)?"\s*:\s*"([^"]{2,120})"/gi,
+    /"estimated_delivery_time"\s*:\s*"([^"]{2,120})"/gi,
+    /"commitDay"\s*:\s*"([^"]{2,120})"/gi,
   ];
 
   for (const pattern of jsonPatterns) {
@@ -364,6 +433,9 @@ export function parseAliExpressShippingDays(
   htmlOrText: string,
   referenceDate = new Date(),
 ): ShippingDaysResult | null {
+  const freightApiDays = parseFreightApiDeliveryFields(htmlOrText);
+  if (freightApiDays) return freightApiDays;
+
   const candidates = collectDeliverySnippets(htmlOrText);
   if (!candidates.includes(htmlOrText)) {
     candidates.unshift(htmlOrText);
@@ -374,6 +446,9 @@ export function parseAliExpressShippingDays(
 
   const fromCandidates = pickBestFromCandidates(candidates, referenceDate);
   if (fromCandidates) return fromCandidates;
+
+  const isoDays = parseIsoDeliveryDateFields(htmlOrText, referenceDate);
+  if (isoDays) return isoDays;
 
   const timestampDays = parseTimestampDeliveryFields(htmlOrText, referenceDate);
   if (timestampDays) return timestampDays;
@@ -388,6 +463,16 @@ export async function fetchAliExpressShippingDaysLabel(
   productUrl: string,
 ): Promise<string | null> {
   try {
+    const productId = extractAliExpressProductId(productUrl.trim());
+
+    if (productId) {
+      const freightRaw = await fetchAliExpressShippingRawViaFreightApi(productId);
+      if (freightRaw) {
+        const fromFreight = parseAliExpressShippingDays(freightRaw);
+        if (fromFreight) return fromFreight.label;
+      }
+    }
+
     const mtopRaw = await fetchAliExpressDeliveryRawText(productUrl);
     if (mtopRaw) {
       const fromMtop = parseAliExpressShippingDays(mtopRaw);

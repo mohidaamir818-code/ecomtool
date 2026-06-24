@@ -1561,6 +1561,35 @@ export async function fetchAliExpressProduct(url: string): Promise<HandlingProdu
   );
 }
 
+/** Official Open Platform freight API (uses same OAuth token as dropship product fetch). */
+export async function fetchAliExpressShippingRawViaFreightApi(
+  productId: string,
+): Promise<string | null> {
+  try {
+    const accessToken = await getAliExpressAccessToken();
+    if (!accessToken) return null;
+
+    const payload = await callOpenPlatformApi(
+      "aliexpress.logistics.buyer.freight.calculate",
+      {
+        param_aeop_freight_calculate_for_buyer_d_t_o: JSON.stringify({
+          product_id: productId,
+          product_num: 1,
+          country_code: "GB",
+          send_goods_country_code: "CN",
+        }),
+      },
+      { signMethod: "sha256", accessToken },
+    );
+
+    if (!payload) return null;
+
+    return JSON.stringify(payload);
+  } catch {
+    return null;
+  }
+}
+
 /** Raw MTOP product-detail JSON for parsing logistics / delivery fields. */
 export async function fetchAliExpressDeliveryRawText(productUrl: string): Promise<string | null> {
   try {
@@ -1571,6 +1600,8 @@ export async function fetchAliExpressDeliveryRawText(productUrl: string): Promis
     const productId = extractAliExpressProductId(resolvedUrl);
     if (!productId) return null;
 
+    const parts: string[] = [];
+
     let cookies = await bootstrapMtopCookies();
     let modules = await callMtopProductDetail(productId, cookies);
 
@@ -1579,9 +1610,23 @@ export async function fetchAliExpressDeliveryRawText(productUrl: string): Promis
       modules = await callMtopProductDetail(productId, cookies);
     }
 
-    if (!modules) return null;
+    if (modules) {
+      parts.push(JSON.stringify(modules));
+    }
 
-    return JSON.stringify(modules);
+    try {
+      const pageResponse = await fetch(resolvedUrl.split("?")[0], {
+        headers: BROWSER_HEADERS,
+        cache: "no-store",
+      });
+      if (pageResponse.ok) {
+        parts.push(await pageResponse.text());
+      }
+    } catch {
+      // HTML fallback is best-effort only.
+    }
+
+    return parts.length > 0 ? parts.join("\n") : null;
   } catch {
     return null;
   }
