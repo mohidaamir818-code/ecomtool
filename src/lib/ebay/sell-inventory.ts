@@ -1887,6 +1887,196 @@ export async function reviseEbayListedVariant(
   await updateOffer(token, marketplaceId, variant.offerId, body);
 }
 
+export async function reviseEbayListedProduct(
+  userId: string,
+  draft: ListingDraft,
+  offersBySku: Record<string, string>,
+  groupSku?: string | null,
+): Promise<void> {
+  draft = await ensureDraftVariantEans(draft);
+
+  const token = await getEbayUserAccessToken(userId);
+  if (!token) {
+    throw new Error("eBay account is not connected. Connect your eBay account first.");
+  }
+
+  const marketplaceId = await getSellerMarketplaceId(userId);
+  const marketplaceConfig = resolveMarketplaceConfig(marketplaceId);
+  const sellerLocation = await requireConfirmedLocation(userId);
+  const merchantLocationKey = sellerLocation.merchantLocationKey;
+
+  if (draft.listing.brand !== "Unbranded") {
+    throw new Error("Brand must remain Unbranded for this listing.");
+  }
+
+  const selectedPhotos = draft.photos.filter((photo) => photo.selected).map((photo) => photo.url);
+  if (selectedPhotos.length === 0) {
+    throw new Error("Select at least one photo for the listing.");
+  }
+
+  if (
+    !draft.ebayPolicies?.fulfillmentPolicyId ||
+    !draft.ebayPolicies?.paymentPolicyId ||
+    !draft.ebayPolicies?.returnPolicyId
+  ) {
+    throw new Error("Shipping, payment, and return policies are required before updating on eBay.");
+  }
+
+  const policyIds = draft.ebayPolicies;
+  const categoryId = draft.listing.categoryId ?? (await resolveCategoryId(token, draft.listing, marketplaceId));
+  const categoryAspectNames = await getItemAspectsForCategory(token, categoryId, marketplaceId);
+  const { colors, sizes } = extractColoursAndSizesFromLabels(
+    draft.variants.map((variant) => variant.label),
+  );
+  const aspectOptions: EbayAspectBuildOptions = {
+    marketplaceId,
+    product: draft.product,
+    variantDrafts: draft.variants,
+    categoryAspectNames,
+    aspectOverrides: {},
+    extractedAspects: { colours: colors, sizes },
+  };
+  const selectedDescriptionPhotos = getSelectedDescriptionPhotos(draft.descriptionPhotos);
+  const appOrigin = selectedDescriptionPhotos.length > 0 ? getAppOrigin() : "";
+  const listing = {
+    ...draft.listing,
+    categoryId,
+    currency: draft.listing.currency || marketplaceConfig.currency,
+    brand: "Unbranded" as const,
+    descriptionHtml: buildDescriptionHtmlWithImages(
+      draft.listing.descriptionHtml,
+      draft.descriptionPhotos,
+      appOrigin,
+    ),
+  };
+
+  const activeVariants = draft.variants.length > 0 ? draft.variants : [];
+  assertUniqueVariantSkus(activeVariants);
+
+  const dedupedVariants =
+    activeVariants.length > 1 ? dedupeVariantsByCombo(activeVariants) : activeVariants;
+  aspectOptions.variantDrafts = dedupedVariants;
+  const { colors: dedupedColors, sizes: dedupedSizes } = extractColoursAndSizesFromLabels(
+    dedupedVariants.map((variant) => variant.label),
+  );
+  aspectOptions.extractedAspects = { colours: dedupedColors, sizes: dedupedSizes };
+
+  const isMultiVariant = dedupedVariants.length > 1;
+
+  if (!isMultiVariant) {
+    const variant = dedupedVariants[0];
+    const sku = variant
+      ? resolveVariantSkuForEbay(variant)
+      : resolveVariantSkuForEbay({
+          id: "default",
+          label: "Default",
+          imageUrl: "",
+          price: listing.suggestedPrice,
+          stock: 1,
+          sku: draft.product.internalProductSku ?? "",
+          ean: "",
+          quantity: 1,
+        });
+    const offerId = offersBySku[sku];
+    if (!offerId) {
+      throw new Error("Missing eBay offer ID for this listing. Re-list from the tool to enable edits.");
+    }
+
+    const images = variant?.imageUrl ? [variant.imageUrl, ...selectedPhotos] : selectedPhotos;
+    const quantity = variant ? resolveVariantQuantity(variant) : 1;
+    if (variant && variant.price > 0) {
+      listing.suggestedPrice = variant.price;
+    }
+
+    await upsertInventoryItem(
+      token,
+      marketplaceId,
+      sku,
+      listing,
+      images,
+      quantity,
+      aspectOptions,
+      variant?.label,
+      variant?.ean,
+    );
+
+    const body = buildOfferBody(
+      listing,
+      categoryId,
+      quantity,
+      draft.promotions,
+      policyIds,
+      marketplaceId,
+      {
+        sku,
+        priceOverride: variant?.price ?? listing.suggestedPrice,
+        merchantLocationKey,
+      },
+    );
+    await updateOffer(token, marketplaceId, offerId, body);
+    return;
+  }
+
+  const groupKey = groupSku?.trim() || resolveGroupSkuKey(draft);
+  const groupVariants = dedupedVariants;
+  const variantSkus: string[] = [];
+  const variantLabels: string[] = [];
+
+  for (const variant of groupVariants) {
+    const variantAspectOptions = structuredClone(aspectOptions);
+    const sku = resolveVariantSkuForEbay(variant);
+    const offerId = offersBySku[sku];
+    if (!offerId) {
+      throw new Error(`Missing eBay offer ID for variant ${variant.label}.`);
+    }
+
+    const images = variant.imageUrl ? [variant.imageUrl, ...selectedPhotos] : selectedPhotos;
+    const variantListing = { ...listing, suggestedPrice: variant.price };
+    const quantity = resolveVariantQuantity(variant);
+
+    await upsertInventoryItem(
+      token,
+      marketplaceId,
+      sku,
+      variantListing,
+      images,
+      quantity,
+      variantAspectOptions,
+      variant.label,
+      variant.ean,
+    );
+
+    const body = buildOfferBody(
+      listing,
+      categoryId,
+      quantity,
+      draft.promotions,
+      policyIds,
+      marketplaceId,
+      {
+        sku,
+        inventoryItemGroupKey: groupKey,
+        priceOverride: variant.price,
+        merchantLocationKey,
+      },
+    );
+    await updateOffer(token, marketplaceId, offerId, body);
+    variantSkus.push(sku);
+    variantLabels.push(variant.label);
+  }
+
+  await upsertInventoryItemGroup(
+    token,
+    marketplaceId,
+    groupKey,
+    listing,
+    selectedPhotos,
+    variantSkus,
+    variantLabels,
+    aspectOptions,
+  );
+}
+
 // Backward-compatible helper
 export async function listProductOnEbay(
   userId: string,

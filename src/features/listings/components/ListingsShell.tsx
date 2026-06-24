@@ -1246,7 +1246,6 @@ export function ListingsShell() {
 
         {currentStep === 0 ? (
           <div className="space-y-4">
-            {autoListingPanel}
             <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-[#111827]">Start New Listing</h2>
               <label className="mt-4 block text-sm font-medium text-[#111827]">
@@ -1264,6 +1263,7 @@ export function ListingsShell() {
                 />
               </label>
             </div>
+            {autoListingPanel}
             {pendingFulfillmentSelection ? (
               <EbayAutoListingFulfillmentPicker
                 aliExpressShippingLabel={pendingFulfillmentSelection.aliExpressShippingLabel}
@@ -1274,12 +1274,6 @@ export function ListingsShell() {
                     current ? { ...current, selectedFulfillmentPolicyId: policyId } : null,
                   )
                 }
-              />
-            ) : null}
-            {userId ? (
-              <ListedProductsPanel
-                userId={userId}
-                refreshKey={listedProductsRefreshKey}
               />
             ) : null}
           </div>
@@ -1442,6 +1436,14 @@ export function ListingsShell() {
                 Boolean(pendingFulfillmentSelection) &&
                 !pendingFulfillmentSelection?.selectedFulfillmentPolicyId)
             }
+          />
+        ) : null}
+
+        {userId ? (
+          <ListedProductsPanel
+            userId={userId}
+            platform={activePlatform}
+            refreshKey={listedProductsRefreshKey}
           />
         ) : null}
           </>

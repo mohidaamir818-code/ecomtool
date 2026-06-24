@@ -1,7 +1,8 @@
 import "server-only";
 
+import { reviseAmazefListedProduct } from "@/lib/amazef/revise-listed-product";
 import { reviseAmazefListedVariants } from "@/lib/amazef/revise-listing";
-import { reviseEbayListedVariant } from "@/lib/ebay/sell-inventory";
+import { reviseEbayListedProduct, reviseEbayListedVariant } from "@/lib/ebay/sell-inventory";
 import { sendEmail } from "@/lib/email/send-email";
 import {
   addHandlingProduct,
@@ -11,6 +12,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type { HandlingProductVariant } from "@/types/handling";
 import type {
   ListedProduct,
+  ListedProductDetail,
   ListedProductVariant,
 } from "@/types/listed-products";
 import type {
@@ -218,6 +220,135 @@ export async function getListedProducts(userId: string): Promise<ListedProduct[]
   return rows.map((row) =>
     mapProductRow(row as Record<string, unknown>, variantsByProduct.get(String(row.id)) ?? []),
   );
+}
+
+export async function getListedProductDetail(
+  userId: string,
+  listedProductId: string,
+): Promise<ListedProductDetail | null> {
+  const supabase = getSupabaseAdmin();
+
+  const { data: row, error } = await supabase
+    .from("listed_products")
+    .select("*")
+    .eq("id", listedProductId)
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (error) {
+    if (error.message.includes("does not exist")) return null;
+    throw new Error(error.message);
+  }
+  if (!row) return null;
+
+  const { data: variantRows } = await supabase
+    .from("listed_product_variants")
+    .select("*")
+    .eq("listed_product_id", listedProductId)
+    .order("label", { ascending: true });
+
+  const variants = (variantRows ?? []).map((entry) =>
+    mapVariantRow(entry as Record<string, unknown>),
+  );
+
+  return {
+    ...mapProductRow(row as Record<string, unknown>, variants),
+    draft: row.draft_json as ListingDraft,
+  };
+}
+
+export async function updateListedProduct(
+  userId: string,
+  listedProductId: string,
+  draft: ListingDraft,
+): Promise<ListedProductDetail> {
+  const supabase = getSupabaseAdmin();
+
+  const { data: row, error } = await supabase
+    .from("listed_products")
+    .select("*")
+    .eq("id", listedProductId)
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!row) throw new Error("Listed product not found.");
+
+  const { data: variantRows } = await supabase
+    .from("listed_product_variants")
+    .select("*")
+    .eq("listed_product_id", listedProductId)
+    .order("label", { ascending: true });
+
+  const existingVariants = (variantRows ?? []).map((entry) =>
+    mapVariantRow(entry as Record<string, unknown>),
+  );
+
+  const platform = String(row.platform) as ListingPlatform;
+  const offersBySku: Record<string, string> = {};
+  for (const variant of existingVariants) {
+    if (variant.offerId) {
+      offersBySku[variant.sku] = variant.offerId;
+    }
+  }
+
+  const amazefVariants = existingVariants.map((variant) => {
+    const draftVariant = draft.variants.find((entry) => entry.id === variant.aliVariantId);
+    return {
+      aliVariantId: variant.aliVariantId,
+      price: draftVariant?.price ?? variant.listedPrice,
+      quantity: draftVariant?.quantity ?? variant.listedQuantity,
+    };
+  });
+
+  if (platform === "ebay") {
+    await reviseEbayListedProduct(
+      userId,
+      draft,
+      offersBySku,
+      row.group_sku ? String(row.group_sku) : null,
+    );
+  } else if (platform === "amazef" && row.listing_id) {
+    await reviseAmazefListedProduct(userId, draft, String(row.listing_id), amazefVariants);
+  } else {
+    throw new Error("This listing cannot be updated on the marketplace yet.");
+  }
+
+  const primaryVariant = draft.variants[0];
+  const { error: productError } = await supabase
+    .from("listed_products")
+    .update({
+      title: draft.listing.seoTitle,
+      image_url: primaryVariant?.imageUrl ?? draft.product.imageUrl,
+      draft_json: draft,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", listedProductId)
+    .eq("user_id", userId);
+
+  if (productError) throw new Error(productError.message);
+
+  for (const variant of existingVariants) {
+    const draftVariant = draft.variants.find((entry) => entry.id === variant.aliVariantId);
+    if (!draftVariant) continue;
+
+    await supabase
+      .from("listed_product_variants")
+      .update({
+        label: draftVariant.label,
+        listed_price: draftVariant.price,
+        listed_quantity: draftVariant.quantity,
+        image_url: draftVariant.imageUrl || variant.imageUrl,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", variant.id);
+  }
+
+  const detail = await getListedProductDetail(userId, listedProductId);
+  if (!detail) throw new Error("Failed to load updated listing.");
+  return detail;
 }
 
 export async function removeListedProduct(userId: string, listedProductId: string): Promise<void> {

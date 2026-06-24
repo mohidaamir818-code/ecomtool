@@ -1,10 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ListedProductEditModal } from "./ListedProductEditModal";
+import { ProxiedImage } from "./ProxiedImage";
 import type { ListedProduct } from "@/types/listed-products";
+import type { ListingPlatform } from "@/types/listing-generator";
 
 interface ListedProductsPanelProps {
   userId: string | null;
+  platform: ListingPlatform;
   refreshKey?: number;
 }
 
@@ -14,19 +18,22 @@ function formatPrice(price: number, currency: string): string {
   return `${currency} ${price.toFixed(2)}`;
 }
 
-function reviseUrl(product: ListedProduct): string | null {
-  if (!product.listingUrl) return null;
-  if (product.platform === "ebay" && product.listingId) {
-    return `https://www.ebay.co.uk/sl/list?itemId=${encodeURIComponent(product.listingId)}`;
-  }
-  return product.listingUrl;
+function displayPrice(product: ListedProduct): string {
+  if (product.variants.length === 0) return formatPrice(0, product.currency);
+  const prices = product.variants.map((variant) => variant.listedPrice);
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  if (min === max) return formatPrice(min, product.currency);
+  return `${formatPrice(min, product.currency)} – ${formatPrice(max, product.currency)}`;
 }
 
-export function ListedProductsPanel({ userId, refreshKey = 0 }: ListedProductsPanelProps) {
+export function ListedProductsPanel({ userId, platform, refreshKey = 0 }: ListedProductsPanelProps) {
   const [products, setProducts] = useState<ListedProduct[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({});
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [editingProductId, setEditingProductId] = useState<string | null>(null);
+
+  const platformLabel = platform === "ebay" ? "eBay" : "Amazef";
 
   const loadProducts = useCallback(async () => {
     if (!userId) return;
@@ -36,11 +43,6 @@ export function ListedProductsPanel({ userId, refreshKey = 0 }: ListedProductsPa
       const data = await response.json();
       if (response.ok && data.products) {
         setProducts(data.products as ListedProduct[]);
-        const defaults: Record<string, string> = {};
-        for (const product of data.products as ListedProduct[]) {
-          defaults[product.id] = product.variants[0]?.id ?? "";
-        }
-        setSelectedVariants(defaults);
       }
     } finally {
       setLoading(false);
@@ -50,6 +52,11 @@ export function ListedProductsPanel({ userId, refreshKey = 0 }: ListedProductsPa
   useEffect(() => {
     void loadProducts();
   }, [loadProducts, refreshKey]);
+
+  const filteredProducts = useMemo(
+    () => products.filter((product) => product.platform === platform),
+    [platform, products],
+  );
 
   async function handleRemove(productId: string) {
     if (!userId) return;
@@ -68,108 +75,116 @@ export function ListedProductsPanel({ userId, refreshKey = 0 }: ListedProductsPa
     }
   }
 
-  if (!userId || (!loading && products.length === 0)) {
+  if (!userId) {
     return null;
   }
 
   return (
-    <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
-      <h3 className="text-sm font-semibold text-[#111827]">Your listed products</h3>
-      <p className="mt-1 text-xs text-[#6B7280]">
-        Saved after successful listing. AliExpress changes auto-update price and stock per variant.
-      </p>
-
-      {loading ? (
-        <p className="mt-4 text-sm text-[#6B7280]">Loading…</p>
-      ) : (
-        <div className="mt-4 space-y-4">
-          {products.map((product) => {
-            const selectedId = selectedVariants[product.id] ?? product.variants[0]?.id ?? "";
-            const selectedVariant =
-              product.variants.find((variant) => variant.id === selectedId) ?? product.variants[0];
-            const displayPrice = selectedVariant?.listedPrice ?? 0;
-            const editUrl = reviseUrl(product);
-
-            return (
-              <div key={product.id} className="rounded-lg border border-gray-100 p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-[#111827]">{product.title}</p>
-                    <p className="mt-1 text-sm text-brand">
-                      {formatPrice(displayPrice, product.currency)}
-                    </p>
-                    {product.variants.length > 1 ? (
-                      <label className="mt-2 block text-xs text-[#6B7280]">
-                        Variant
-                        <select
-                          value={selectedId}
-                          onChange={(event) =>
-                            setSelectedVariants((current) => ({
-                              ...current,
-                              [product.id]: event.target.value,
-                            }))
-                          }
-                          className="mt-1 w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-[#111827]"
-                        >
-                          {product.variants.map((variant) => (
-                            <option key={variant.id} value={variant.id}>
-                              {variant.label} · {formatPrice(variant.listedPrice, product.currency)} ·
-                              qty {variant.listedQuantity}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ) : selectedVariant ? (
-                      <p className="mt-1 text-xs text-[#6B7280]">
-                        {selectedVariant.label} · qty {selectedVariant.listedQuantity}
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {product.listingUrl ? (
-                    <a
-                      href={product.listingUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="rounded border border-gray-200 px-3 py-1.5 text-xs font-semibold text-[#374151] hover:bg-gray-50"
-                    >
-                      See listing
-                    </a>
-                  ) : null}
-                  {editUrl ? (
-                    <a
-                      href={editUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="rounded border border-gray-200 px-3 py-1.5 text-xs font-semibold text-[#374151] hover:bg-gray-50"
-                    >
-                      Revise / Edit
-                    </a>
-                  ) : null}
-                  <a
-                    href={product.listingUrl ?? "#"}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rounded border border-brand/20 bg-brand/5 px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/10"
-                  >
-                    View on {product.platform === "ebay" ? "eBay" : "Amazef"}
-                  </a>
-                  <button
-                    type="button"
-                    disabled={removingId === product.id}
-                    onClick={() => void handleRemove(product.id)}
-                    className="rounded border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
-                  >
-                    Remove
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+    <>
+      <section className="mt-8 border-t border-gray-100 pt-8">
+        <div className="mb-4">
+          <h2 className="text-lg font-semibold text-[#111827]">Your {platformLabel} listings</h2>
+          <p className="mt-1 text-sm text-[#6B7280]">
+            Products listed through ecomtool. AliExpress changes auto-update price and stock.
+          </p>
         </div>
-      )}
-    </div>
+
+        {loading && filteredProducts.length === 0 ? (
+          <p className="text-sm text-[#6B7280]">Loading listings…</p>
+        ) : filteredProducts.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50/60 px-5 py-8 text-center">
+            <p className="text-sm font-medium text-[#374151]">No {platformLabel} listings yet</p>
+            <p className="mt-1 text-xs text-[#6B7280]">
+              List a product above and it will appear here.
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-4">
+            {filteredProducts.map((product) => {
+              const imageUrl = product.imageUrl ?? product.variants[0]?.imageUrl ?? "";
+              const viewUrl = product.listingUrl;
+
+              return (
+                <article
+                  key={product.id}
+                  className="flex gap-4 rounded-xl border border-gray-100 bg-white p-4 shadow-sm transition-shadow hover:shadow-md"
+                >
+                  <div className="h-24 w-24 shrink-0 overflow-hidden rounded-lg border border-gray-100 bg-gray-50">
+                    {imageUrl ? (
+                      <ProxiedImage
+                        src={imageUrl}
+                        alt={product.title}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-xs text-[#9CA3AF]">
+                        No image
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex min-w-0 flex-1 flex-col justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-semibold text-[#111827]">{product.title}</h3>
+                      <p className="mt-1 text-lg font-bold text-brand">{displayPrice(product)}</p>
+                      {product.variants.length > 1 ? (
+                        <p className="mt-1 text-xs text-[#6B7280]">
+                          {product.variants.length} variants
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditingProductId(product.id)}
+                        className="rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-[#374151] hover:bg-gray-50"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        disabled={removingId === product.id}
+                        onClick={() => void handleRemove(product.id)}
+                        className="rounded-lg border border-red-200 bg-white px-3.5 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+                      >
+                        {removingId === product.id ? "Removing…" : "Remove"}
+                      </button>
+                      {viewUrl ? (
+                        <a
+                          href={viewUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-lg border border-brand/20 bg-brand/5 px-3.5 py-2 text-xs font-semibold text-brand hover:bg-brand/10"
+                        >
+                          View
+                        </a>
+                      ) : (
+                        <span className="rounded-lg border border-gray-100 px-3.5 py-2 text-xs font-semibold text-[#9CA3AF]">
+                          View
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {editingProductId ? (
+        <ListedProductEditModal
+          userId={userId}
+          productId={editingProductId}
+          platformLabel={platformLabel}
+          onClose={() => setEditingProductId(null)}
+          onSaved={() => {
+            setEditingProductId(null);
+            void loadProducts();
+          }}
+        />
+      ) : null}
+    </>
   );
 }

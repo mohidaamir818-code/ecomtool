@@ -1,4 +1,8 @@
-import type { ListingPlatform } from "@/types/listing-generator";
+import type { ListingDraft, ListingPlatform } from "@/types/listing-generator";
+
+export interface ListedProductDetail extends ListedProduct {
+  draft: ListingDraft;
+}
 
 export interface ListedProductVariant {
   id: string;
