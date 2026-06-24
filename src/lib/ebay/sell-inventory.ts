@@ -13,6 +13,7 @@ import {
   buildAspectSafeDefaults,
   buildDefaultEbayUkAspects,
   enforceProtectedEbayAspects,
+  enforceSingleValueEbayAspects,
   extractColoursAndSizesFromLabels,
   filterAspectsForCategory,
   getSafeAspectDefault,
@@ -309,6 +310,11 @@ async function executeWithMissingAspectRetry(
 
     const conflictField = extractAspectConflictField(bodyText);
     if (conflictField) {
+      if (attempts < MAX_ASPECT_RETRIES) {
+        patchAspectConflictToSingleValue(aspectOptions, conflictField, attempts + 1);
+        attempts++;
+        continue;
+      }
       console.log(
         `[eBay ${label}] Value conflict on "${conflictField}" - stopping retries (would inject more data).`,
       );
@@ -316,6 +322,22 @@ async function executeWithMissingAspectRetry(
 
     throwEbayApiError(url, response, bodyText, fallbackMessage);
   }
+}
+
+function patchAspectConflictToSingleValue(
+  aspectOptions: EbayAspectBuildOptions,
+  conflictField: string,
+  attempt: number,
+): void {
+  if (!aspectOptions.aspectOverrides) {
+    aspectOptions.aspectOverrides = {};
+  }
+  const fieldKey =
+    aspectOptions.marketplaceId === "EBAY_GB"
+      ? normalizeAspectNameForMarketplace(conflictField, aspectOptions.marketplaceId)
+      : conflictField;
+  aspectOptions.aspectOverrides[fieldKey] = [getSafeAspectDefault(fieldKey)[0]];
+  console.log(`Auto-retry ${attempt}: reducing ${fieldKey} to a single value`);
 }
 
 async function executePublishWithAspectRetry(
@@ -358,6 +380,15 @@ async function executePublishWithAspectRetry(
 
     const conflictField = extractAspectConflictField(bodyText);
     if (conflictField) {
+      if (attempts < MAX_ASPECT_RETRIES) {
+        console.log(
+          `[eBay ${label}] Value conflict on "${conflictField}", re-upserting with single value and retrying`,
+        );
+        patchAspectConflictToSingleValue(aspectOptions, conflictField, attempts + 1);
+        await reupsertInventory();
+        attempts++;
+        continue;
+      }
       console.log(
         `[eBay ${label}] Value conflict on "${conflictField}" - stopping retries (would inject more data).`,
       );
@@ -1003,6 +1034,7 @@ export function buildEbayAspects(
     const aiAspects = aspectsFromListingSpecifics(listing, marketplaceId);
     aspects = mergeEbayAspects(defaults, aiAspects, aspectOverrides);
     aspects = enforceProtectedEbayAspects(aspects, context);
+    aspects = enforceSingleValueEbayAspects(aspects, marketplaceId);
     console.log("=== ASPECTS BEING SENT ===");
     console.log(JSON.stringify(aspects, null, 2));
     return aspects;
@@ -1012,6 +1044,7 @@ export function buildEbayAspects(
   const aiAspects = aspectsFromListingSpecifics(listing, marketplaceId);
   aspects = mergeEbayAspects(defaults, aiAspects, aspectOverrides);
   aspects = enforceProtectedEbayAspects(aspects, context);
+  aspects = enforceSingleValueEbayAspects(aspects, marketplaceId);
   aspects = filterAspectsForCategory(aspects, categoryAspectNames);
   console.log("=== ASPECTS BEING SENT ===");
   console.log(JSON.stringify(aspects, null, 2));

@@ -275,6 +275,41 @@ export function splitAspectValues(value: string): string[] {
     .filter((part) => part.length > 0 && !/^unknown$/i.test(part));
 }
 
+const EBAY_MULTI_VALUE_ASPECT_KEYS = new Set(["colour", "color", "size"]);
+
+function aspectValuesForSpecific(nameLower: string, rawValue: string): string[] {
+  if (EBAY_MULTI_VALUE_ASPECT_KEYS.has(nameLower)) {
+    return splitAspectValues(rawValue);
+  }
+
+  const trimmed = rawValue.trim();
+  if (!trimmed || /^unknown$/i.test(trimmed)) return [];
+  return [trimmed];
+}
+
+export function enforceSingleValueEbayAspects(
+  aspects: Record<string, string[]>,
+  marketplaceId: string,
+): Record<string, string[]> {
+  const colourKey = marketplaceId === "EBAY_GB" ? "colour" : "color";
+  const multiValueKeys = new Set([colourKey, "colour", "color", "size"]);
+  const result: Record<string, string[]> = {};
+
+  for (const [key, values] of Object.entries(aspects)) {
+    if (multiValueKeys.has(key.toLowerCase())) {
+      result[key] = values;
+      continue;
+    }
+    if (values.length <= 1) {
+      result[key] = values;
+      continue;
+    }
+    result[key] = [values[0]];
+  }
+
+  return result;
+}
+
 export interface EbayAspectSourceContext {
   listing: GeneratedListing;
   product?: ListingProductSource;
@@ -666,7 +701,7 @@ export function aspectsFromListingSpecifics(
     if (nameLower === "color" || nameLower === "colour" || nameLower === "size") continue;
 
     const normalizedName = normalizeAspectNameForMarketplace(specific.name, marketplaceId);
-    const values = splitAspectValues(specific.value);
+    const values = aspectValuesForSpecific(nameLower, specific.value);
     if (values.length === 0) continue;
 
     if (normalizedName === "MPN" && values[0] === MPN_DOES_NOT_APPLY) {
