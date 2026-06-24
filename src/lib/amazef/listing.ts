@@ -6,6 +6,7 @@ import { fetchAliExpressShippingDaysLabel } from "@/lib/listings/aliexpress-ship
 import type { ListingDraft, ListOnEbayResult } from "@/types/listing-generator";
 
 const AMAZEF_FETCH_TIMEOUT_MS = 30000;
+const AMAZEF_PUBLIC_ORIGIN = "https://amazef.com";
 
 export class AmazefListingError extends Error {
   status: number;
@@ -96,8 +97,46 @@ export async function listDraftOnAmazef(
     sku: payload.sku ? String(payload.sku) : (draft.product.internalProductSku ?? ""),
     offerId: payload.productId != null ? String(payload.productId) : "",
     listingId: payload.productId != null ? String(payload.productId) : null,
-    listingUrl: payload.listingUrl ?? null,
+    listingUrl: resolveAmazefListingUrl(payload.listingUrl, payload.productId),
   };
+}
+
+function resolveAmazefListingUrl(
+  listingUrl: string | null | undefined,
+  productId: string | number | null | undefined,
+): string | null {
+  const productIdStr = productId != null ? String(productId).trim() : "";
+  const fallbackUrl = productIdStr ? `${AMAZEF_PUBLIC_ORIGIN}/products/${productIdStr}` : null;
+
+  if (!listingUrl?.trim()) {
+    return fallbackUrl;
+  }
+
+  const trimmed = listingUrl.trim();
+  try {
+    const parsed = new URL(trimmed);
+    const isLocalhost =
+      parsed.hostname === "localhost" ||
+      parsed.hostname === "127.0.0.1" ||
+      parsed.hostname.endsWith(".local");
+
+    if (isLocalhost) {
+      const path =
+        parsed.pathname && parsed.pathname !== "/"
+          ? parsed.pathname
+          : productIdStr
+            ? `/products/${productIdStr}`
+            : "";
+      return path ? `${AMAZEF_PUBLIC_ORIGIN}${path}` : fallbackUrl;
+    }
+
+    return trimmed;
+  } catch {
+    if (trimmed.startsWith("/")) {
+      return `${AMAZEF_PUBLIC_ORIGIN}${trimmed}`;
+    }
+    return fallbackUrl ?? trimmed;
+  }
 }
 
 function resolveSellableQuantity(variant: ListingDraft["variants"][number]): number {
