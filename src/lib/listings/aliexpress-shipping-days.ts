@@ -39,6 +39,8 @@ function isReturnOrRefundContext(text: string): boolean {
 
 type ShippingDaysResult = { minDays: number; maxDays: number; label: string };
 
+export type AliExpressShippingDaysResult = ShippingDaysResult;
+
 function parseMonthName(value: string): number | null {
   const key = value.trim().slice(0, 3).toLowerCase();
   return MONTH_INDEX[key] ?? null;
@@ -459,9 +461,9 @@ export function parseAliExpressShippingDays(
   return parseCalendarDateRange(htmlOrText, referenceDate);
 }
 
-export async function fetchAliExpressShippingDaysLabel(
+export async function fetchAliExpressShippingDays(
   productUrl: string,
-): Promise<string | null> {
+): Promise<AliExpressShippingDaysResult | null> {
   try {
     const productId = extractAliExpressProductId(productUrl.trim());
 
@@ -469,14 +471,14 @@ export async function fetchAliExpressShippingDaysLabel(
       const freightRaw = await fetchAliExpressShippingRawViaFreightApi(productId);
       if (freightRaw) {
         const fromFreight = parseAliExpressShippingDays(freightRaw);
-        if (fromFreight) return fromFreight.label;
+        if (fromFreight) return fromFreight;
       }
     }
 
     const mtopRaw = await fetchAliExpressDeliveryRawText(productUrl);
     if (mtopRaw) {
       const fromMtop = parseAliExpressShippingDays(mtopRaw);
-      if (fromMtop) return fromMtop.label;
+      if (fromMtop) return fromMtop;
     }
 
     const response = await fetch(productUrl, {
@@ -487,9 +489,15 @@ export async function fetchAliExpressShippingDaysLabel(
     if (!response.ok) return null;
 
     const html = await response.text();
-    const parsed = parseAliExpressShippingDays(html);
-    return parsed?.label ?? null;
+    return parseAliExpressShippingDays(html);
   } catch {
     return null;
   }
+}
+
+export async function fetchAliExpressShippingDaysLabel(
+  productUrl: string,
+): Promise<string | null> {
+  const result = await fetchAliExpressShippingDays(productUrl);
+  return result?.label ?? null;
 }

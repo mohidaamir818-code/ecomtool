@@ -1,6 +1,7 @@
 "use client";
 
 interface AmazefAutoListingPanelProps {
+  platformName?: string;
   enabled: boolean;
   processing?: boolean;
   onToggle: (enabled: boolean) => void;
@@ -8,6 +9,7 @@ interface AmazefAutoListingPanelProps {
 }
 
 export function AmazefAutoListingPanel({
+  platformName = "your store",
   enabled,
   processing = false,
   onToggle,
@@ -19,8 +21,8 @@ export function AmazefAutoListingPanel({
         <div>
           <h3 className="text-sm font-semibold text-[#111827]">Auto listing</h3>
           <p className="mt-1 text-xs text-[#6B7280]">
-            Paste a URL only — AI handles VeRO, profit, listing, stock, shipping, and publishes to
-            Amazef.
+            Paste a URL only — AI handles VeRO, profit, listing, stock, shipping, and publishes to{" "}
+            {platformName}.
           </p>
           {enabled ? (
             <p className="mt-2 text-xs font-medium text-violet-800">

@@ -11,12 +11,20 @@ import {
   normalizeAutoListingSettings,
   type AmazefAutoListingSettings,
 } from "@/features/listings/lib/amazef-auto-listing";
+import {
+  loadEbayAutoListingSettings,
+  saveEbayAutoListingSettings,
+  normalizeEbayAutoListingSettings,
+  type EbayAutoListingSettings,
+} from "@/features/listings/lib/ebay-auto-listing";
 import { draftNeedsSkuBackfill } from "@/lib/listings/internal-sku";
 import { fetchSellerPreferences, persistSellerPreferences } from "@/features/listings/lib/seller-preferences-client";
 import { sellerPreferencesToPromotions, promotionsToSellerPreferences } from "@/lib/listings/seller-preferences-mappers";
 import { AiListingGenerator } from "./AiListingGenerator";
 import { AmazefAutoListingPanel } from "./AmazefAutoListingPanel";
 import { AmazefAutoListingSettingsModal } from "./AmazefAutoListingSettingsModal";
+import { EbayAutoListingFulfillmentPicker } from "./EbayAutoListingFulfillmentPicker";
+import { EbayAutoListingSettingsModal } from "./EbayAutoListingSettingsModal";
 import { AmazefConfirmStep } from "./AmazefConfirmStep";
 import { AmazefConnectModal } from "./AmazefConnectModal";
 import { EbayAddressSetupForm } from "./EbayAddressSetupForm";
@@ -36,6 +44,7 @@ import { VeroChecker } from "./VeroChecker";
 import type {
   AmazefConnectionStatus,
   EbayConnectionStatus,
+  EbayPolicyOption,
   GeneratedListing,
   ListingDraft,
   ListingPlatform,
@@ -49,6 +58,15 @@ import { defaultSellerPreferences } from "@/types/listing-generator";
 
 const MAX_STEP = 9;
 const VOLUME_DISCOUNTS_STEP = 7;
+
+interface PendingFulfillmentSelection {
+  aliExpressShippingLabel: string;
+  fulfillmentPolicies: EbayPolicyOption[];
+  paymentPolicyId: string;
+  returnPolicyId: string;
+  selectedFulfillmentPolicyId: string;
+  acknowledgeVero: boolean;
+}
 
 function advanceWizardStep(step: number, platform: ListingPlatform): number {
   let next = Math.min(step + 1, MAX_STEP);
@@ -119,8 +137,14 @@ export function ListingsShell() {
   const [amazefAutoSettings, setAmazefAutoSettings] = useState<AmazefAutoListingSettings>(() =>
     normalizeAutoListingSettings(null),
   );
+  const [ebayAutoSettings, setEbayAutoSettings] = useState<EbayAutoListingSettings>(() =>
+    normalizeEbayAutoListingSettings(null),
+  );
   const [showAutoSettingsModal, setShowAutoSettingsModal] = useState(false);
   const [pendingAmazefAutoList, setPendingAmazefAutoList] = useState(false);
+  const [pendingEbayAutoList, setPendingEbayAutoList] = useState(false);
+  const [pendingFulfillmentSelection, setPendingFulfillmentSelection] =
+    useState<PendingFulfillmentSelection | null>(null);
   const [autoListProcessing, setAutoListProcessing] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const generateStarted = useRef(false);
@@ -266,6 +290,7 @@ export function ListingsShell() {
   useEffect(() => {
     if (!userId) return;
     setAmazefAutoSettings(loadAutoListingSettings(userId));
+    setEbayAutoSettings(loadEbayAutoListingSettings(userId));
   }, [userId]);
 
   function triggerSavedToast() {
@@ -464,6 +489,12 @@ export function ListingsShell() {
       return;
     }
 
+    if (pendingEbayAutoList) {
+      setPendingEbayAutoList(false);
+      void runEbayAutoList(true);
+      return;
+    }
+
     setNotice("");
     setIsError(false);
     setCurrentStep(2);
@@ -587,7 +618,13 @@ export function ListingsShell() {
     if (userId) saveAutoListingSettings(userId, normalized);
   }
 
-  function finalizeAutoSettings(settings: AmazefAutoListingSettings) {
+  function persistEbayAutoSettings(next: EbayAutoListingSettings) {
+    const normalized = normalizeEbayAutoListingSettings(next);
+    setEbayAutoSettings(normalized);
+    if (userId) saveEbayAutoListingSettings(userId, normalized);
+  }
+
+  function finalizeAmazefAutoSettings(settings: AmazefAutoListingSettings) {
     const wasEnabled = amazefAutoSettings.enabled;
     persistAmazefAutoSettings({ ...settings, enabled: true });
     setShowAutoSettingsModal(false);
@@ -600,8 +637,25 @@ export function ListingsShell() {
     setIsError(false);
   }
 
-  function handleAutoSettingsSave(settings: AmazefAutoListingSettings) {
-    finalizeAutoSettings(settings);
+  function finalizeEbayAutoSettings(settings: EbayAutoListingSettings) {
+    const wasEnabled = ebayAutoSettings.enabled;
+    persistEbayAutoSettings({ ...settings, enabled: true });
+    setShowAutoSettingsModal(false);
+    setCurrentStep(0);
+    setNotice(
+      wasEnabled
+        ? "Auto listing settings updated."
+        : "Auto listing is on. Paste a URL and click Auto list.",
+    );
+    setIsError(false);
+  }
+
+  function handleAutoSettingsSave(settings: AmazefAutoListingSettings | EbayAutoListingSettings) {
+    if (isAmazef) {
+      finalizeAmazefAutoSettings(settings as AmazefAutoListingSettings);
+      return;
+    }
+    finalizeEbayAutoSettings(settings as EbayAutoListingSettings);
   }
 
   function handleAutoListingToggle(enabled: boolean) {
@@ -609,9 +663,69 @@ export function ListingsShell() {
       setShowAutoSettingsModal(true);
       return;
     }
-    persistAmazefAutoSettings({ ...amazefAutoSettings, enabled: false });
+    if (isAmazef) {
+      persistAmazefAutoSettings({ ...amazefAutoSettings, enabled: false });
+    } else {
+      persistEbayAutoSettings({ ...ebayAutoSettings, enabled: false });
+    }
     setNotice("");
     setIsError(false);
+  }
+
+  async function runVeroPreflightForAutoList(
+    listVeroProducts: boolean,
+    onUnsafeVero: () => void,
+  ): Promise<boolean> {
+    if (!userId || !url.trim()) {
+      setNotice("Please paste an AliExpress product URL.");
+      setIsError(true);
+      return false;
+    }
+
+    setAutoListProcessing(true);
+    setNotice("");
+    setIsError(false);
+    setListedUrl(null);
+
+    try {
+      const veroResponse = await fetch("/api/vero-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, url: url.trim() }),
+      });
+      const veroData = await veroResponse.json();
+
+      if (!veroResponse.ok) {
+        setNotice(veroData.error ?? "VeRO check failed.");
+        setIsError(true);
+        return false;
+      }
+
+      const veroResult = veroData.vero as VeroCheckResult | null;
+      setVero(veroResult);
+      veroRef.current = veroResult;
+
+      if (veroResult && !veroResult.safe) {
+        if (!listVeroProducts) {
+          setNotice(
+            "This product failed the VeRO check. Enable “List VeRO products” in auto listing settings to continue.",
+          );
+          setIsError(true);
+          return false;
+        }
+
+        onUnsafeVero();
+        return false;
+      }
+
+      return true;
+    } catch {
+      setNotice("Network error while running VeRO check.");
+      setIsError(true);
+      return false;
+    } finally {
+      setAutoListProcessing(false);
+    }
   }
 
   async function runAmazefAutoList(acknowledgeVero = false) {
@@ -628,49 +742,11 @@ export function ListingsShell() {
     }
 
     if (!acknowledgeVero) {
-      setAutoListProcessing(true);
-      setNotice("");
-      setIsError(false);
-      setListedUrl(null);
-
-      try {
-        const veroResponse = await fetch("/api/vero-check", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId, url: url.trim() }),
-        });
-        const veroData = await veroResponse.json();
-
-        if (!veroResponse.ok) {
-          setNotice(veroData.error ?? "VeRO check failed.");
-          setIsError(true);
-          return;
-        }
-
-        const veroResult = veroData.vero as VeroCheckResult | null;
-        setVero(veroResult);
-        veroRef.current = veroResult;
-
-        if (veroResult && !veroResult.safe) {
-          if (!amazefAutoSettings.listVeroProducts) {
-            setNotice(
-              "This product failed the VeRO check. Enable “List VeRO products” in auto listing settings to continue.",
-            );
-            setIsError(true);
-            return;
-          }
-
-          setPendingAmazefAutoList(true);
-          setShowVeroModal(true);
-          return;
-        }
-      } catch {
-        setNotice("Network error while running VeRO check.");
-        setIsError(true);
-        return;
-      } finally {
-        setAutoListProcessing(false);
-      }
+      const ok = await runVeroPreflightForAutoList(amazefAutoSettings.listVeroProducts, () => {
+        setPendingAmazefAutoList(true);
+        setShowVeroModal(true);
+      });
+      if (!ok) return;
     }
 
     setAutoListProcessing(true);
@@ -709,6 +785,87 @@ export function ListingsShell() {
     }
   }
 
+  async function runEbayAutoList(acknowledgeVero = false, fulfillmentPolicyId?: string) {
+    if (!userId || !url.trim()) {
+      setNotice("Please paste an AliExpress product URL.");
+      setIsError(true);
+      return;
+    }
+
+    if (!ebayAutoSettings.enabled) {
+      setNotice("Turn on auto listing first.");
+      setIsError(true);
+      return;
+    }
+
+    if (!ebayStatus.addressConfirmed) {
+      setNotice("Confirm your eBay warehouse address before auto listing.");
+      setIsError(true);
+      return;
+    }
+
+    if (!fulfillmentPolicyId && !acknowledgeVero) {
+      const ok = await runVeroPreflightForAutoList(ebayAutoSettings.listVeroProducts, () => {
+        setPendingEbayAutoList(true);
+        setShowVeroModal(true);
+      });
+      if (!ok) return;
+    }
+
+    setAutoListProcessing(true);
+    if (!fulfillmentPolicyId) {
+      setNotice("");
+      setListedUrl(null);
+    }
+    setIsError(false);
+
+    try {
+      const response = await fetch("/api/ebay/auto-list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          url: url.trim(),
+          settings: ebayAutoSettings,
+          acknowledgeVero,
+          fulfillmentPolicyId,
+        }),
+      });
+      const data = await response.json();
+
+      if (data.needsFulfillmentPolicySelection) {
+        setPendingFulfillmentSelection({
+          aliExpressShippingLabel: data.aliExpressShippingLabel ?? "",
+          fulfillmentPolicies: data.fulfillmentPolicies ?? [],
+          paymentPolicyId: data.paymentPolicyId ?? "",
+          returnPolicyId: data.returnPolicyId ?? "",
+          selectedFulfillmentPolicyId: data.fulfillmentPolicies?.[0]?.policyId ?? "",
+          acknowledgeVero: acknowledgeVero || Boolean(fulfillmentPolicyId),
+        });
+        setNotice(data.error ?? "Choose a shipping policy to continue.");
+        setIsError(false);
+        return;
+      }
+
+      if (!response.ok || !data.success) {
+        setNotice(data.error ?? "Auto listing failed.");
+        setIsError(true);
+        return;
+      }
+
+      setPendingFulfillmentSelection(null);
+      setListedUrl(data.result?.listingUrl ?? null);
+      setNotice(data.message ?? "Product listed on eBay.");
+      setIsError(false);
+      setUrl("");
+    } catch {
+      setNotice("Network error during auto listing.");
+      setIsError(true);
+    } finally {
+      setAutoListProcessing(false);
+    }
+  }
+
   function validateStep(step: number): string | null {
     const currentListing = listingRef.current;
     const currentDraft = draftRef.current;
@@ -716,6 +873,13 @@ export function ListingsShell() {
     const currentPricingBreakdown = pricingBreakdownRef.current;
 
     if (step === 0 && !url.trim()) return "Please paste an AliExpress product URL.";
+    if (
+      step === 0 &&
+      pendingFulfillmentSelection &&
+      !pendingFulfillmentSelection.selectedFulfillmentPolicyId
+    ) {
+      return "Select a shipping policy to continue.";
+    }
     if (step === 1 && currentVero && !currentVero.safe && !veroAcknowledgedRef.current)
       return "Acknowledge the VeRO risk to continue, or start a new listing.";
     if (step === 2 && !currentPricingBreakdown) return "Apply your pricing preferences before continuing.";
@@ -754,6 +918,13 @@ export function ListingsShell() {
     if (currentStep === 0) {
       if (activePlatform === "amazef" && amazefAutoSettings.enabled) {
         await runAmazefAutoList();
+        return;
+      }
+      if (activePlatform === "ebay" && ebayAutoSettings.enabled) {
+        await runEbayAutoList(
+          pendingFulfillmentSelection?.acknowledgeVero ?? false,
+          pendingFulfillmentSelection?.selectedFulfillmentPolicyId || undefined,
+        );
         return;
       }
       setCurrentStep(1);
@@ -861,7 +1032,10 @@ export function ListingsShell() {
   const busy = veroLoading || generateLoading || autoListProcessing;
   const wizardStarted = currentStep > 0 || Boolean(vero) || Boolean(draft);
   const isAmazef = activePlatform === "amazef";
-  const showAmazefAutoUrlOnly = isAmazef && amazefAutoSettings.enabled && currentStep === 0;
+  const showAutoUrlOnly =
+    (isAmazef && amazefAutoSettings.enabled && currentStep === 0) ||
+    (!isAmazef && ebayAutoSettings.enabled && currentStep === 0);
+  const autoListingEnabled = isAmazef ? amazefAutoSettings.enabled : ebayAutoSettings.enabled;
   const showConnectGate =
     !isAmazef &&
     !ebayStatusLoading &&
@@ -887,14 +1061,16 @@ export function ListingsShell() {
     !ebayStatus.addressConfirmed &&
     Boolean(userId);
 
-  const amazefAutoListingPanel = isAmazef ? (
-    <AmazefAutoListingPanel
-      enabled={amazefAutoSettings.enabled}
-      processing={autoListProcessing}
-      onToggle={handleAutoListingToggle}
-      onEditSettings={() => setShowAutoSettingsModal(true)}
-    />
-  ) : null;
+  const autoListingPanel =
+    (isAmazef && amazefStatus.connected) || (!isAmazef && ebayStatus.connected) ? (
+      <AmazefAutoListingPanel
+        platformName={isAmazef ? "Amazef" : "eBay"}
+        enabled={autoListingEnabled}
+        processing={autoListProcessing}
+        onToggle={handleAutoListingToggle}
+        onEditSettings={() => setShowAutoSettingsModal(true)}
+      />
+    ) : null;
 
   function handleEbayDisconnected() {
     oauthJustSucceeded.current = false;
@@ -1053,13 +1229,13 @@ export function ListingsShell() {
           </div>
         ) : null}
 
-        {wizardStarted && !showAmazefAutoUrlOnly ? (
+        {wizardStarted && !showAutoUrlOnly ? (
           <ListingWizardProgress currentStep={currentStep} platform={activePlatform} />
         ) : null}
 
         {currentStep === 0 ? (
           <div className="space-y-4">
-            {amazefAutoListingPanel}
+            {autoListingPanel}
             <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-[#111827]">Start New Listing</h2>
               <label className="mt-4 block text-sm font-medium text-[#111827]">
@@ -1068,21 +1244,36 @@ export function ListingsShell() {
                   type="url"
                   value={url}
                   disabled={isBlocked || busy}
-                  onChange={(event) => setUrl(event.target.value)}
+                  onChange={(event) => {
+                    setUrl(event.target.value);
+                    setPendingFulfillmentSelection(null);
+                  }}
                   placeholder="https://www.aliexpress.com/item/..."
                   className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand disabled:opacity-60"
                 />
               </label>
             </div>
+            {pendingFulfillmentSelection ? (
+              <EbayAutoListingFulfillmentPicker
+                aliExpressShippingLabel={pendingFulfillmentSelection.aliExpressShippingLabel}
+                policies={pendingFulfillmentSelection.fulfillmentPolicies}
+                selectedPolicyId={pendingFulfillmentSelection.selectedFulfillmentPolicyId}
+                onSelect={(policyId) =>
+                  setPendingFulfillmentSelection((current) =>
+                    current ? { ...current, selectedFulfillmentPolicyId: policyId } : null,
+                  )
+                }
+              />
+            ) : null}
           </div>
         ) : null}
 
         <div className="mt-6 space-y-6">
-          {!showAmazefAutoUrlOnly && currentStep === 1 ? (
+          {!showAutoUrlOnly && currentStep === 1 ? (
             <VeroChecker result={vero} loading={veroLoading} platform={activePlatform} />
           ) : null}
 
-          {!showAmazefAutoUrlOnly && currentStep === 2 && product && userId ? (
+          {!showAutoUrlOnly && currentStep === 2 && product && userId ? (
             <ListingProfitCalculatorStep
               userId={userId}
               product={product}
@@ -1097,7 +1288,7 @@ export function ListingsShell() {
             />
           ) : null}
 
-          {!showAmazefAutoUrlOnly && currentStep === 3 ? (
+          {!showAutoUrlOnly && currentStep === 3 ? (
             <AiListingGenerator
               userId={userId ?? ""}
               product={product}
@@ -1110,7 +1301,7 @@ export function ListingsShell() {
             />
           ) : null}
 
-          {!showAmazefAutoUrlOnly && currentStep === 4 && userId && listing ? (
+          {!showAutoUrlOnly && currentStep === 4 && userId && listing ? (
             <AiListingGenerator
               userId={userId}
               product={product}
@@ -1122,7 +1313,7 @@ export function ListingsShell() {
             />
           ) : null}
 
-          {!showAmazefAutoUrlOnly && currentStep === 5 && draft ? (
+          {!showAutoUrlOnly && currentStep === 5 && draft ? (
             <ListingPhotosVariantsStep
               draft={draft}
               onChange={updateDraft}
@@ -1133,7 +1324,7 @@ export function ListingsShell() {
             />
           ) : null}
 
-          {!showAmazefAutoUrlOnly && currentStep === 6 && draft && userId ? (
+          {!showAutoUrlOnly && currentStep === 6 && draft && userId ? (
             <ListingShippingReturnsStep
               userId={userId}
               draft={draft}
@@ -1142,7 +1333,7 @@ export function ListingsShell() {
             />
           ) : null}
 
-          {!showAmazefAutoUrlOnly && currentStep === 7 && draft && userId && sellerPrefs && !isAmazef ? (
+          {!showAutoUrlOnly && currentStep === 7 && draft && userId && sellerPrefs && !isAmazef ? (
             <ListingPromotionsStep
               userId={userId}
               promotions={draft.promotions}
@@ -1154,11 +1345,11 @@ export function ListingsShell() {
             />
           ) : null}
 
-          {!showAmazefAutoUrlOnly && currentStep === 8 && draft ? (
+          {!showAutoUrlOnly && currentStep === 8 && draft ? (
             <ListingQualityScoreStep draft={draft} platform={activePlatform} />
           ) : null}
 
-          {!showAmazefAutoUrlOnly && currentStep === 9 && draft && userId && !isAmazef ? (
+          {!showAutoUrlOnly && currentStep === 9 && draft && userId && !isAmazef ? (
             <>
               <EbayConnect userId={userId} refreshKey={oauthRefreshKey} />
               <ListingConfirmStep
@@ -1171,7 +1362,7 @@ export function ListingsShell() {
             </>
           ) : null}
 
-          {!showAmazefAutoUrlOnly && currentStep === 9 && draft && userId && isAmazef ? (
+          {!showAutoUrlOnly && currentStep === 9 && draft && userId && isAmazef ? (
             <AmazefConfirmStep
               userId={userId}
               draft={draft}
@@ -1206,26 +1397,34 @@ export function ListingsShell() {
           ) : null}
         </div>
 
-        {(showAmazefAutoUrlOnly || (currentStep < MAX_STEP && currentStep !== 5)) ? (
+        {(showAutoUrlOnly || (currentStep < MAX_STEP && currentStep !== 5)) ? (
           <ListingWizardNav
             currentStep={currentStep}
             maxStep={MAX_STEP}
             onBack={handleBack}
             onNext={() => void handleNext()}
-            nextDisabled={busy || (currentStep === 3 && generateLoading)}
             nextLabel={
-              currentStep === 0 && isAmazef && amazefAutoSettings.enabled
-                ? "Auto list"
+              currentStep === 0 && autoListingEnabled
+                ? pendingFulfillmentSelection
+                  ? "Continue listing"
+                  : "Auto list"
                 : currentStep === 0
                   ? "Check & Generate Listing"
                   : "Next"
             }
             hideNext={
-              showAmazefAutoUrlOnly
+              showAutoUrlOnly
                 ? false
                 : currentStep === 1 && Boolean(vero && !vero.safe) && !veroAcknowledged
             }
-            showBack={!showAmazefAutoUrlOnly}
+            showBack={!showAutoUrlOnly}
+            nextDisabled={
+              busy ||
+              (currentStep === 3 && generateLoading) ||
+              (currentStep === 0 &&
+                Boolean(pendingFulfillmentSelection) &&
+                !pendingFulfillmentSelection?.selectedFulfillmentPolicyId)
+            }
           />
         ) : null}
           </>
@@ -1240,7 +1439,8 @@ export function ListingsShell() {
           onStartNew={() => {
             setShowVeroModal(false);
             setPendingAmazefAutoList(false);
-            if (isAmazef && amazefAutoSettings.enabled) {
+            setPendingEbayAutoList(false);
+            if (autoListingEnabled) {
               setUrl("");
               setNotice("");
               setIsError(false);
@@ -1260,9 +1460,17 @@ export function ListingsShell() {
         />
       ) : null}
 
-      {showAutoSettingsModal ? (
+      {showAutoSettingsModal && isAmazef ? (
         <AmazefAutoListingSettingsModal
           initialSettings={amazefAutoSettings}
+          onSave={handleAutoSettingsSave}
+          onClose={() => setShowAutoSettingsModal(false)}
+        />
+      ) : null}
+
+      {showAutoSettingsModal && !isAmazef ? (
+        <EbayAutoListingSettingsModal
+          initialSettings={ebayAutoSettings}
           onSave={handleAutoSettingsSave}
           onClose={() => setShowAutoSettingsModal(false)}
         />
