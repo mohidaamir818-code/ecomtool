@@ -1,15 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AddExistingListingForm } from "./AddExistingListingForm";
 import type { ListedProduct } from "@/types/listed-products";
-import type { ListingPlatform } from "@/types/listing-generator";
 
 interface ListedProductsPanelProps {
   userId: string | null;
   refreshKey?: number;
-  defaultPlatform?: ListingPlatform;
-  onRefresh?: () => void;
 }
 
 function formatPrice(price: number, currency: string): string {
@@ -26,12 +22,7 @@ function reviseUrl(product: ListedProduct): string | null {
   return product.listingUrl;
 }
 
-export function ListedProductsPanel({
-  userId,
-  refreshKey = 0,
-  defaultPlatform = "ebay",
-  onRefresh,
-}: ListedProductsPanelProps) {
+export function ListedProductsPanel({ userId, refreshKey = 0 }: ListedProductsPanelProps) {
   const [products, setProducts] = useState<ListedProduct[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({});
@@ -77,26 +68,11 @@ export function ListedProductsPanel({
     }
   }
 
-  if (!userId) {
+  if (!userId || (!loading && products.length === 0)) {
     return null;
   }
 
   return (
-    <div className="space-y-4">
-      <AddExistingListingForm
-        userId={userId}
-        defaultPlatform={defaultPlatform}
-        onLinked={() => {
-          void loadProducts();
-          onRefresh?.();
-        }}
-      />
-
-      {loading && products.length === 0 ? (
-        <p className="text-sm text-[#6B7280]">Loading listed products…</p>
-      ) : null}
-
-      {products.length > 0 ? (
     <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
       <h3 className="text-sm font-semibold text-[#111827]">Your listed products</h3>
       <p className="mt-1 text-xs text-[#6B7280]">
@@ -104,7 +80,7 @@ export function ListedProductsPanel({
       </p>
 
       {loading ? (
-        <p className="mt-4 text-sm text-[#6B7280]">Refreshing…</p>
+        <p className="mt-4 text-sm text-[#6B7280]">Loading…</p>
       ) : (
         <div className="mt-4 space-y-4">
           {products.map((product) => {
@@ -194,8 +170,6 @@ export function ListedProductsPanel({
           })}
         </div>
       )}
-    </div>
-      ) : null}
     </div>
   );
 }

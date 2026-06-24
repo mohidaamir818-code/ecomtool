@@ -1,14 +1,5 @@
 import type { ListingPlatform } from "@/types/listing-generator";
 
-export interface LinkExistingVariantInput {
-  aliVariantId: string;
-  label: string;
-  listedPrice: number;
-  listedQuantity: number;
-  sku?: string;
-  offerId?: string;
-}
-
 export interface ListedProductVariant {
   id: string;
   aliVariantId: string;

@@ -1280,8 +1280,6 @@ export function ListingsShell() {
               <ListedProductsPanel
                 userId={userId}
                 refreshKey={listedProductsRefreshKey}
-                defaultPlatform={activePlatform}
-                onRefresh={() => setListedProductsRefreshKey((key) => key + 1)}
               />
             ) : null}
           </div>
