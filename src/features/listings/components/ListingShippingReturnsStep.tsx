@@ -33,6 +33,8 @@ export function ListingShippingReturnsStep({
   const draftPoliciesRef = useRef(draft.ebayPolicies);
   const productRef = useRef(draft.product);
   const [shippingLoading, setShippingLoading] = useState(false);
+  const [detectedShippingLabel, setDetectedShippingLabel] = useState<string | null>(null);
+  const shippingManuallyEdited = useRef(Boolean(draft.product.shippingDaysLabel?.trim()));
 
   useEffect(() => {
     productRef.current = draft.product;
@@ -42,24 +44,39 @@ export function ListingShippingReturnsStep({
     if (platform !== "amazef") return;
 
     const productUrl = draft.product.productUrl?.trim();
-    if (!productUrl) return;
+    if (!productUrl || shippingManuallyEdited.current || draft.product.shippingDaysLabel?.trim()) {
+      return;
+    }
 
     setShippingLoading(true);
     void fetch(`/api/listings/shipping-days?url=${encodeURIComponent(productUrl)}`)
       .then(async (response) => {
         const data = (await response.json()) as { shippingDaysLabel?: string | null };
         if (data.shippingDaysLabel) {
-          onChange({
-            product: {
-              ...productRef.current,
-              shippingDaysLabel: data.shippingDaysLabel,
-            },
-          });
+          setDetectedShippingLabel(data.shippingDaysLabel);
+          if (!shippingManuallyEdited.current) {
+            onChange({
+              product: {
+                ...productRef.current,
+                shippingDaysLabel: data.shippingDaysLabel,
+              },
+            });
+          }
         }
       })
       .catch(() => undefined)
       .finally(() => setShippingLoading(false));
-  }, [platform, draft.product.productUrl, onChange]);
+  }, [platform, draft.product.productUrl, draft.product.shippingDaysLabel, onChange]);
+
+  function updateShippingDaysLabel(value: string) {
+    shippingManuallyEdited.current = true;
+    onChange({
+      product: {
+        ...draft.product,
+        shippingDaysLabel: value,
+      },
+    });
+  }
 
   useEffect(() => {
     draftPoliciesRef.current = draft.ebayPolicies;
@@ -101,7 +118,6 @@ export function ListingShippingReturnsStep({
   }, [loadPolicies, platform]);
 
   if (platform === "amazef") {
-    const shippingDaysLabel = draft.product.shippingDaysLabel?.trim();
     return (
       <div className="space-y-4">
         <div>
@@ -115,20 +131,33 @@ export function ListingShippingReturnsStep({
           <p className="text-sm font-semibold text-[#111827]">Estimated shipping time</p>
           {shippingLoading ? (
             <p className="mt-2 text-sm text-[#6B7280]">Detecting AliExpress delivery dates…</p>
-          ) : shippingDaysLabel ? (
+          ) : detectedShippingLabel ? (
             <p className="mt-2 text-sm text-[#374151]">
-              Calculated from AliExpress delivery dates:{" "}
-              <span className="font-semibold text-brand">{shippingDaysLabel}</span>
+              Suggested from AliExpress:{" "}
+              <span className="font-semibold text-brand">{detectedShippingLabel}</span>
             </p>
           ) : (
             <p className="mt-2 text-sm text-amber-700">
-              Could not detect AliExpress delivery dates for this product. Shipping days will be
-              recalculated when you list on {platformName}.
+              Could not detect AliExpress delivery dates for this product. Enter delivery time
+              manually below.
             </p>
           )}
+
+          <label className="mt-4 block">
+            <span className="text-sm font-medium text-[#111827]">Delivery time on {platformName}</span>
+            <input
+              type="text"
+              value={draft.product.shippingDaysLabel ?? ""}
+              onChange={(event) => updateShippingDaysLabel(event.target.value)}
+              placeholder="e.g. 7 days or 6 to 10 days"
+              className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm text-[#111827] outline-none focus:border-brand"
+            />
+          </label>
+
           <p className="mt-3 text-xs text-[#9CA3AF]">
-            AliExpress may show calendar dates or day ranges. We convert whatever format they use
-            into day counts for your {platformName} listing.
+            You can keep the suggested value or type your own. Use formats like{" "}
+            <span className="font-medium">7 days</span> or{" "}
+            <span className="font-medium">6 to 10 days</span>.
           </p>
         </div>
       </div>
