@@ -24,7 +24,14 @@ const MONTH_INDEX: Record<string, number> = {
 };
 
 const MONTH_PATTERN =
-  "Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?";
+  "Jan(?:\\.?(?:uary)?)?|Feb(?:\\.?(?:ruary)?)?|Mar(?:\\.?(?:ch)?)?|Apr(?:\\.?(?:il)?)?|May\\.?|Jun(?:\\.?(?:e)?)?|Jul(?:\\.?(?:y)?)?|Aug(?:\\.?(?:ust)?)?|Sep(?:\\.?(?:t(?:ember)?)?)?|Oct(?:\\.?(?:ober)?)?|Nov(?:\\.?(?:ember)?)?|Dec(?:\\.?(?:ember)?)?";
+
+const NON_DELIVERY_CONTEXT =
+  /\b(return|returns|refund|warranty|guarantee|within\s+\d+\s*days|no delivery in)\b/i;
+
+function isReturnOrRefundContext(text: string): boolean {
+  return NON_DELIVERY_CONTEXT.test(text);
+}
 
 type ShippingDaysResult = { minDays: number; maxDays: number; label: string };
 
@@ -80,6 +87,7 @@ export function calculateShippingDaysFromDeliveryDates(
 /** AliExpress sometimes already shows "7-15 days" or "12 days". */
 function parseDirectDayCount(text: string): ShippingDaysResult | null {
   const normalized = text.replace(/\s+/g, " ").trim();
+  if (isReturnOrRefundContext(normalized)) return null;
 
   const rangeMatch = normalized.match(
     /\b(\d{1,3})\s*(?:-|–|~|to)\s*(\d{1,3})\s*(?:business\s+)?days?\b/i,
@@ -87,7 +95,7 @@ function parseDirectDayCount(text: string): ShippingDaysResult | null {
   if (rangeMatch) {
     const min = Number(rangeMatch[1]);
     const max = Number(rangeMatch[2]);
-    if (min > 0 && max > 0 && min <= 120 && max <= 120) {
+    if (min > 0 && max > 0 && min <= 60 && max <= 60) {
       return toResult(min, max);
     }
   }
@@ -95,7 +103,8 @@ function parseDirectDayCount(text: string): ShippingDaysResult | null {
   const singleMatch = normalized.match(/\b(\d{1,3})\s*(?:business\s+)?days?\b/i);
   if (singleMatch) {
     const days = Number(singleMatch[1]);
-    if (days > 0 && days <= 120) {
+    const hasDeliveryContext = /\b(deliver|shipping|arriv|eta|transit|dispatch)\b/i.test(normalized);
+    if (days > 0 && days <= 60 && (days <= 45 || hasDeliveryContext)) {
       return toResult(days, days);
     }
   }
@@ -208,7 +217,7 @@ function parseJsonDayFields(html: string): ShippingDaysResult | null {
     const matches = [...html.matchAll(new RegExp(pattern.source, "gi"))];
     for (const match of matches) {
       const value = Number(match[1]);
-      if (!Number.isFinite(value) || value <= 0 || value > 120) continue;
+      if (!Number.isFinite(value) || value <= 0 || value > 60) continue;
       if (/min|from/i.test(match[0])) mins.push(value);
       else maxs.push(value);
     }
@@ -296,58 +305,83 @@ function collectDeliverySnippets(html: string): string[] {
     /"arriveDate(?:Desc)?"\s*:\s*"([^"]{2,120})"/gi,
     /"deliveryDateDesc"\s*:\s*"([^"]{2,120})"/gi,
     /"etaText"\s*:\s*"([^"]{2,120})"/gi,
-    /"time"\s*:\s*"([^"]{2,120})"/gi,
+    /"displayEta"\s*:\s*"([^"]{2,120})"/gi,
+    /"formattedDelivery(?:Time|Date)?"\s*:\s*"([^"]{2,120})"/gi,
   ];
 
   for (const pattern of jsonPatterns) {
     for (const match of html.matchAll(pattern)) {
       const value = match[1]?.replace(/\\u0026/g, "&").replace(/\\"/g, '"').trim();
-      if (value) snippets.add(value);
+      if (value && !isReturnOrRefundContext(value)) snippets.add(value);
     }
   }
 
   const visiblePatterns = [
-    /Estimated delivery[^<]{0,60}?([A-Za-z]{3,9}\s+\d{1,2}[^<]{0,40})/gi,
-    /Delivery(?:\s+by)?[^<]{0,30}?([A-Za-z]{3,9}\s+\d{1,2}[^<]{0,40})/gi,
+    /Delivery:\s*([A-Za-z]{3}\.?\s+\d{1,2}\s*(?:-|–|~|to)\s*(?:[A-Za-z]{3}\.?\s+)?\d{1,2})/gi,
+    /Estimated delivery[^<]{0,60}?([A-Za-z]{3,9}\.?\s+\d{1,2}[^<]{0,40})/gi,
+    /Delivery(?:\s+by)?[^<]{0,30}?([A-Za-z]{3,9}\.?\s+\d{1,2}[^<]{0,40})/gi,
     /\b(\d{1,3}\s*(?:-|–|~|to)\s*\d{1,3}\s*(?:business\s+)?days?)\b/gi,
-    /\b((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}\s*(?:-|–|~|to)\s*(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+)?\d{1,2})\b/gi,
-    /\b(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*(?:-|–|~|to)\s*\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*)\b/gi,
+    /\b((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z.]*\s+\d{1,2}\s*(?:-|–|~|to)\s*(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z.]*\s+)?\d{1,2})\b/gi,
+    /\b(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z.]*\s*(?:-|–|~|to)\s*\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z.]*)\b/gi,
   ];
 
   for (const pattern of visiblePatterns) {
     for (const match of html.matchAll(pattern)) {
       const value = match[1]?.trim();
-      if (value) snippets.add(value);
+      if (value && !isReturnOrRefundContext(value)) snippets.add(value);
     }
   }
 
   return [...snippets];
 }
 
+function parseDeliveryLine(htmlOrText: string, referenceDate: Date): ShippingDaysResult | null {
+  const deliveryLine = htmlOrText.match(/Delivery:\s*([^"<\\]{5,80})/i);
+  if (!deliveryLine?.[1]) return null;
+  return parseCalendarDateRange(deliveryLine[1], referenceDate);
+}
+
+function pickBestFromCandidates(
+  candidates: string[],
+  referenceDate: Date,
+): ShippingDaysResult | null {
+  for (const candidate of candidates) {
+    if (isReturnOrRefundContext(candidate)) continue;
+    const calendar = parseCalendarDateRange(candidate, referenceDate);
+    if (calendar) return calendar;
+  }
+
+  for (const candidate of candidates) {
+    if (isReturnOrRefundContext(candidate)) continue;
+    const direct = parseDirectDayCount(candidate);
+    if (direct) return direct;
+  }
+
+  return null;
+}
+
 export function parseAliExpressShippingDays(
   htmlOrText: string,
   referenceDate = new Date(),
 ): ShippingDaysResult | null {
-  const jsonDays = parseJsonDayFields(htmlOrText);
-  if (jsonDays) return jsonDays;
-
-  const timestampDays = parseTimestampDeliveryFields(htmlOrText, referenceDate);
-  if (timestampDays) return timestampDays;
-
   const candidates = collectDeliverySnippets(htmlOrText);
   if (!candidates.includes(htmlOrText)) {
     candidates.unshift(htmlOrText);
   }
 
-  for (const candidate of candidates) {
-    const direct = parseDirectDayCount(candidate);
-    if (direct) return direct;
+  const fromDeliveryLine = parseDeliveryLine(htmlOrText, referenceDate);
+  if (fromDeliveryLine) return fromDeliveryLine;
 
-    const calendar = parseCalendarDateRange(candidate, referenceDate);
-    if (calendar) return calendar;
-  }
+  const fromCandidates = pickBestFromCandidates(candidates, referenceDate);
+  if (fromCandidates) return fromCandidates;
 
-  return null;
+  const timestampDays = parseTimestampDeliveryFields(htmlOrText, referenceDate);
+  if (timestampDays) return timestampDays;
+
+  const jsonDays = parseJsonDayFields(htmlOrText);
+  if (jsonDays) return jsonDays;
+
+  return parseCalendarDateRange(htmlOrText, referenceDate);
 }
 
 export async function fetchAliExpressShippingDaysLabel(
