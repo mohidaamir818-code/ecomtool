@@ -16,6 +16,7 @@ import { mergeInternalSkusIntoDraft } from "@/lib/listings/internal-sku";
 import { ensureInternalSkus } from "@/lib/listings/internal-sku-service";
 import { fetchAliExpressShippingDays } from "@/lib/listings/aliexpress-shipping-days";
 import { selectFulfillmentPolicyForAliExpress } from "@/lib/listings/ebay-fulfillment-policy-match";
+import { saveListedProduct } from "@/lib/listings/listed-products-service";
 import { fetchListingProductSource } from "@/lib/listings/product-source";
 import {
   calculatePricingBreakdown,
@@ -254,6 +255,12 @@ export async function runEbayAutoListPipeline(
   draft = await assignSkusToDraft(userId, draft);
 
   const listResult = await listDraftOnEbay(userId, draft);
+
+  try {
+    await saveListedProduct(userId, "ebay", draft, listResult);
+  } catch (error) {
+    console.error("[eBay auto-list] Failed to save listed product:", error);
+  }
 
   const email = await getUserEmail(userId);
   if (email && listResult.listingUrl) {

@@ -98,6 +98,19 @@ export async function listDraftOnAmazef(
     offerId: payload.productId != null ? String(payload.productId) : "",
     listingId: payload.productId != null ? String(payload.productId) : null,
     listingUrl: resolveAmazefListingUrl(payload.listingUrl, payload.productId),
+    variants: draft.variants.map((variant) => {
+      const source = draft.product.variants?.find((entry) => entry.id === variant.id);
+      return {
+        sku: variant.sku,
+        offerId: payload.productId != null ? String(payload.productId) : "",
+        label: variant.label,
+        price: variant.price,
+        quantity: resolveSellableQuantity(variant),
+        aliVariantId: variant.id,
+        aliPrice: variant.aliExpressPrice ?? source?.price ?? draft.product.price,
+        aliStock: source?.stock ?? draft.product.stock,
+      };
+    }),
   };
 }
 

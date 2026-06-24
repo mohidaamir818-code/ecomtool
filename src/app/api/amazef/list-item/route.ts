@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AmazefListingError, listDraftOnAmazef } from "@/lib/amazef/listing";
+import { saveListedProduct } from "@/lib/listings/listed-products-service";
 import { assertUniqueVariantSkus, resolveVariantSkuForEbay } from "@/lib/listings/internal-sku";
 import { logUserApiRequest } from "@/lib/requests/tracker";
 import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
@@ -62,6 +63,12 @@ export async function POST(request: NextRequest) {
     if (accessDenied) return accessDenied;
 
     const result = await listDraftOnAmazef(userId, body.draft);
+
+    try {
+      await saveListedProduct(userId, "amazef", body.draft, result);
+    } catch (error) {
+      console.error("[Amazef list-item] Failed to save listed product:", error);
+    }
 
     void logUserApiRequest({
       userId,

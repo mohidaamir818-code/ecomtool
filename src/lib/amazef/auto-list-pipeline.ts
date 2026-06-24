@@ -1,6 +1,7 @@
 import "server-only";
 
 import { listDraftOnAmazef } from "@/lib/amazef/listing";
+import { saveListedProduct } from "@/lib/listings/listed-products-service";
 import { sendEmail } from "@/lib/email/send-email";
 import { generateEbayListing } from "@/lib/gemini/generate-listing";
 import { checkVeroSafety } from "@/lib/gemini/vero-check";
@@ -175,6 +176,12 @@ export async function runAmazefAutoListPipeline(
   draft = await assignSkusToDraft(userId, draft);
 
   const listResult = await listDraftOnAmazef(userId, draft);
+
+  try {
+    await saveListedProduct(userId, "amazef", draft, listResult);
+  } catch (error) {
+    console.error("[Amazef auto-list] Failed to save listed product:", error);
+  }
 
   const email = await getUserEmail(userId);
   if (email && listResult.listingUrl) {

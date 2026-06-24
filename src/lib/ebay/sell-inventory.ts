@@ -1524,6 +1524,38 @@ async function publishOffer(
   );
 }
 
+function resolveAliVariantMeta(
+  variant: ListingDraft["variants"][number],
+  product: ListingDraft["product"],
+): { aliPrice: number; aliStock: number | null } {
+  const source = product.variants?.find((entry) => entry.id === variant.id);
+  return {
+    aliPrice: variant.aliExpressPrice ?? source?.price ?? product.price,
+    aliStock: source?.stock ?? product.stock,
+  };
+}
+
+function buildListedVariantResults(
+  variants: ListingDraft["variants"],
+  offers: Array<{ sku: string; offerId: string; label: string }>,
+  product: ListingDraft["product"],
+): NonNullable<ListOnEbayResult["variants"]> {
+  return variants.map((variant, index) => {
+    const offer = offers[index] ?? offers.find((entry) => entry.label === variant.label) ?? offers[0];
+    const aliMeta = resolveAliVariantMeta(variant, product);
+    return {
+      sku: offer?.sku ?? variant.sku,
+      offerId: offer?.offerId ?? "",
+      label: variant.label,
+      price: variant.price,
+      quantity: resolveVariantQuantity(variant),
+      aliVariantId: variant.id,
+      aliPrice: aliMeta.aliPrice,
+      aliStock: aliMeta.aliStock,
+    };
+  });
+}
+
 export async function listDraftOnEbay(userId: string, draft: ListingDraft): Promise<ListOnEbayResult> {
   draft = await ensureDraftVariantEans(draft);
 
@@ -1686,6 +1718,11 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
       listingUrl: published.listingId
         ? buildEbayListingUrl(published.listingId, marketplaceId)
         : null,
+      variants: buildListedVariantResults(
+        variant ? [variant] : dedupedVariants,
+        [{ sku, offerId, label: variant?.label ?? "Default" }],
+        draft.product,
+      ),
     };
   }
 
@@ -1797,7 +1834,57 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
     listingUrl: published.listingId
       ? buildEbayListingUrl(published.listingId, marketplaceId)
       : null,
+    variants: buildListedVariantResults(
+      groupVariants,
+      variantResults.map((entry) => ({ sku: entry.sku, offerId: entry.offerId, label: entry.label })),
+      draft.product,
+    ),
   };
+}
+
+export async function reviseEbayListedVariant(
+  userId: string,
+  draft: ListingDraft,
+  variant: {
+    sku: string;
+    offerId: string;
+    price: number;
+    quantity: number;
+    label: string;
+    ean?: string;
+  },
+): Promise<void> {
+  const token = await getEbayUserAccessToken(userId);
+  if (!token) {
+    throw new Error("eBay account is not connected or token expired. Reconnect eBay.");
+  }
+
+  const marketplaceId = await getSellerMarketplaceId(userId);
+  const sellerLocation = await requireConfirmedLocation(userId);
+  const categoryId = draft.listing.categoryId;
+  if (!categoryId) {
+    throw new Error("Missing eBay category on saved listing.");
+  }
+  if (!draft.ebayPolicies) {
+    throw new Error("Missing eBay policies on saved listing.");
+  }
+
+  const listing = { ...draft.listing, suggestedPrice: variant.price };
+  const body = buildOfferBody(
+    listing,
+    categoryId,
+    variant.quantity,
+    draft.promotions,
+    draft.ebayPolicies,
+    marketplaceId,
+    {
+      sku: variant.sku,
+      priceOverride: variant.price,
+      merchantLocationKey: sellerLocation.merchantLocationKey,
+    },
+  );
+
+  await updateOffer(token, marketplaceId, variant.offerId, body);
 }
 
 // Backward-compatible helper

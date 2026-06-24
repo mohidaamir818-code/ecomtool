@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { EbayApiError, listDraftOnEbay, parseEbayErrorDetails } from "@/lib/ebay/sell-inventory";
+import { saveListedProduct } from "@/lib/listings/listed-products-service";
 import { requireConfirmedLocation } from "@/lib/ebay/inventory-location";
 import { assertUniqueVariantSkus, resolveVariantSkuForEbay } from "@/lib/listings/internal-sku";
 import { logUserApiRequest } from "@/lib/requests/tracker";
@@ -87,6 +88,12 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await listDraftOnEbay(userId, body.draft);
+
+    try {
+      await saveListedProduct(userId, "ebay", body.draft, result);
+    } catch (error) {
+      console.error("[eBay list-item] Failed to save listed product:", error);
+    }
 
     void logUserApiRequest({
       userId,

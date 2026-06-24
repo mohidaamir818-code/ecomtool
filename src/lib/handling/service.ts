@@ -3,11 +3,11 @@ import "server-only";
 import { fetchAliExpressProduct } from "@/lib/aliexpress/client";
 import { serverEnv } from "@/lib/env";
 import { sendEmail } from "@/lib/email/send-email";
-import {
-  sendStockAlertEmail,
+import { sendStockAlertEmail,
   type StockAlertPriority,
   type StockChange,
 } from "@/lib/handling/stock-alert-email";
+import { syncListedProductsForAliVariants } from "@/lib/listings/listed-products-service";
 import { QuotaExceededError } from "@/lib/quota/errors";
 import { enqueueOverflow } from "@/lib/quota/queue-service";
 import { consumeQuota } from "@/lib/quota/service";
@@ -63,7 +63,7 @@ function getIntervalHours(mode: HandlingUpdateMode, customHours?: number): numbe
   return customHours ?? null;
 }
 
-function parseStoredVariants(raw: unknown): HandlingProductVariant[] | undefined {
+export function parseStoredVariants(raw: unknown): HandlingProductVariant[] | undefined {
   if (!Array.isArray(raw)) return undefined;
 
   const variants = raw
@@ -477,8 +477,18 @@ export async function checkHandlingProductUpdate(
   }
 
   const latest = await fetchAliExpressProduct(String(existing.product_url));
+  const previousVariants = parseStoredVariants(existing.variants_json) ?? [];
   const stockChange = detectStockChange(existing, latest);
   const changes = buildChangeSummary(existing, latest);
+
+  if (previousVariants.length && latest.variants?.length && changes.length > 0) {
+    try {
+      await syncListedProductsForAliVariants(userId, previousVariants, latest.variants);
+    } catch (error) {
+      console.error("[handling] Listed product sync failed:", error);
+    }
+  }
+
   const now = new Date().toISOString();
   const intervalHours =
     existing.update_interval_hours != null ? Number(existing.update_interval_hours) : null;

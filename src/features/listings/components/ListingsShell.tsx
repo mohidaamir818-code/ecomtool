@@ -31,6 +31,7 @@ import { EbayAddressSetupForm } from "./EbayAddressSetupForm";
 import { EbayConnect } from "./EbayConnect";
 import { EbayConnectedBanner } from "./EbayConnectedBanner";
 import { EbayStoreConnectGate } from "./EbayStoreConnectGate";
+import { ListedProductsPanel } from "./ListedProductsPanel";
 import { ListingConfirmStep } from "./ListingConfirmStep";
 import { ListingPhotosVariantsStep } from "./ListingPhotosVariantsStep";
 import { ListingProfitCalculatorStep } from "./ListingProfitCalculatorStep";
@@ -110,6 +111,7 @@ export function ListingsShell() {
   const [notice, setNotice] = useState("");
   const [isError, setIsError] = useState(false);
   const [listedUrl, setListedUrl] = useState<string | null>(null);
+  const [listedProductsRefreshKey, setListedProductsRefreshKey] = useState(0);
   const [pricingPrefs, setPricingPrefs] = useState<ListingPricingPreferences | null>(null);
   const [pricingBreakdown, setPricingBreakdown] = useState<PricingBreakdown | null>(null);
   const [manualPriceOverride, setManualPriceOverride] = useState<number | null>(null);
@@ -774,6 +776,7 @@ export function ListingsShell() {
       }
 
       setListedUrl(data.result?.listingUrl ?? null);
+      setListedProductsRefreshKey((key) => key + 1);
       setNotice(data.message ?? "Product listed on Amazef.");
       setIsError(false);
       setUrl("");
@@ -855,6 +858,7 @@ export function ListingsShell() {
 
       setPendingFulfillmentSelection(null);
       setListedUrl(data.result?.listingUrl ?? null);
+      setListedProductsRefreshKey((key) => key + 1);
       setNotice(data.message ?? "Product listed on eBay.");
       setIsError(false);
       setUrl("");
@@ -1027,6 +1031,13 @@ export function ListingsShell() {
     setIsError(false);
     await saveDraft();
     return true;
+  }
+
+  function handleListed(url: string | null) {
+    setListedUrl(url);
+    if (url) {
+      setListedProductsRefreshKey((key) => key + 1);
+    }
   }
 
   const busy = veroLoading || generateLoading || autoListProcessing;
@@ -1265,6 +1276,14 @@ export function ListingsShell() {
                 }
               />
             ) : null}
+            {userId ? (
+              <ListedProductsPanel
+                userId={userId}
+                refreshKey={listedProductsRefreshKey}
+                defaultPlatform={activePlatform}
+                onRefresh={() => setListedProductsRefreshKey((key) => key + 1)}
+              />
+            ) : null}
           </div>
         ) : null}
 
@@ -1357,7 +1376,7 @@ export function ListingsShell() {
                 draft={draft}
                 disabled={isBlocked}
                 addressConfirmed={ebayStatus.addressConfirmed}
-                onListed={setListedUrl}
+                onListed={handleListed}
               />
             </>
           ) : null}
@@ -1369,7 +1388,7 @@ export function ListingsShell() {
               disabled={isBlocked}
               refreshKey={amazefRefreshKey}
               onConnectRequest={() => setShowAmazefConnectModal(true)}
-              onListed={setListedUrl}
+              onListed={handleListed}
             />
           ) : null}
 

@@ -199,6 +199,16 @@ export interface ListOnEbayResult {
   offerId: string;
   listingId: string | null;
   listingUrl: string | null;
+  variants?: Array<{
+    sku: string;
+    offerId: string;
+    label: string;
+    price: number;
+    quantity: number;
+    aliVariantId: string;
+    aliPrice: number;
+    aliStock: number | null;
+  }>;
 }
 
 export interface ListingQualityCheck {
