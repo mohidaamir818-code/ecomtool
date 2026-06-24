@@ -969,6 +969,16 @@ export function ListingsShell() {
     !ebayStatus.addressConfirmed &&
     Boolean(userId);
 
+  const amazefAutoListingPanel = isAmazef ? (
+    <AmazefAutoListingPanel
+      enabled={amazefAutoListingEnabled}
+      manualStepCount={amazefVisibleSteps.size}
+      processing={autoListingProcessing}
+      onToggle={handleAutoListingToggle}
+      onEditSteps={() => setShowAutoListingModal(true)}
+    />
+  ) : null;
+
   function handleEbayDisconnected() {
     oauthJustSucceeded.current = false;
     setEbayStatus({
@@ -1176,27 +1186,17 @@ export function ListingsShell() {
           ) : null}
 
           {currentStep === 3 ? (
-            <div className="space-y-4">
-              {isAmazef ? (
-                <AmazefAutoListingPanel
-                  enabled={amazefAutoListingEnabled}
-                  manualStepCount={amazefVisibleSteps.size}
-                  processing={autoListingProcessing}
-                  onToggle={handleAutoListingToggle}
-                  onEditSteps={() => setShowAutoListingModal(true)}
-                />
-              ) : null}
-              <AiListingGenerator
-                userId={userId ?? ""}
-                product={product}
-                listing={listing}
-                loading={generateLoading}
-                platform={activePlatform}
-                errorMessage={isError && currentStep === 3 ? notice : undefined}
-                onRetry={retryGenerateListing}
-                onListingChange={updateListing}
-              />
-            </div>
+            <AiListingGenerator
+              userId={userId ?? ""}
+              product={product}
+              listing={listing}
+              loading={generateLoading}
+              platform={activePlatform}
+              errorMessage={isError && currentStep === 3 ? notice : undefined}
+              onRetry={retryGenerateListing}
+              onListingChange={updateListing}
+              autoListingPanel={amazefAutoListingPanel}
+            />
           ) : null}
 
           {currentStep === 4 && userId && listing ? (
@@ -1208,6 +1208,7 @@ export function ListingsShell() {
               platform={activePlatform}
               onListingChange={updateListing}
               descriptionPhotos={draft?.descriptionPhotos}
+              autoListingPanel={amazefAutoListingPanel}
             />
           ) : null}
 

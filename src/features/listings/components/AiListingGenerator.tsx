@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import type { GeneratedListing, ListingPhotoDraft, ListingPlatform, ListingProductSource } from "@/types/listing-generator";
 import { listingPlatformLabel } from "@/features/listings/lib/vero-platform";
 import { ListingPreviewEditor } from "./ListingPreviewEditor";
@@ -15,6 +16,17 @@ interface AiListingGeneratorProps {
   onRetry?: () => void;
   onListingChange?: (listing: GeneratedListing) => void;
   descriptionPhotos?: ListingPhotoDraft[];
+  autoListingPanel?: ReactNode;
+}
+
+function withAutoListingPanel(panel: ReactNode | undefined, content: ReactNode) {
+  if (!panel) return content;
+  return (
+    <div className="space-y-4">
+      {panel}
+      {content}
+    </div>
+  );
 }
 
 export function AiListingGenerator({
@@ -27,10 +39,12 @@ export function AiListingGenerator({
   onRetry,
   onListingChange,
   descriptionPhotos,
+  autoListingPanel,
 }: AiListingGeneratorProps) {
   const platformName = listingPlatformLabel(platform);
   if (loading) {
-    return (
+    return withAutoListingPanel(
+      autoListingPanel,
       <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
         <div className="flex items-center gap-3">
           <svg className="h-5 w-5 animate-spin text-brand" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -39,13 +53,14 @@ export function AiListingGenerator({
           </svg>
           <p className="text-sm text-[#6B7280]">Generating {platformName} listing with AI...</p>
         </div>
-      </div>
+      </div>,
     );
   }
 
   if (!product || !listing) {
     if (product && errorMessage) {
-      return (
+      return withAutoListingPanel(
+        autoListingPanel,
         <div className="rounded-xl border border-red-200 bg-red-50 p-6">
           <p className="text-sm text-red-800">{errorMessage}</p>
           {onRetry ? (
@@ -57,18 +72,20 @@ export function AiListingGenerator({
               Retry
             </button>
           ) : null}
-        </div>
+        </div>,
       );
     }
 
-    return (
+    return withAutoListingPanel(
+      autoListingPanel,
       <div className="rounded-xl border border-dashed border-gray-200 bg-white p-6 text-sm text-[#6B7280]">
         Complete the VeRO check to generate your editable listing preview.
-      </div>
+      </div>,
     );
   }
 
-  return (
+  return withAutoListingPanel(
+    autoListingPanel,
     <div className="space-y-6">
       <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold text-[#111827]">Source product</h2>
@@ -96,6 +113,6 @@ export function AiListingGenerator({
           descriptionPhotos={descriptionPhotos}
         />
       </div>
-    </div>
+    </div>,
   );
 }
