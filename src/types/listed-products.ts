@@ -1,5 +1,14 @@
 import type { ListingDraft, ListingPlatform } from "@/types/listing-generator";
 
+export interface LinkExistingVariantInput {
+  aliVariantId: string;
+  label: string;
+  listedPrice: number;
+  listedQuantity: number;
+  sku?: string;
+  offerId?: string;
+}
+
 export interface ListedProductDetail extends ListedProduct {
   draft: ListingDraft;
 }

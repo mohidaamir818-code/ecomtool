@@ -68,7 +68,7 @@ function mapProductRow(
   };
 }
 
-async function ensureHandlingForListedProduct(
+export async function ensureHandlingForListedProduct(
   userId: string,
   draft: ListingDraft,
 ): Promise<string | null> {

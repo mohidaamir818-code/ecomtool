@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ImportStoreModal } from "./ImportStoreModal";
 import { ListedProductEditModal } from "./ListedProductEditModal";
 import { ProxiedImage } from "./ProxiedImage";
 import type { ListedProduct } from "@/types/listed-products";
@@ -32,6 +33,7 @@ export function ListedProductsPanel({ userId, platform, refreshKey = 0 }: Listed
   const [loading, setLoading] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const [showImportStore, setShowImportStore] = useState(false);
 
   const platformLabel = platform === "ebay" ? "eBay" : "Amazef";
 
@@ -82,11 +84,23 @@ export function ListedProductsPanel({ userId, platform, refreshKey = 0 }: Listed
   return (
     <>
       <section className="mt-8 border-t border-gray-100 pt-8">
-        <div className="mb-4">
-          <h2 className="text-lg font-semibold text-[#111827]">Your {platformLabel} listings</h2>
-          <p className="mt-1 text-sm text-[#6B7280]">
-            Products listed through ecomtool. AliExpress changes auto-update price and stock.
-          </p>
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-[#111827]">Your {platformLabel} listings</h2>
+            <p className="mt-1 text-sm text-[#6B7280]">
+              Products listed through ecomtool. AliExpress changes auto-update price and stock.
+            </p>
+          </div>
+          {platform === "ebay" ? (
+            <button
+              type="button"
+              onClick={() => setShowImportStore(true)}
+              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-brand to-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-brand/20 transition hover:shadow-lg hover:shadow-brand/30"
+            >
+              <span aria-hidden>↓</span>
+              Import store
+            </button>
+          ) : null}
         </div>
 
         {loading && filteredProducts.length === 0 ? (
@@ -181,6 +195,16 @@ export function ListedProductsPanel({ userId, platform, refreshKey = 0 }: Listed
           onClose={() => setEditingProductId(null)}
           onSaved={() => {
             setEditingProductId(null);
+            void loadProducts();
+          }}
+        />
+      ) : null}
+
+      {showImportStore ? (
+        <ImportStoreModal
+          userId={userId}
+          onClose={() => setShowImportStore(false)}
+          onLinked={() => {
             void loadProducts();
           }}
         />
