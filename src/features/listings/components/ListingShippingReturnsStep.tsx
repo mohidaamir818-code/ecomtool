@@ -10,6 +10,10 @@ const SELLER_HUB_URLS: Record<string, string> = {
   EBAY_DE: "https://www.ebay.de/sh/landing",
 };
 
+function amazefShippingStorageKey(userId: string) {
+  return `amazef-default-shipping-days-${userId}`;
+}
+
 interface ListingShippingReturnsStepProps {
   userId: string;
   draft: ListingDraft;
@@ -43,6 +47,18 @@ export function ListingShippingReturnsStep({
   useEffect(() => {
     if (platform !== "amazef") return;
 
+    const savedLabel = localStorage.getItem(amazefShippingStorageKey(userId))?.trim();
+    if (savedLabel && !draft.product.shippingDaysLabel?.trim()) {
+      shippingManuallyEdited.current = true;
+      onChange({
+        product: {
+          ...productRef.current,
+          shippingDaysLabel: savedLabel,
+        },
+      });
+      return;
+    }
+
     const productUrl = draft.product.productUrl?.trim();
     if (!productUrl || shippingManuallyEdited.current || draft.product.shippingDaysLabel?.trim()) {
       return;
@@ -66,10 +82,16 @@ export function ListingShippingReturnsStep({
       })
       .catch(() => undefined)
       .finally(() => setShippingLoading(false));
-  }, [platform, draft.product.productUrl, draft.product.shippingDaysLabel, onChange]);
+  }, [platform, userId, draft.product.productUrl, draft.product.shippingDaysLabel, onChange]);
 
   function updateShippingDaysLabel(value: string) {
     shippingManuallyEdited.current = true;
+    const trimmed = value.trim();
+    if (trimmed) {
+      localStorage.setItem(amazefShippingStorageKey(userId), trimmed);
+    } else {
+      localStorage.removeItem(amazefShippingStorageKey(userId));
+    }
     onChange({
       product: {
         ...draft.product,

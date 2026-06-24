@@ -82,17 +82,15 @@ export function EbayAddressSetupForm({
   }, [initialCity, initialPostalCode, initialCountry]);
 
   useEffect(() => {
-    if (mode !== "setup") return;
-
-    if (hasNotifiedParent(userId)) {
-      setAddressAlreadyExists(true);
-      setCheckingExisting(false);
-      return;
-    }
-
     let cancelled = false;
 
-    async function checkExistingAddress() {
+    async function loadSavedAddress() {
+      if (isSetup && hasNotifiedParent(userId)) {
+        setAddressAlreadyExists(true);
+        setCheckingExisting(false);
+        return;
+      }
+
       try {
         const response = await fetch(
           `/api/ebay/inventory-location?userId=${encodeURIComponent(userId)}`,
@@ -101,26 +99,32 @@ export function EbayAddressSetupForm({
 
         if (cancelled) return;
 
-        if (response.ok && data.addressConfirmed) {
-          setAddressAlreadyExists(true);
-          storeConfigured(userId);
-          notifyParentOncePerSession(userId, () => onCompleteRef.current());
+        if (response.ok) {
+          if (data.city) setCity(data.city);
+          if (data.postalCode) setPostalCode(data.postalCode);
+          if (data.country) setCountry(data.country);
+
+          if (isSetup && data.addressConfirmed) {
+            setAddressAlreadyExists(true);
+            storeConfigured(userId);
+            notifyParentOncePerSession(userId, () => onCompleteRef.current());
+          }
         }
       } catch {
-        // Fall through to showing the setup form.
+        // Fall through to showing the setup form with any defaults we have.
       } finally {
-        if (!cancelled) {
+        if (!cancelled && isSetup) {
           setCheckingExisting(false);
         }
       }
     }
 
-    void checkExistingAddress();
+    void loadSavedAddress();
 
     return () => {
       cancelled = true;
     };
-  }, [userId, mode]);
+  }, [userId, isSetup]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -184,7 +188,7 @@ export function EbayAddressSetupForm({
       </h2>
       <p className="mt-2 text-sm text-[#6B7280]">
         Enter the exact address you used when registering your eBay account.
-        {isSetup ? " This is required before you can list products." : ""}
+        {isSetup ? " This is required before you can list products." : " Your saved address is shown below — update it if needed."}
       </p>
 
       <form onSubmit={(event) => void handleSubmit(event)} className="mt-6 space-y-4">
