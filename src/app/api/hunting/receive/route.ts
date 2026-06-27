@@ -37,6 +37,7 @@ function normalizeProducts(raw: HuntProProduct[] | undefined): HuntProProduct[] 
     listingUrl: String(product?.listingUrl ?? ""),
     soldCount: Number(product?.soldCount ?? 0),
     daysWindow: Number(product?.daysWindow ?? 0),
+    listedDate: String(product?.listedDate ?? ""),
   }));
 }
 

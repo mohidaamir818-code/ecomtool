@@ -465,6 +465,12 @@ function HuntProResultCard({ product, days }: { product: HuntProProduct; days: n
           </div>
         </div>
 
+        {product.listedDate ? (
+          <p className="mt-2 text-[11px] text-[#6B7280]">
+            Listed: <span className="font-semibold text-[#374151]">{product.listedDate}</span>
+          </p>
+        ) : null}
+
         <div className="mt-4 flex flex-col gap-2">
           {product.listingUrl ? (
             <a

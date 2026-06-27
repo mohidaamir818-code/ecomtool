@@ -21,6 +21,8 @@ export interface HuntProProduct {
   soldCount?: number;
   // The day window (e.g. 10) the extension used when counting sales.
   daysWindow?: number;
+  // When the product was first listed on eBay (ISO string or display text).
+  listedDate?: string;
 }
 
 export interface HuntProReceivePayload {
