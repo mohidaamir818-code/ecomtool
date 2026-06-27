@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
-import { HuntingShell } from "@/features/hunting/components/HuntingShell";
+import { HuntProShell } from "@/features/hunting/components/HuntProShell";
 
 export const metadata: Metadata = {
   title: "Product Hunting — EcomTools",
-  description: "Find winning products by keyword on AliExpress.",
+  description: "Find winning products by keyword from eBay sold listings with HuntPro.",
 };
 
 export default function HuntingPage() {
-  return <HuntingShell />;
+  return <HuntProShell />;
 }
