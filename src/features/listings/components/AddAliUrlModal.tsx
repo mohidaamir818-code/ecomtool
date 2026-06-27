@@ -14,6 +14,11 @@ export function AddAliUrlModal({ listing, userId, onClose, onLinked }: AddAliUrl
   const [aliexpressUrl, setAliexpressUrl] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mismatch, setMismatch] = useState<string | null>(null);
+
+  function isMismatchMessage(message: string): boolean {
+    return /match/i.test(message);
+  }
 
   async function handleSave() {
     if (!aliexpressUrl.trim()) {
@@ -23,6 +28,7 @@ export function AddAliUrlModal({ listing, userId, onClose, onLinked }: AddAliUrl
 
     setSaving(true);
     setError(null);
+    setMismatch(null);
     try {
       const response = await fetch("/api/listings/import-store/link", {
         method: "POST",
@@ -40,7 +46,15 @@ export function AddAliUrlModal({ listing, userId, onClose, onLinked }: AddAliUrl
       onLinked();
       onClose();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Could not link this product.");
+      const message =
+        saveError instanceof Error ? saveError.message : "Could not link this product.";
+      if (isMismatchMessage(message)) {
+        setMismatch(
+          "This AliExpress URL does not match the selected product. Please add the exact AliExpress URL for this item.",
+        );
+      } else {
+        setError(message);
+      }
     } finally {
       setSaving(false);
     }
@@ -91,6 +105,25 @@ export function AddAliUrlModal({ listing, userId, onClose, onLinked }: AddAliUrl
           </button>
         </div>
       </div>
+
+      {mismatch ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-6 text-center shadow-2xl">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-2xl text-red-600">
+              !
+            </div>
+            <h3 className="mt-4 text-lg font-bold text-[#111827]">URL doesn&apos;t match</h3>
+            <p className="mt-2 text-sm text-[#6B7280]">{mismatch}</p>
+            <button
+              type="button"
+              onClick={() => setMismatch(null)}
+              className="mt-5 w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand/90"
+            >
+              Try another URL
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

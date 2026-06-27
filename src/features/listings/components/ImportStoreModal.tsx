@@ -31,8 +31,10 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
   const [error, setError] = useState<string | null>(null);
   const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({});
   const [addUrlListing, setAddUrlListing] = useState<StoreImportListing | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [showAllLinkedPopup, setShowAllLinkedPopup] = useState(false);
 
-  const loadStore = useCallback(async () => {
+  const loadStore = useCallback(async (): Promise<StoreImportListing[]> => {
     setLoading(true);
     setError(null);
     try {
@@ -58,8 +60,10 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
         defaults[listing.listingId] = listing.variants[0]?.offerId ?? "";
       }
       setSelectedVariants(defaults);
+      return rows;
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load your store.");
+      return [];
     } finally {
       setLoading(false);
     }
@@ -71,6 +75,22 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
 
   const unlinkedCount = listings.filter((listing) => !listing.linked).length;
   const linkedCount = listings.length - unlinkedCount;
+
+  const sortedListings = [...listings].sort((a, b) => {
+    if (a.linked === b.linked) return a.title.localeCompare(b.title);
+    return a.linked ? 1 : -1;
+  });
+
+  function handleUrlLinked() {
+    setNotice("AliExpress URL added — price and stock will now auto-update when the supplier changes.");
+    onLinked();
+    void loadStore().then((rows) => {
+      const stillUnlinked = rows.filter((listing) => !listing.linked).length;
+      if (rows.length > 0 && stillUnlinked === 0) {
+        setShowAllLinkedPopup(true);
+      }
+    });
+  }
 
   return (
     <>
@@ -85,9 +105,14 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
                   handling and auto updates.
                 </p>
                 {!loading && listings.length > 0 ? (
-                  <p className="mt-2 text-xs font-medium text-[#374151]">
-                    {linkedCount} linked · {unlinkedCount} need AliExpress URL
-                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold">
+                    <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-emerald-700">
+                      {linkedCount} URL added
+                    </span>
+                    <span className="rounded-full bg-red-100 px-2.5 py-1 text-red-700">
+                      {unlinkedCount} need URL
+                    </span>
+                  </div>
                 ) : null}
               </div>
               <button
@@ -101,6 +126,20 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
           </div>
 
           <div className="flex-1 overflow-y-auto px-6 py-5">
+            {notice ? (
+              <div className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
+                <span>{notice}</span>
+                <button
+                  type="button"
+                  onClick={() => setNotice(null)}
+                  className="shrink-0 text-emerald-600 hover:text-emerald-800"
+                  aria-label="Dismiss"
+                >
+                  ✕
+                </button>
+              </div>
+            ) : null}
+
             {loading ? (
               <p className="text-sm text-[#6B7280]">Loading your eBay store…</p>
             ) : error ? (
@@ -116,7 +155,7 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
               </div>
             ) : (
               <div className="grid gap-4">
-                {listings.map((listing) => {
+                {sortedListings.map((listing) => {
                   const selectedOfferId =
                     selectedVariants[listing.listingId] ?? listing.variants[0]?.offerId ?? "";
                   const selectedVariant =
@@ -236,11 +275,30 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
           listing={addUrlListing}
           userId={userId}
           onClose={() => setAddUrlListing(null)}
-          onLinked={() => {
-            void loadStore();
-            onLinked();
-          }}
+          onLinked={handleUrlLinked}
         />
+      ) : null}
+
+      {showAllLinkedPopup ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-6 text-center shadow-2xl">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-2xl text-emerald-600">
+              ✓
+            </div>
+            <h3 className="mt-4 text-lg font-bold text-[#111827]">All products linked</h3>
+            <p className="mt-2 text-sm text-[#6B7280]">
+              Every listing now has an AliExpress URL. We will automatically update price and stock
+              whenever your supplier changes them.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowAllLinkedPopup(false)}
+              className="mt-5 w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand/90"
+            >
+              Done
+            </button>
+          </div>
+        </div>
       ) : null}
     </>
   );
