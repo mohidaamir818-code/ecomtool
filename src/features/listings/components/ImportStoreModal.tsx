@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AddAliUrlModal } from "./AddAliUrlModal";
-import { ProxiedImage } from "./ProxiedImage";
 import type { StoreImportListing } from "@/types/store-import";
 
 interface ImportStoreModalProps {
@@ -136,10 +135,13 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
                     >
                       <div className="h-24 w-24 shrink-0 overflow-hidden rounded-lg border border-white bg-white">
                         {listing.imageUrl ? (
-                          <ProxiedImage
-                            src={listing.imageUrl}
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={listing.imageUrl.replace(/^http:\/\//, "https://")}
                             alt={listing.title}
                             className="h-full w-full object-cover"
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
                           />
                         ) : (
                           <div className="flex h-full w-full items-center justify-center text-xs text-[#9CA3AF]">
