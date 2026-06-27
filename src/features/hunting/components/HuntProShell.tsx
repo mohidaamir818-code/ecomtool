@@ -7,6 +7,13 @@ import type { HuntProProduct, HuntProResult } from "@/types/huntpro";
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 90000;
 
+const HUNTPRO_EXTENSION_URL =
+  "https://chromewebstore.google.com/search/HuntPro";
+const HUNTPRO_CONNECT_URL = "/api/huntpro/connect";
+const ONBOARDED_STORAGE_KEY = "huntpro_onboarded";
+
+type OnboardStep = "install" | "connect" | null;
+
 function formatPrice(value: number): string {
   return `£${Number(value || 0).toFixed(2)}`;
 }
@@ -22,6 +29,8 @@ export function HuntProShell() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [result, setResult] = useState<HuntProResult | null>(null);
+  const [onboardStep, setOnboardStep] = useState<OnboardStep>(null);
+  const [connecting, setConnecting] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -55,11 +64,37 @@ export function HuntProShell() {
   useEffect(() => {
     const id = sessionStorage.getItem("ecomtools_user_id");
     if (id) setUserId(id);
+
+    const onboarded = localStorage.getItem(ONBOARDED_STORAGE_KEY) === "true";
+    if (!onboarded) setOnboardStep("install");
+  }, []);
+
+  const completeOnboarding = useCallback(() => {
+    try {
+      localStorage.setItem(ONBOARDED_STORAGE_KEY, "true");
+    } catch {
+      // Ignore storage errors; onboarding still closes for this session.
+    }
+    setConnecting(false);
+    setOnboardStep(null);
   }, []);
 
   useEffect(() => {
     return () => stopPolling();
   }, [stopPolling]);
+
+  // Listen for the connect confirmation from the HuntPro extension / connect tab.
+  useEffect(() => {
+    function onConnectMessage(event: MessageEvent) {
+      const data = event.data as { type?: string; userId?: string } | null;
+      if (!data || data.type !== "ECOMTOOL_HUNTPRO_CONNECT") return;
+      if (data.userId) setUserId(data.userId);
+      completeOnboarding();
+    }
+
+    window.addEventListener("message", onConnectMessage);
+    return () => window.removeEventListener("message", onConnectMessage);
+  }, [completeOnboarding]);
 
   // Listen for results pushed directly by the HuntPro extension.
   useEffect(() => {
@@ -246,6 +281,78 @@ export function HuntProShell() {
           </div>
         ) : null}
       </div>
+
+      {onboardStep === "install" ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-6 text-center shadow-2xl">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-light text-brand">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path d="M4 8h16l-1.5 10H5.5L4 8z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+                <path d="M9 8V6a3 3 0 016 0v2" stroke="currentColor" strokeWidth="1.5" />
+              </svg>
+            </div>
+            <h3 className="mt-4 text-lg font-bold text-[#111827]">Add the HuntPro extension</h3>
+            <p className="mt-2 text-sm text-[#6B7280]">
+              To hunt products, install the free HuntPro Chrome extension. It scrapes eBay sold
+              listings and sends the results straight here.
+            </p>
+            <a
+              href={HUNTPRO_EXTENSION_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-brand-dark"
+            >
+              Add Extension
+            </a>
+            <button
+              type="button"
+              onClick={() => setOnboardStep("connect")}
+              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#374151] transition-all hover:bg-gray-50"
+            >
+              I&apos;ve added it
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {onboardStep === "connect" ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-6 text-center shadow-2xl">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-light text-brand">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path
+                  d="M9 12l2 2 4-4M7.5 5.5l-2 2a3 3 0 000 4l3 3M16.5 18.5l2-2a3 3 0 000-4l-3-3"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+            <h3 className="mt-4 text-lg font-bold text-[#111827]">Connect the extension</h3>
+            <p className="mt-2 text-sm text-[#6B7280]">
+              Click connect and HuntPro will link to your EcomTool account automatically. Then you
+              can start hunting products.
+            </p>
+            <a
+              href={HUNTPRO_CONNECT_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setConnecting(true)}
+              className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-brand-dark"
+            >
+              {connecting ? "Connecting…" : "Connect"}
+            </a>
+            <button
+              type="button"
+              onClick={completeOnboarding}
+              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#374151] transition-all hover:bg-gray-50"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      ) : null}
     </DashboardLayout>
   );
 }
