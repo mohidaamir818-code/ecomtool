@@ -38,7 +38,17 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
     setError(null);
     try {
       const response = await fetch(`/api/listings/import-store?userId=${encodeURIComponent(userId)}`);
-      const data = await response.json();
+      const raw = await response.text();
+      let data: { error?: string; listings?: StoreImportListing[] } = {};
+      try {
+        data = JSON.parse(raw) as typeof data;
+      } catch {
+        throw new Error(
+          raw.trim().startsWith("{")
+            ? "Failed to load your store."
+            : raw.trim().slice(0, 180) || "Failed to load your store. Please try again.",
+        );
+      }
       if (!response.ok) {
         throw new Error(data.error ?? "Failed to load your store.");
       }

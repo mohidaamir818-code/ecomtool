@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getImportStoreListings } from "@/lib/listings/import-store-service";
 import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
 
+export const maxDuration = 60;
+
 export async function GET(request: NextRequest) {
   try {
     const userId = request.nextUrl.searchParams.get("userId")?.trim();
