@@ -35,6 +35,9 @@ export function HuntProShell() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchStartedAtRef = useRef<number>(0);
+  // Snapshot of the latest result id when a search starts, so we can detect a
+  // newly-arrived result without relying on the browser clock (avoids skew).
+  const baselineResultIdRef = useRef<string | null>(null);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -105,7 +108,7 @@ export function HuntProShell() {
       void (async () => {
         try {
           const latest = await fetchLatest(userId, keyword.trim());
-          if (latest) {
+          if (latest && latest.id !== baselineResultIdRef.current) {
             setResult(latest);
             setSearching(false);
             setNotice("");
@@ -140,6 +143,15 @@ export function HuntProShell() {
     setNotice("Asking HuntPro to scrape eBay… keep this tab open.");
     searchStartedAtRef.current = Date.now();
 
+    // Snapshot the current latest result so we only show a freshly-scraped one.
+    // Using the result id (not timestamps) avoids browser/server clock skew.
+    try {
+      const existing = await fetchLatest(userId, trimmed);
+      baselineResultIdRef.current = existing?.id ?? null;
+    } catch {
+      baselineResultIdRef.current = null;
+    }
+
     // Tell the HuntPro Chrome extension to start scraping eBay for this keyword.
     window.postMessage(
       {
@@ -155,7 +167,7 @@ export function HuntProShell() {
       void (async () => {
         try {
           const latest = await fetchLatest(userId, trimmed);
-          if (latest && new Date(latest.createdAt).getTime() >= searchStartedAtRef.current) {
+          if (latest && latest.id !== baselineResultIdRef.current) {
             setResult(latest);
             setSearching(false);
             setNotice("");
@@ -168,17 +180,31 @@ export function HuntProShell() {
     }, POLL_INTERVAL_MS);
 
     timeoutRef.current = setTimeout(() => {
-      stopPolling();
-      setSearching(false);
-      setResult((current) => {
-        if (!current) {
-          setNotice("");
-          setError(
-            "No results yet. Make sure the HuntPro extension is installed and try again.",
-          );
+      void (async () => {
+        stopPolling();
+        setSearching(false);
+        // Last-chance: if any result for this keyword exists, show it rather
+        // than leaving the page blank.
+        try {
+          const latest = await fetchLatest(userId, trimmed);
+          if (latest) {
+            setResult(latest);
+            setNotice("");
+            return;
+          }
+        } catch {
+          // fall through to the error message below
         }
-        return current;
-      });
+        setResult((current) => {
+          if (!current) {
+            setNotice("");
+            setError(
+              "No results yet. Make sure the HuntPro extension is installed and try again.",
+            );
+          }
+          return current;
+        });
+      })();
     }, POLL_TIMEOUT_MS);
   }
 
