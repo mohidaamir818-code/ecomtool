@@ -6,7 +6,7 @@ import { sendEmail } from "@/lib/email/send-email";
 import { generateEbayListing } from "@/lib/gemini/generate-listing";
 import { checkVeroSafety } from "@/lib/gemini/vero-check";
 import { computeListingQualityScore } from "@/features/listings/lib/listing-quality";
-import { buildInitialDraft } from "@/features/listings/lib/draft-utils";
+import { buildInitialDraft, getSelectedPhotos } from "@/features/listings/lib/draft-utils";
 import type { AmazefAutoListingSettings } from "@/features/listings/lib/amazef-auto-listing";
 import { normalizeAutoListingSettings } from "@/features/listings/lib/amazef-auto-listing";
 import { mergeInternalSkusIntoDraft } from "@/lib/listings/internal-sku";
@@ -164,9 +164,11 @@ export async function runAmazefAutoListPipeline(
   }
 
   const quality = computeListingQualityScore(draft, "amazef");
-  const failedCritical = quality.checks.filter(
-    (check) => !check.passed && ["title", "photos", "variants"].includes(check.id),
-  );
+  const hasPhoto = getSelectedPhotos(draft).length > 0;
+  const failedCritical = quality.checks.filter((check) => {
+    if (check.id === "photos") return !hasPhoto;
+    return !check.passed && ["title", "variants"].includes(check.id);
+  });
   if (failedCritical.length > 0) {
     throw new Error(
       `Listing quality check failed: ${failedCritical.map((check) => check.label).join(", ")}.`,
