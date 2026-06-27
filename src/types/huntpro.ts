@@ -17,6 +17,10 @@ export interface HuntProProduct {
   shippingCost: number;
   totalPrice: number;
   listingUrl: string;
+  // Number of times this product sold within the seller-selected day window.
+  soldCount?: number;
+  // The day window (e.g. 10) the extension used when counting sales.
+  daysWindow?: number;
 }
 
 export interface HuntProReceivePayload {

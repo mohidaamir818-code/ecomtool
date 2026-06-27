@@ -60,19 +60,35 @@ export async function getLatestHuntingResult(
   keyword?: string,
 ): Promise<HuntProResult | null> {
   const supabase = getSupabaseAdmin();
+  const trimmedKeyword = keyword?.trim();
 
-  let query = supabase
+  // First try to match the keyword case-insensitively (the extension may store
+  // a different case/whitespace than the page polls with).
+  if (trimmedKeyword) {
+    const { data, error } = await supabase
+      .from("hunting_results")
+      .select("*")
+      .eq("user_id", userId)
+      .ilike("keyword", trimmedKeyword)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error && !error.message.includes("does not exist")) {
+      throw new Error(error.message);
+    }
+    if (data) return mapResultRow(data as Record<string, unknown>);
+  }
+
+  // Fallback: return the user's latest result regardless of keyword, so a minor
+  // keyword mismatch never leaves the page blank.
+  const { data, error } = await supabase
     .from("hunting_results")
     .select("*")
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
-    .limit(1);
-
-  if (keyword?.trim()) {
-    query = query.eq("keyword", keyword.trim());
-  }
-
-  const { data, error } = await query.maybeSingle();
+    .limit(1)
+    .maybeSingle();
 
   if (error) {
     if (error.message.includes("does not exist")) return null;

@@ -12,6 +12,9 @@ const HUNTPRO_EXTENSION_URL =
 const HUNTPRO_CONNECT_URL = "/api/huntpro/connect";
 const ONBOARDED_STORAGE_KEY = "huntpro_onboarded";
 
+const DAY_FILTER_OPTIONS = [5, 10, 15, 20, 25, 30] as const;
+const DEFAULT_DAY_FILTER = 30;
+
 type OnboardStep = "install" | "connect" | null;
 
 function formatPrice(value: number): string {
@@ -31,6 +34,9 @@ export function HuntProShell() {
   const [result, setResult] = useState<HuntProResult | null>(null);
   const [onboardStep, setOnboardStep] = useState<OnboardStep>(null);
   const [connecting, setConnecting] = useState(false);
+  const [days, setDays] = useState<number>(DEFAULT_DAY_FILTER);
+  // The day window that produced the currently-displayed result.
+  const [resultDays, setResultDays] = useState<number>(DEFAULT_DAY_FILTER);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -152,6 +158,8 @@ export function HuntProShell() {
       baselineResultIdRef.current = null;
     }
 
+    setResultDays(days);
+
     // Tell the HuntPro Chrome extension to start scraping eBay for this keyword.
     window.postMessage(
       {
@@ -159,6 +167,7 @@ export function HuntProShell() {
         source: "huntpro-extension",
         userId,
         keyword: trimmed,
+        days,
       },
       "*",
     );
@@ -209,10 +218,18 @@ export function HuntProShell() {
   }
 
   const statistics = result?.statistics;
-  const products = result?.products ?? [];
+  // Most-sold products first, then by sold price as a tiebreaker.
+  const products = [...(result?.products ?? [])].sort((a, b) => {
+    const countDiff = (b.soldCount ?? 0) - (a.soldCount ?? 0);
+    if (countDiff !== 0) return countDiff;
+    return (b.soldPrice ?? 0) - (a.soldPrice ?? 0);
+  });
 
   const statCards = [
-    { label: "Total products sold", value: statistics ? String(statistics.totalSold) : "—" },
+    {
+      label: `Total sold in last ${resultDays} days`,
+      value: statistics ? String(statistics.totalSold) : "—",
+    },
     { label: "Average price", value: statistics ? formatPrice(statistics.avgPrice) : "—" },
     {
       label: "Price range",
@@ -235,8 +252,8 @@ export function HuntProShell() {
           </span>
           <h1 className="mt-3 text-2xl font-bold text-[#111827] lg:text-3xl">Product Hunting</h1>
           <p className="mt-1 max-w-xl text-sm leading-relaxed text-[#6B7280]">
-            Search a keyword and HuntPro scrapes eBay sold listings. Results appear here
-            automatically.
+            Search a keyword and pick a day range. HuntPro scrapes eBay sold listings and shows the
+            most-sold products on top — only items listed in the last month.
           </p>
         </header>
 
@@ -258,6 +275,23 @@ export function HuntProShell() {
               placeholder="e.g. wireless earbuds"
               className="w-full rounded-xl border border-gray-200 bg-white py-3 pl-10 pr-4 text-sm font-medium text-[#374151] outline-none focus:border-brand focus:ring-4 focus:ring-brand/10"
             />
+          </div>
+          <div>
+            <label htmlFor="hunt-days" className="sr-only">
+              Sold within
+            </label>
+            <select
+              id="hunt-days"
+              value={days}
+              onChange={(event) => setDays(Number(event.target.value))}
+              className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-medium text-[#374151] outline-none focus:border-brand focus:ring-4 focus:ring-brand/10 sm:w-auto"
+            >
+              {DAY_FILTER_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  Last {option} days
+                </option>
+              ))}
+            </select>
           </div>
           <button
             type="submit"
@@ -295,7 +329,11 @@ export function HuntProShell() {
         {products.length > 0 ? (
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {products.map((product, index) => (
-              <HuntProResultCard key={product.itemId || `${product.title}-${index}`} product={product} />
+              <HuntProResultCard
+                key={product.itemId || `${product.title}-${index}`}
+                product={product}
+                days={resultDays}
+              />
             ))}
           </div>
         ) : !searching ? (
@@ -383,12 +421,14 @@ export function HuntProShell() {
   );
 }
 
-function HuntProResultCard({ product }: { product: HuntProProduct }) {
+function HuntProResultCard({ product, days }: { product: HuntProProduct; days: number }) {
   const listUrl = `/dashboard/listings?url=${encodeURIComponent(aliExpressSearchUrl(product.title))}`;
+  const soldCount = product.soldCount ?? 0;
+  const windowDays = product.daysWindow || days;
 
   return (
     <article className="flex h-full flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm transition-all hover:border-brand/20 hover:shadow-md">
-      <div className="aspect-square w-full overflow-hidden bg-gray-50">
+      <div className="relative aspect-square w-full overflow-hidden bg-gray-50">
         {product.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -402,6 +442,11 @@ function HuntProResultCard({ product }: { product: HuntProProduct }) {
             No image
           </div>
         )}
+        {soldCount > 0 ? (
+          <span className="absolute left-3 top-3 rounded-full bg-emerald-500 px-2.5 py-1 text-xs font-bold text-white shadow-sm">
+            {soldCount} sold
+          </span>
+        ) : null}
       </div>
 
       <div className="flex flex-1 flex-col p-4">
@@ -413,12 +458,24 @@ function HuntProResultCard({ product }: { product: HuntProProduct }) {
             <p className="text-sm font-bold text-brand">{formatPrice(product.soldPrice)}</p>
           </div>
           <div>
-            <p className="text-[10px] font-medium uppercase text-[#9CA3AF]">Total price</p>
-            <p className="text-sm font-bold text-[#111827]">{formatPrice(product.totalPrice)}</p>
+            <p className="text-[10px] font-medium uppercase text-[#9CA3AF]">
+              Sold in last {windowDays} days
+            </p>
+            <p className="text-sm font-bold text-emerald-600">{soldCount}</p>
           </div>
         </div>
 
         <div className="mt-4 flex flex-col gap-2">
+          {product.listingUrl ? (
+            <a
+              href={product.listingUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-semibold text-blue-600 transition-all hover:bg-blue-100"
+            >
+              Show on eBay
+            </a>
+          ) : null}
           <a
             href={aliExpressSearchUrl(product.title)}
             target="_blank"
