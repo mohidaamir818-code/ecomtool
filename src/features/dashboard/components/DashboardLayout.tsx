@@ -42,6 +42,14 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     if (name) setUserName(name);
     setUserId(id);
 
+    // Mirror to localStorage so the HuntPro connect page (opened in a separate
+    // tab by the Chrome extension) can read the signed-in user's id.
+    try {
+      localStorage.setItem("ecomtools_user_id", id);
+    } catch {
+      // Ignore storage errors; the dashboard still works from sessionStorage.
+    }
+
     const activeUserId = id;
 
     async function loadBlockStatus() {

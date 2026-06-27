@@ -13,6 +13,14 @@ export function saveAuthSession(data: SignInResponse) {
   sessionStorage.setItem("ecomtools_user_email", data.email);
   sessionStorage.setItem("ecomtools_user_name", data.fullName ?? "User");
 
+  // Mirror the id to localStorage so other same-origin tabs (e.g. the HuntPro
+  // connect page opened by the Chrome extension) can read it.
+  try {
+    localStorage.setItem("ecomtools_user_id", data.userId);
+  } catch {
+    // localStorage may be unavailable; sessionStorage still holds the session.
+  }
+
   sessionStorage.setItem(
     "ecomtools_email_verified",
     data.nextStep === "verify-email" ? "false" : "true",
