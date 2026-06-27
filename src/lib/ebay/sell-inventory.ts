@@ -1539,6 +1539,7 @@ function buildListedVariantResults(
   variants: ListingDraft["variants"],
   offers: Array<{ sku: string; offerId: string; label: string }>,
   product: ListingDraft["product"],
+  fallbackPrice = 0,
 ): NonNullable<ListOnEbayResult["variants"]> {
   return variants.map((variant, index) => {
     const offer = offers[index] ?? offers.find((entry) => entry.label === variant.label) ?? offers[0];
@@ -1547,7 +1548,7 @@ function buildListedVariantResults(
       sku: offer?.sku ?? variant.sku,
       offerId: offer?.offerId ?? "",
       label: variant.label,
-      price: variant.price,
+      price: variant.price > 0 ? variant.price : fallbackPrice,
       quantity: resolveVariantQuantity(variant),
       aliVariantId: variant.id,
       aliPrice: aliMeta.aliPrice,
@@ -1722,6 +1723,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
         variant ? [variant] : dedupedVariants,
         [{ sku, offerId, label: variant?.label ?? "Default" }],
         draft.product,
+        listing.suggestedPrice,
       ),
     };
   }
@@ -1838,6 +1840,7 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
       groupVariants,
       variantResults.map((entry) => ({ sku: entry.sku, offerId: entry.offerId, label: entry.label })),
       draft.product,
+      listing.suggestedPrice,
     ),
   };
 }

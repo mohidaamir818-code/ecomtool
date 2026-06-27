@@ -127,7 +127,7 @@ export async function saveListedProduct(
         sku: variant.sku,
         offerId: listResult.offerId,
         label: variant.label,
-        price: variant.price,
+        price: variant.price > 0 ? variant.price : draft.listing.suggestedPrice,
         quantity: variant.quantity ?? variant.stock ?? 1,
         aliVariantId: variant.id,
         aliPrice: variant.aliExpressPrice ?? source?.price ?? draft.product.price,
@@ -217,9 +217,17 @@ export async function getListedProducts(userId: string): Promise<ListedProduct[]
     variantsByProduct.set(productId, list);
   }
 
-  return rows.map((row) =>
-    mapProductRow(row as Record<string, unknown>, variantsByProduct.get(String(row.id)) ?? []),
-  );
+  return rows.map((row) => {
+    const fallbackPrice = Number(
+      (row.draft_json as ListingDraft | null)?.listing?.suggestedPrice ?? 0,
+    );
+    const variants = (variantsByProduct.get(String(row.id)) ?? []).map((variant) =>
+      variant.listedPrice > 0 || fallbackPrice <= 0
+        ? variant
+        : { ...variant, listedPrice: fallbackPrice },
+    );
+    return mapProductRow(row as Record<string, unknown>, variants);
+  });
 }
 
 export async function getListedProductDetail(

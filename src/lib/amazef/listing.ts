@@ -104,7 +104,7 @@ export async function listDraftOnAmazef(
         sku: variant.sku,
         offerId: payload.productId != null ? String(payload.productId) : "",
         label: variant.label,
-        price: variant.price,
+        price: variant.price > 0 ? variant.price : draft.listing.suggestedPrice,
         quantity: resolveSellableQuantity(variant),
         aliVariantId: variant.id,
         aliPrice: variant.aliExpressPrice ?? source?.price ?? draft.product.price,
