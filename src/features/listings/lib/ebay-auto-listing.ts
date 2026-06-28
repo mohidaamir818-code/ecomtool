@@ -3,6 +3,7 @@ import { DEFAULT_PROMOTIONS } from "@/types/listing-generator";
 
 export interface EbayAutoListingSettings {
   enabled: boolean;
+  platformFeePercent: number;
   minProfitPercent: number;
   maxProfitPercent: number;
   minStock: number;
@@ -14,6 +15,7 @@ export interface EbayAutoListingSettings {
 
 export const DEFAULT_EBAY_AUTO_LISTING_SETTINGS: EbayAutoListingSettings = {
   enabled: false,
+  platformFeePercent: 13.25,
   minProfitPercent: 20,
   maxProfitPercent: 45,
   minStock: 1,
@@ -56,6 +58,7 @@ export function normalizeEbayAutoListingSettings(
   const base = { ...DEFAULT_EBAY_AUTO_LISTING_SETTINGS };
   if (!input) return base;
 
+  const platformFeePercent = clampNumber(input.platformFeePercent, 0, 100, base.platformFeePercent);
   const minProfitPercent = clampNumber(input.minProfitPercent, 1, 90, base.minProfitPercent);
   const maxProfitPercent = clampNumber(
     input.maxProfitPercent,
@@ -68,6 +71,7 @@ export function normalizeEbayAutoListingSettings(
 
   return {
     enabled: Boolean(input.enabled),
+    platformFeePercent,
     minProfitPercent,
     maxProfitPercent,
     minStock,

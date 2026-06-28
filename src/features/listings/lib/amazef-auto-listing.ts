@@ -1,5 +1,6 @@
 export interface AmazefAutoListingSettings {
   enabled: boolean;
+  platformFeePercent: number;
   minProfitPercent: number;
   maxProfitPercent: number;
   minStock: number;
@@ -10,6 +11,7 @@ export interface AmazefAutoListingSettings {
 
 export const DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS: AmazefAutoListingSettings = {
   enabled: false,
+  platformFeePercent: 15,
   minProfitPercent: 20,
   maxProfitPercent: 45,
   minStock: 1,
@@ -32,6 +34,7 @@ export function normalizeAutoListingSettings(
   const base = { ...DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS };
   if (!input) return base;
 
+  const platformFeePercent = clampNumber(input.platformFeePercent, 0, 100, base.platformFeePercent);
   const minProfitPercent = clampNumber(input.minProfitPercent, 1, 90, base.minProfitPercent);
   const maxProfitPercent = clampNumber(
     input.maxProfitPercent,
@@ -44,6 +47,7 @@ export function normalizeAutoListingSettings(
 
   return {
     enabled: Boolean(input.enabled),
+    platformFeePercent,
     minProfitPercent,
     maxProfitPercent,
     minStock,

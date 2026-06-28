@@ -124,7 +124,13 @@ export async function runAmazefAutoListPipeline(
   const currency = product.currency === "USD" ? "GBP" : product.currency;
   const sellerPrefs =
     (await getSellerPreferences(userId, currency)) ?? defaultSellerPreferences(currency);
-  const feePrefs = sellerPreferencesToFeePrefs(sellerPrefs);
+  // The seller-configured Amazef platform fee from auto listing settings is the
+  // source of truth: the fee is deducted from the price first, then the profit
+  // margin is applied so the resulting profit is after fees.
+  const feePrefs = {
+    ...sellerPreferencesToFeePrefs(sellerPrefs),
+    ebayFinalValueFeePercent: settings.platformFeePercent,
+  };
   const aliPrice = resolveBaseAliPrice(product);
 
   const pricing = resolvePricingWithinProfitBounds(

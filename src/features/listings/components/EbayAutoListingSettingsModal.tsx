@@ -67,6 +67,21 @@ export function EbayAutoListingSettingsModal({
         </p>
 
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          <label className="block text-sm sm:col-span-2">
+            <span className="font-medium text-[#111827]">eBay platform fee %</span>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={0.01}
+              value={form.platformFeePercent}
+              onChange={(event) => updateField("platformFeePercent", Number(event.target.value))}
+              className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+            />
+            <span className="mt-1 block text-xs text-[#6B7280]">
+              Deducted from the price first, then your profit margin is applied on top.
+            </span>
+          </label>
           <label className="block text-sm">
             <span className="font-medium text-[#111827]">Min profit %</span>
             <input
