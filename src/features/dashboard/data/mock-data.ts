@@ -12,6 +12,7 @@ export const dashboardNavItems: NavItem[] = [
   { label: "Handling Products", href: "/dashboard/products", icon: "box" },
   { label: "Check Competitors", href: "/dashboard/competitors", icon: "users" },
   { label: "AI Listing", href: "/dashboard/listings", icon: "spark" },
+  { label: "Bulk Listing", href: "/dashboard/bulk-listing", icon: "list" },
   { label: "Suppliers Finder", href: "/dashboard/suppliers", icon: "truck" },
   { label: "Usage & Billing", href: "/dashboard/billing", icon: "chart" },
   { label: "Settings", href: "/dashboard/settings", icon: "settings" },
