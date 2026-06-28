@@ -12,10 +12,7 @@ export const dashboardNavItems: NavItem[] = [
   { label: "Handling Products", href: "/dashboard/products", icon: "box" },
   { label: "Check Competitors", href: "/dashboard/competitors", icon: "users" },
   { label: "AI Listing", href: "/dashboard/listings", icon: "spark" },
-  { label: "Keywords Research", href: "/dashboard/keywords", icon: "key" },
   { label: "Suppliers Finder", href: "/dashboard/suppliers", icon: "truck" },
-  { label: "Track Requests", href: "/dashboard/requests", icon: "list" },
-  { label: "API Access", href: "/dashboard/api", icon: "code" },
   { label: "Usage & Billing", href: "/dashboard/billing", icon: "chart" },
   { label: "Settings", href: "/dashboard/settings", icon: "settings" },
   { label: "Help Center", href: "/dashboard/help", icon: "help" },
@@ -70,7 +67,6 @@ export const quickActions: QuickAction[] = [
   { title: "Start Hunting", description: "Find winning products", icon: "search", href: "/dashboard/hunting" },
   { title: "Handle Products", description: "Manage your listings", icon: "box", href: "/dashboard/products" },
   { title: "Check Competitors", description: "Analyze competitor stores", icon: "users", href: "/dashboard/competitors" },
-  { title: "API Access", description: "Manage API keys", icon: "code", href: "/dashboard/api" },
 ];
 
 export const chartDates = ["May 12", "May 13", "May 14", "May 15", "May 16", "May 17", "May 18"];
