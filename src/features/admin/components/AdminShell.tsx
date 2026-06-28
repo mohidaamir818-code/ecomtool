@@ -13,6 +13,7 @@ interface AdminShellProps {
 const NAV_ITEMS = [
   { label: "Overview", segment: "" },
   { label: "Users", segment: "/users" },
+  { label: "Help Center", segment: "/support" },
 ];
 
 export function AdminShell({ email, basePath, children }: AdminShellProps) {
