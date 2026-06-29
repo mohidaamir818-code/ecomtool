@@ -21,6 +21,23 @@ import type { ListingPlatform } from "@/types/listing-generator";
 
 const PROCESS_DELAY_MS = 1500;
 const MAX_URLS = 50;
+const DEFAULT_ROW_COUNT = 8;
+
+interface DraftRow {
+  id: string;
+  productUrl: string;
+  price: string;
+}
+
+let rowSeq = 0;
+function createDraftRow(): DraftRow {
+  rowSeq += 1;
+  return { id: `row-${Date.now()}-${rowSeq}`, productUrl: "", price: "" };
+}
+
+function createDraftRows(count: number): DraftRow[] {
+  return Array.from({ length: count }, () => createDraftRow());
+}
 
 function formatStatus(status: BulkListingJob["status"]): string {
   switch (status) {
@@ -56,19 +73,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function parseUrls(text: string): string[] {
-  const seen = new Set<string>();
-  const urls: string[] = [];
-  for (const token of text.split(/\s+/)) {
-    const trimmed = token.trim();
-    if (!trimmed) continue;
-    if (seen.has(trimmed)) continue;
-    seen.add(trimmed);
-    urls.push(trimmed);
-  }
-  return urls;
-}
-
 function isLikelyAliExpressUrl(url: string): boolean {
   return /aliexpress\./i.test(url) && /^https?:\/\//i.test(url);
 }
@@ -76,10 +80,7 @@ function isLikelyAliExpressUrl(url: string): boolean {
 export function BulkListingShell() {
   const [userId, setUserId] = useState<string | null>(null);
   const [platform, setPlatform] = useState<ListingPlatform>("ebay");
-  const [urlsText, setUrlsText] = useState("");
-  const [priceMode, setPriceMode] = useState<"profit" | "fixed">("profit");
-  const [profitPercent, setProfitPercent] = useState("");
-  const [fixedPrice, setFixedPrice] = useState("");
+  const [draftRows, setDraftRows] = useState<DraftRow[]>(() => createDraftRows(DEFAULT_ROW_COUNT));
   const [jobs, setJobs] = useState<BulkListingJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [listing, setListing] = useState(false);
@@ -103,9 +104,19 @@ export function BulkListingShell() {
     setAmazefSettings(loadAutoListingSettings(userId));
   }, [userId]);
 
-  const parsedUrls = useMemo(() => parseUrls(urlsText), [urlsText]);
-  const validUrls = useMemo(() => parsedUrls.filter(isLikelyAliExpressUrl), [parsedUrls]);
-  const invalidCount = parsedUrls.length - validUrls.length;
+  const validRows = useMemo(
+    () =>
+      draftRows
+        .map((row) => ({ url: row.productUrl.trim(), price: row.price.trim() }))
+        .filter((row) => isLikelyAliExpressUrl(row.url)),
+    [draftRows],
+  );
+
+  const filledCount = useMemo(
+    () => draftRows.filter((row) => row.productUrl.trim().length > 0).length,
+    [draftRows],
+  );
+  const invalidCount = filledCount - validRows.length;
 
   const platformEnabled = platform === "ebay" ? ebaySettings.enabled : amazefSettings.enabled;
 
@@ -193,16 +204,71 @@ export function BulkListingShell() {
     if (jobs.some((job) => job.status === "queued")) void runProcessor();
   }, [loading, userId, jobs, runProcessor]);
 
+  function updateRow(id: string, patch: Partial<DraftRow>) {
+    setDraftRows((rows) => rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  }
+
+  function addRow() {
+    setDraftRows((rows) => [...rows, createDraftRow()]);
+  }
+
+  function removeRow(id: string) {
+    setDraftRows((rows) => (rows.length <= 1 ? [createDraftRow()] : rows.filter((row) => row.id !== id)));
+  }
+
+  function clearRows() {
+    setDraftRows(createDraftRows(DEFAULT_ROW_COUNT));
+  }
+
+  // When the seller pastes a column of URLs into one cell, spread them down the
+  // grid automatically — one URL per row, adding rows as needed.
+  function handlePasteUrls(event: React.ClipboardEvent<HTMLInputElement>, rowId: string) {
+    const pasted = event.clipboardData.getData("text");
+    const urls = pasted
+      .split(/[\s\r\n]+/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (urls.length <= 1) return;
+
+    event.preventDefault();
+    setDraftRows((rows) => {
+      const startIndex = rows.findIndex((row) => row.id === rowId);
+      if (startIndex < 0) return rows;
+
+      const next = [...rows];
+      urls.forEach((url, offset) => {
+        const targetIndex = startIndex + offset;
+        if (targetIndex < next.length) {
+          next[targetIndex] = { ...next[targetIndex], productUrl: url };
+        } else {
+          next.push({ ...createDraftRow(), productUrl: url });
+        }
+      });
+      return next;
+    });
+  }
+
   const handleListAll = useCallback(async () => {
     if (!userId) return;
 
-    if (validUrls.length === 0) {
-      setError("Paste at least one valid AliExpress URL.");
+    const rows = draftRows
+      .map((row) => ({ url: row.productUrl.trim(), price: row.price.trim() }))
+      .filter((row) => row.url.length > 0);
+
+    const invalid = rows.filter((row) => !isLikelyAliExpressUrl(row.url));
+    if (invalid.length > 0) {
+      setError(`${invalid.length} link(s) are not valid AliExpress URLs. Fix or remove them.`);
       return;
     }
 
-    if (validUrls.length > MAX_URLS) {
-      setError(`You can list up to ${MAX_URLS} products at once. Found ${validUrls.length}.`);
+    if (rows.length === 0) {
+      setError("Paste at least one AliExpress URL.");
+      return;
+    }
+
+    if (rows.length > MAX_URLS) {
+      setError(`You can list up to ${MAX_URLS} products at once. Found ${rows.length}.`);
       return;
     }
 
@@ -215,20 +281,16 @@ export function BulkListingShell() {
       return;
     }
 
-    const profit = priceMode === "profit" && profitPercent.trim() ? Number(profitPercent) : null;
-    const fixed = priceMode === "fixed" && fixedPrice.trim() ? Number(fixedPrice) : null;
-
-    if (priceMode === "fixed" && (fixed == null || !Number.isFinite(fixed) || fixed <= 0)) {
-      setError("Enter a valid fixed listing price, or switch to Profit %.");
-      return;
-    }
-
-    const rowsToSubmit = validUrls.map((url) => ({
-      productUrl: url,
-      platform,
-      profitPercent: profit,
-      fixedPrice: fixed,
-    }));
+    const rowsToSubmit = rows.map((row) => {
+      const priceNum = row.price ? Number(row.price) : null;
+      const fixedPrice = priceNum != null && Number.isFinite(priceNum) && priceNum > 0 ? priceNum : null;
+      return {
+        productUrl: row.url,
+        platform,
+        profitPercent: null,
+        fixedPrice,
+      };
+    });
 
     setListing(true);
     setError(null);
@@ -244,7 +306,7 @@ export function BulkListingShell() {
       if (!response.ok) throw new Error(data?.error ?? "Failed to start bulk listing.");
 
       setJobs(data.jobs ?? []);
-      setUrlsText("");
+      setDraftRows(createDraftRows(DEFAULT_ROW_COUNT));
       setNotice(`${rowsToSubmit.length} URL(s) saved. Listing started…`);
 
       const refresh = await fetch(`/api/bulk-listing?userId=${encodeURIComponent(userId)}`);
@@ -257,16 +319,7 @@ export function BulkListingShell() {
     } finally {
       setListing(false);
     }
-  }, [
-    userId,
-    validUrls,
-    platform,
-    platformEnabled,
-    priceMode,
-    profitPercent,
-    fixedPrice,
-    runProcessor,
-  ]);
+  }, [userId, draftRows, platform, platformEnabled, runProcessor]);
 
   // After the seller enables auto listing from the popup, continue the queued list.
   useEffect(() => {
@@ -326,6 +379,7 @@ export function BulkListingShell() {
   }
 
   const busy = listing || processing;
+  const priceLabel = platform === "ebay" ? "Price (£)" : "Price";
 
   return (
     <DashboardLayout>
@@ -340,8 +394,8 @@ export function BulkListingShell() {
             </span>
             <h1 className="mt-3 text-3xl font-bold tracking-tight">List your whole store at once</h1>
             <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/80">
-              Pick your platform, paste all your AliExpress URLs in one go, and hit list. Every
-              product is listed automatically with your saved profit &amp; fee settings.
+              Pick your platform, paste all your AliExpress URLs into the sheet, and set a price next
+              to any product if you want. Leave price empty to use your auto listing settings.
             </p>
 
             <div className="mt-5 flex flex-wrap gap-3">
@@ -396,65 +450,6 @@ export function BulkListingShell() {
               </div>
             </label>
 
-            <div className="block">
-              <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">
-                Pricing
-              </span>
-              <div className="flex items-center gap-2">
-                <div className="inline-flex rounded-xl border border-gray-200 bg-gray-50 p-1">
-                  <button
-                    type="button"
-                    onClick={() => setPriceMode("profit")}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                      priceMode === "profit"
-                        ? "bg-white text-brand shadow-sm"
-                        : "text-[#6B7280] hover:text-[#374151]"
-                    }`}
-                  >
-                    Profit %
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPriceMode("fixed")}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                      priceMode === "fixed"
-                        ? "bg-white text-brand shadow-sm"
-                        : "text-[#6B7280] hover:text-[#374151]"
-                    }`}
-                  >
-                    Fixed price
-                  </button>
-                </div>
-
-                {priceMode === "profit" ? (
-                  <div className="relative">
-                    <input
-                      type="number"
-                      min={1}
-                      max={95}
-                      value={profitPercent}
-                      onChange={(event) => setProfitPercent(event.target.value)}
-                      placeholder="Use settings"
-                      className="w-36 rounded-xl border border-gray-200 px-4 py-2.5 pr-8 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
-                    />
-                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[#9CA3AF]">
-                      %
-                    </span>
-                  </div>
-                ) : (
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={fixedPrice}
-                    onChange={(event) => setFixedPrice(event.target.value)}
-                    placeholder="e.g. 24.99"
-                    className="w-36 rounded-xl border border-gray-200 px-4 py-2.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
-                  />
-                )}
-              </div>
-            </div>
-
             <div className="ml-auto flex items-center gap-2 text-xs">
               <span
                 className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 font-semibold ${
@@ -473,41 +468,108 @@ export function BulkListingShell() {
             </div>
           </div>
 
-          {/* Bulk paste box */}
+          {/* Paste grid */}
           <div className="mt-5">
-            <div className="mb-1.5 flex items-center justify-between">
+            <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">
                 Paste AliExpress URLs
               </span>
-              <span className="text-xs text-[#9CA3AF]">One per line — paste them all at once</span>
+              <span className="text-xs text-[#9CA3AF]">
+                Copy a column of links and paste — they fill the rows automatically.
+              </span>
             </div>
-            <textarea
-              value={urlsText}
-              onChange={(event) => setUrlsText(event.target.value)}
-              rows={9}
-              placeholder={
-                "https://www.aliexpress.com/item/1005001234567890.html\nhttps://www.aliexpress.com/item/1005009876543210.html\nhttps://www.aliexpress.com/item/..."
-              }
-              className="w-full resize-y rounded-xl border border-gray-200 bg-[#FCFCFD] px-4 py-3 font-mono text-[13px] leading-relaxed text-[#374151] focus:border-brand focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand/20"
-            />
 
-            <div className="mt-3 flex flex-wrap items-center gap-4">
+            <div className="overflow-hidden rounded-xl border border-gray-200">
+              <div className="grid grid-cols-[40px_1fr_140px_44px] items-center gap-0 border-b border-gray-100 bg-[#F9FAFB] text-[11px] font-semibold uppercase tracking-wide text-[#9CA3AF]">
+                <div className="px-3 py-2.5 text-center">#</div>
+                <div className="px-3 py-2.5">AliExpress URL</div>
+                <div className="px-3 py-2.5">{priceLabel}</div>
+                <div className="px-3 py-2.5" />
+              </div>
+
+              <div className="max-h-[460px] overflow-y-auto">
+                {draftRows.map((row, index) => {
+                  const filled = row.productUrl.trim().length > 0;
+                  const invalid = filled && !isLikelyAliExpressUrl(row.productUrl.trim());
+                  return (
+                    <div
+                      key={row.id}
+                      className="grid grid-cols-[40px_1fr_140px_44px] items-center border-b border-gray-50 last:border-b-0"
+                    >
+                      <div className="px-3 py-1.5 text-center text-xs text-[#9CA3AF]">{index + 1}</div>
+                      <div className="px-2 py-1.5">
+                        <input
+                          type="url"
+                          value={row.productUrl}
+                          onChange={(event) => updateRow(row.id, { productUrl: event.target.value })}
+                          onPaste={(event) => handlePasteUrls(event, row.id)}
+                          placeholder="https://www.aliexpress.com/item/..."
+                          className={`w-full rounded-lg border px-3 py-2 font-mono text-[13px] outline-none focus:ring-2 focus:ring-brand/20 ${
+                            invalid
+                              ? "border-red-300 focus:border-red-400"
+                              : "border-gray-200 focus:border-brand"
+                          }`}
+                        />
+                      </div>
+                      <div className="px-2 py-1.5">
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={row.price}
+                          onChange={(event) => updateRow(row.id, { price: event.target.value })}
+                          placeholder="Auto"
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+                        />
+                      </div>
+                      <div className="px-2 py-1.5 text-center">
+                        <button
+                          type="button"
+                          onClick={() => removeRow(row.id)}
+                          title="Remove row"
+                          className="rounded-lg px-2 py-1.5 text-sm text-[#9CA3AF] hover:bg-red-50 hover:text-red-500"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={addRow}
+                className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50"
+              >
+                + Add row
+              </button>
+              <button
+                type="button"
+                onClick={clearRows}
+                className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-[#6B7280] hover:bg-gray-50"
+              >
+                Clear
+              </button>
+
               <div className="flex items-center gap-2 text-sm">
                 <span className="rounded-lg bg-brand/10 px-3 py-1.5 font-bold text-brand">
-                  {validUrls.length}
+                  {validRows.length}
                 </span>
-                <span className="text-[#6B7280]">valid URL(s) detected</span>
+                <span className="text-[#6B7280]">valid URL(s)</span>
+                {invalidCount > 0 ? (
+                  <span className="text-xs font-medium text-amber-600">
+                    · {invalidCount} invalid
+                  </span>
+                ) : null}
               </div>
-              {invalidCount > 0 ? (
-                <span className="text-xs font-medium text-amber-600">
-                  {invalidCount} line(s) ignored (not an AliExpress link)
-                </span>
-              ) : null}
 
               <button
                 type="button"
                 onClick={() => void handleListAll()}
-                disabled={busy || validUrls.length === 0}
+                disabled={busy || validRows.length === 0}
                 className="ml-auto inline-flex items-center gap-2 rounded-xl bg-brand px-6 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-brand/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {busy ? (
@@ -519,10 +581,18 @@ export function BulkListingShell() {
                     Listing…
                   </>
                 ) : (
-                  <>List {validUrls.length > 0 ? validUrls.length : "all"} on {platform === "ebay" ? "eBay" : "Amazef"}</>
+                  <>
+                    List {validRows.length > 0 ? validRows.length : "all"} on{" "}
+                    {platform === "ebay" ? "eBay" : "Amazef"}
+                  </>
                 )}
               </button>
             </div>
+            <p className="mt-2 text-xs text-[#9CA3AF]">
+              Price is optional — leave it as <span className="font-medium">Auto</span> to use your
+              auto listing profit settings, or type a price to list that product at exactly that
+              amount.
+            </p>
           </div>
         </div>
 
@@ -590,7 +660,7 @@ export function BulkListingShell() {
                           ? `${job.fixedPrice.toFixed(2)} fixed`
                           : job.profitPercent != null
                             ? `${job.profitPercent}% profit`
-                            : "Default"}
+                            : "Auto"}
                       </td>
                       <td className="px-5 py-3">
                         <span
