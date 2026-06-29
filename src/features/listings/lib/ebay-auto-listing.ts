@@ -13,8 +13,13 @@ export interface EbayAutoListingSettings {
   promotions: VolumePromotionTier[];
   // Smart pricing: prices just below the live eBay competitor average so listings
   // sell fast while staying above the seller's minimum profit.
+  //   undercutMode "auto"    -> our system sets the undercut automatically
+  //   undercutMode "percent" -> seller's marketUndercutPercent below the average
+  //   undercutMode "amount"  -> seller's marketUndercutAmount (currency) below it
   smartPricingEnabled: boolean;
+  undercutMode: "auto" | "percent" | "amount";
   marketUndercutPercent: number;
+  marketUndercutAmount: number;
 }
 
 export const DEFAULT_EBAY_AUTO_LISTING_SETTINGS: EbayAutoListingSettings = {
@@ -28,7 +33,9 @@ export const DEFAULT_EBAY_AUTO_LISTING_SETTINGS: EbayAutoListingSettings = {
   veroWarningAcknowledged: false,
   promotions: DEFAULT_PROMOTIONS.map((tier) => ({ ...tier })),
   smartPricingEnabled: true,
+  undercutMode: "auto",
   marketUndercutPercent: 3,
+  marketUndercutAmount: 1,
 };
 
 export function ebayAutoListingSettingsKey(userId: string) {
@@ -80,6 +87,16 @@ export function normalizeEbayAutoListingSettings(
     50,
     base.marketUndercutPercent,
   );
+  const marketUndercutAmount = clampNumber(
+    input.marketUndercutAmount,
+    0,
+    100000,
+    base.marketUndercutAmount,
+  );
+  const undercutMode: EbayAutoListingSettings["undercutMode"] =
+    input.undercutMode === "percent" || input.undercutMode === "amount"
+      ? input.undercutMode
+      : "auto";
 
   return {
     enabled: Boolean(input.enabled),
@@ -92,7 +109,9 @@ export function normalizeEbayAutoListingSettings(
     veroWarningAcknowledged: Boolean(input.veroWarningAcknowledged),
     promotions: normalizePromotions(input.promotions),
     smartPricingEnabled: input.smartPricingEnabled ?? base.smartPricingEnabled,
+    undercutMode,
     marketUndercutPercent,
+    marketUndercutAmount,
   };
 }
 

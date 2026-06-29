@@ -188,7 +188,9 @@ export async function runEbayAutoListPipeline(
       feePrefs,
       minProfitPercent: settings.minProfitPercent,
       market,
+      undercutMode: settings.undercutMode,
       undercutPercent: settings.marketUndercutPercent,
+      undercutAmount: settings.marketUndercutAmount,
     });
     if (smart) smartPrice = smart.price;
   }

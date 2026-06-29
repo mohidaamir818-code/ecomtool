@@ -183,23 +183,82 @@ export function EbayAutoListingSettingsModal({
             </span>
           </label>
           {form.smartPricingEnabled ? (
-            <label className="mt-3 block text-sm">
-              <span className="font-medium text-[#111827]">Undercut market by %</span>
-              <input
-                type="number"
-                min={0}
-                max={50}
-                step={0.5}
-                value={form.marketUndercutPercent}
-                onChange={(event) =>
-                  updateField("marketUndercutPercent", Number(event.target.value))
-                }
-                className="mt-1 w-28 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-              />
-              <span className="mt-1 block text-xs text-[#6B7280]">
-                e.g. 3% lists a bit below the average competitor price.
+            <div className="mt-3">
+              <span className="text-sm font-medium text-[#111827]">How far below the market?</span>
+              <div className="mt-2 space-y-2">
+                <label className="flex items-start gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="ebay-undercut-mode"
+                    className="mt-0.5 h-4 w-4 border-gray-300 text-brand focus:ring-brand"
+                    checked={form.undercutMode === "auto"}
+                    onChange={() => updateField("undercutMode", "auto")}
+                  />
+                  <span>
+                    <span className="font-medium text-[#111827]">Auto (recommended)</span>
+                    <span className="mt-0.5 block text-xs text-[#6B7280]">
+                      Let our system set the undercut for you automatically.
+                    </span>
+                  </span>
+                </label>
+
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="ebay-undercut-mode"
+                    className="h-4 w-4 border-gray-300 text-brand focus:ring-brand"
+                    checked={form.undercutMode === "percent"}
+                    onChange={() => updateField("undercutMode", "percent")}
+                  />
+                  <span className="font-medium text-[#111827]">Set my own percentage</span>
+                  {form.undercutMode === "percent" ? (
+                    <span className="ml-auto flex items-center gap-1">
+                      <input
+                        type="number"
+                        min={0}
+                        max={50}
+                        step={0.5}
+                        value={form.marketUndercutPercent}
+                        onChange={(event) =>
+                          updateField("marketUndercutPercent", Number(event.target.value))
+                        }
+                        className="w-20 rounded-lg border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                      />
+                      <span className="text-xs text-[#6B7280]">% below</span>
+                    </span>
+                  ) : null}
+                </label>
+
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="ebay-undercut-mode"
+                    className="h-4 w-4 border-gray-300 text-brand focus:ring-brand"
+                    checked={form.undercutMode === "amount"}
+                    onChange={() => updateField("undercutMode", "amount")}
+                  />
+                  <span className="font-medium text-[#111827]">Set my own price</span>
+                  {form.undercutMode === "amount" ? (
+                    <span className="ml-auto flex items-center gap-1">
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        value={form.marketUndercutAmount}
+                        onChange={(event) =>
+                          updateField("marketUndercutAmount", Number(event.target.value))
+                        }
+                        className="w-20 rounded-lg border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                      />
+                      <span className="text-xs text-[#6B7280]">below</span>
+                    </span>
+                  ) : null}
+                </label>
+              </div>
+              <span className="mt-2 block text-xs text-[#6B7280]">
+                Whatever you choose, the price never drops below your minimum profit.
               </span>
-            </label>
+            </div>
           ) : null}
         </div>
 

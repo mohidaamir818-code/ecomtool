@@ -9,8 +9,13 @@ export interface AmazefAutoListingSettings {
   veroWarningAcknowledged: boolean;
   // Smart pricing: prices just below the live market average so listings sell
   // fast while staying above the seller's minimum profit.
+  //   undercutMode "auto"    -> our system sets the undercut automatically
+  //   undercutMode "percent" -> seller's marketUndercutPercent below the average
+  //   undercutMode "amount"  -> seller's marketUndercutAmount (currency) below it
   smartPricingEnabled: boolean;
+  undercutMode: "auto" | "percent" | "amount";
   marketUndercutPercent: number;
+  marketUndercutAmount: number;
 }
 
 export const DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS: AmazefAutoListingSettings = {
@@ -23,7 +28,9 @@ export const DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS: AmazefAutoListingSettings = {
   listVeroProducts: false,
   veroWarningAcknowledged: false,
   smartPricingEnabled: true,
+  undercutMode: "auto",
   marketUndercutPercent: 3,
+  marketUndercutAmount: 1,
 };
 
 export function amazefAutoListingSettingsKey(userId: string) {
@@ -56,6 +63,16 @@ export function normalizeAutoListingSettings(
     50,
     base.marketUndercutPercent,
   );
+  const marketUndercutAmount = clampNumber(
+    input.marketUndercutAmount,
+    0,
+    100000,
+    base.marketUndercutAmount,
+  );
+  const undercutMode: AmazefAutoListingSettings["undercutMode"] =
+    input.undercutMode === "percent" || input.undercutMode === "amount"
+      ? input.undercutMode
+      : "auto";
 
   return {
     enabled: Boolean(input.enabled),
@@ -67,7 +84,9 @@ export function normalizeAutoListingSettings(
     listVeroProducts: Boolean(input.listVeroProducts),
     veroWarningAcknowledged: Boolean(input.veroWarningAcknowledged),
     smartPricingEnabled: input.smartPricingEnabled ?? base.smartPricingEnabled,
+    undercutMode,
     marketUndercutPercent,
+    marketUndercutAmount,
   };
 }
 

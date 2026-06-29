@@ -2,12 +2,25 @@ import { calculatePricingBreakdown } from "@/lib/listings/pricing";
 import type { ListingPricingPreferences } from "@/types/listing-generator";
 import type { MarketAverage } from "@/lib/pricing/market-price";
 
+/**
+ * How far below the competitor average to price:
+ *  - auto: our system picks a sensible undercut automatically (no seller input)
+ *  - percent: seller-defined percentage below the market average
+ *  - amount: seller-defined fixed amount (in the listing currency) below the average
+ */
+export type UndercutMode = "auto" | "percent" | "amount";
+
+/** The undercut our system applies in "auto" mode. */
+export const AUTO_UNDERCUT_PERCENT = 5;
+
 export interface SmartPriceInput {
   aliPrice: number;
   feePrefs: ListingPricingPreferences;
   minProfitPercent: number;
   market: MarketAverage | null;
+  undercutMode: UndercutMode;
   undercutPercent: number;
+  undercutAmount: number;
 }
 
 export interface SmartPriceResult {
@@ -46,13 +59,25 @@ function priceAtMinProfit(
  * normal profit-bounds pricing instead.
  */
 export function computeSmartPrice(input: SmartPriceInput): SmartPriceResult | null {
-  const { aliPrice, feePrefs, minProfitPercent, market, undercutPercent } = input;
+  const { aliPrice, feePrefs, minProfitPercent, market, undercutMode } = input;
 
   if (!market || market.average <= 0 || market.sampleSize < 3) return null;
 
   const floor = priceAtMinProfit(aliPrice, feePrefs, minProfitPercent);
-  const undercut = Math.min(Math.max(undercutPercent, 0), 50);
-  const target = Number((market.average * (1 - undercut / 100)).toFixed(2));
+
+  let rawTarget: number;
+  if (undercutMode === "amount") {
+    rawTarget = market.average - Math.max(input.undercutAmount, 0);
+  } else if (undercutMode === "percent") {
+    const pct = Math.min(Math.max(input.undercutPercent, 0), 50);
+    rawTarget = market.average * (1 - pct / 100);
+  } else {
+    // auto: our system decides — a modest undercut so it sells fast while
+    // keeping as much profit as possible.
+    rawTarget = market.average * (1 - AUTO_UNDERCUT_PERCENT / 100);
+  }
+
+  const target = Number(rawTarget.toFixed(2));
 
   if (target >= floor) {
     return {
