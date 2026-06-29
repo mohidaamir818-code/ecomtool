@@ -102,7 +102,7 @@ export async function runAmazefAutoListPipeline(
   userId: string,
   productUrl: string,
   rawSettings: Partial<AmazefAutoListingSettings>,
-  options?: { acknowledgeVero?: boolean },
+  options?: { acknowledgeVero?: boolean; manualPriceOverride?: number | null },
 ): Promise<AmazefAutoListResult> {
   const settings = normalizeAutoListingSettings(rawSettings);
   const acknowledgeVero = Boolean(options?.acknowledgeVero);
@@ -133,26 +133,47 @@ export async function runAmazefAutoListPipeline(
   };
   const aliPrice = resolveBaseAliPrice(product);
 
-  const pricing = resolvePricingWithinProfitBounds(
-    aliPrice,
-    feePrefs,
-    settings.minProfitPercent,
-    settings.maxProfitPercent,
-  );
+  // Seller can force a fixed listing price (bulk listing). When provided, the
+  // profit-bounds search is bypassed and the product is listed at that price.
+  const fixedPrice =
+    options?.manualPriceOverride != null && options.manualPriceOverride > 0
+      ? options.manualPriceOverride
+      : null;
 
-  if (!pricing) {
-    throw new Error(
-      `Could not reach your minimum profit of ${settings.minProfitPercent}% for this product.`,
+  let pricingPrefs: ListingPricingPreferences;
+  let pricingBreakdown: PricingBreakdown;
+  let listingPrice: number;
+
+  if (fixedPrice != null) {
+    pricingPrefs = { ...feePrefs };
+    pricingBreakdown = calculatePricingBreakdown(aliPrice, pricingPrefs);
+    listingPrice = fixedPrice;
+  } else {
+    const pricing = resolvePricingWithinProfitBounds(
+      aliPrice,
+      feePrefs,
+      settings.minProfitPercent,
+      settings.maxProfitPercent,
     );
+
+    if (!pricing) {
+      throw new Error(
+        `Could not reach your minimum profit of ${settings.minProfitPercent}% for this product.`,
+      );
+    }
+
+    pricingPrefs = pricing.prefs;
+    pricingBreakdown = pricing.breakdown;
+    listingPrice = pricing.breakdown.recommendedPrice;
   }
 
-  const listing = await generateEbayListing(product, pricing.breakdown.recommendedPrice);
+  const listing = await generateEbayListing(product, listingPrice);
   const promotions = sellerPreferencesToPromotions(sellerPrefs);
 
   let draft = buildInitialDraft(product, listing, {
-    pricing: pricing.prefs,
-    pricingBreakdown: pricing.breakdown,
-    manualPriceOverride: null,
+    pricing: pricingPrefs,
+    pricingBreakdown,
+    manualPriceOverride: fixedPrice,
     promotions,
   });
 

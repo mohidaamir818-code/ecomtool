@@ -33,6 +33,7 @@ function mapJobRow(row: Record<string, unknown>): BulkListingJob {
     productUrl: String(row.product_url),
     platform: (row.platform === "amazef" ? "amazef" : "ebay") as ListingPlatform,
     profitPercent: row.profit_percent != null ? Number(row.profit_percent) : null,
+    fixedPrice: row.fixed_price != null ? Number(row.fixed_price) : null,
     status: String(row.status ?? "queued") as BulkListingJobStatus,
     errorMessage: row.error_message ? String(row.error_message) : null,
     listingUrl: row.listing_url ? String(row.listing_url) : null,
@@ -98,6 +99,10 @@ export async function createBulkListingBatch(input: {
         row.profitPercent != null && Number.isFinite(Number(row.profitPercent))
           ? Number(row.profitPercent)
           : null,
+      fixedPrice:
+        row.fixedPrice != null && Number.isFinite(Number(row.fixedPrice)) && Number(row.fixedPrice) > 0
+          ? Number(row.fixedPrice)
+          : null,
       sortOrder: index,
     }))
     .filter((row) => row.productUrl.length > 0);
@@ -126,6 +131,7 @@ export async function createBulkListingBatch(input: {
     product_url: row.productUrl,
     platform: row.platform,
     profit_percent: row.profitPercent,
+    fixed_price: row.fixedPrice,
     status: "queued",
     sort_order: row.sortOrder,
     created_at: now,
@@ -232,10 +238,14 @@ export async function processNextBulkListingJob(input: {
   let finalStatus: BulkListingJobStatus = "listed";
 
   try {
+    // A fixed price takes precedence over a profit % override.
+    const useFixedPrice = job.fixedPrice != null && job.fixedPrice > 0;
+    const profitOverride = useFixedPrice ? null : job.profitPercent;
+
     if (job.platform === "amazef") {
       const settings = applyProfitOverride(
         normalizeAutoListingSettings(input.amazefSettings),
-        job.profitPercent,
+        profitOverride,
       );
 
       if (!settings.enabled) {
@@ -244,6 +254,7 @@ export async function processNextBulkListingJob(input: {
 
       const result = await runAmazefAutoListPipeline(input.userId, job.productUrl, settings, {
         acknowledgeVero: settings.listVeroProducts,
+        manualPriceOverride: useFixedPrice ? job.fixedPrice : null,
       });
 
       listingUrl = result.listingUrl;
@@ -253,7 +264,7 @@ export async function processNextBulkListingJob(input: {
     } else {
       const settings = applyProfitOverride(
         normalizeEbayAutoListingSettings(input.ebaySettings),
-        job.profitPercent,
+        profitOverride,
       );
 
       if (!settings.enabled) {
@@ -262,6 +273,7 @@ export async function processNextBulkListingJob(input: {
 
       const result = await runEbayAutoListPipeline(input.userId, job.productUrl, settings, {
         acknowledgeVero: settings.listVeroProducts,
+        manualPriceOverride: useFixedPrice ? job.fixedPrice : null,
       });
 
       listingUrl = result.listingUrl;

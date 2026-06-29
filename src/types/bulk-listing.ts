@@ -9,6 +9,7 @@ export interface BulkListingJob {
   productUrl: string;
   platform: ListingPlatform;
   profitPercent: number | null;
+  fixedPrice: number | null;
   status: BulkListingJobStatus;
   errorMessage: string | null;
   listingUrl: string | null;
@@ -26,6 +27,7 @@ export interface BulkListingRowInput {
   productUrl: string;
   platform: ListingPlatform;
   profitPercent?: number | null;
+  fixedPrice?: number | null;
 }
 
 export interface BulkListingStartPayload {

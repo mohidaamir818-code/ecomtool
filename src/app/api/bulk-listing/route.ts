@@ -22,6 +22,10 @@ function normalizeRows(raw: unknown): BulkListingRowInput[] {
       (row as BulkListingRowInput)?.profitPercent != null
         ? Number((row as BulkListingRowInput).profitPercent)
         : null,
+    fixedPrice:
+      (row as BulkListingRowInput)?.fixedPrice != null
+        ? Number((row as BulkListingRowInput).fixedPrice)
+        : null,
   }));
 }
 
