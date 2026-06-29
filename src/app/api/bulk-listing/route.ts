@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import {
   createBulkListingBatch,
   getUserBulkListingJobs,
 } from "@/lib/bulk-listing/service";
+import { triggerBulkListingWorker } from "@/lib/bulk-listing/trigger";
 import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
 import type { BulkListingRowInput } from "@/types/bulk-listing";
 import type { ListingPlatform } from "@/types/listing-generator";
@@ -54,6 +56,8 @@ export async function POST(request: NextRequest) {
     const body = (await request.json()) as {
       userId?: string;
       rows?: unknown;
+      ebaySettings?: Record<string, unknown>;
+      amazefSettings?: Record<string, unknown>;
     };
 
     const userId = body.userId?.trim();
@@ -65,7 +69,16 @@ export async function POST(request: NextRequest) {
     if (accessDenied) return accessDenied;
 
     const rows = normalizeRows(body.rows);
-    const { batchId, jobs } = await createBulkListingBatch({ userId, rows });
+    const { batchId, jobs } = await createBulkListingBatch({
+      userId,
+      rows,
+      ebaySettings: body.ebaySettings,
+      amazefSettings: body.amazefSettings,
+    });
+
+    // Kick the server-side worker so the batch keeps listing even if the seller
+    // closes the tab. The worker chains itself in waves until the queue drains.
+    after(() => triggerBulkListingWorker());
 
     return NextResponse.json({ success: true, batchId, jobs }, { status: 201 });
   } catch (error) {

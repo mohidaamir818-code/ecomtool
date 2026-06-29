@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/queue-process",
       "schedule": "10 0 * * *"
+    },
+    {
+      "path": "/api/cron/bulk-listing",
+      "schedule": "20 0 * * *"
     }
   ]
 }

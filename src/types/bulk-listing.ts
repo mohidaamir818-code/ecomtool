@@ -1,6 +1,11 @@
 import type { ListingPlatform } from "@/types/listing-generator";
 
-export type BulkListingJobStatus = "queued" | "listing" | "listed" | "failed";
+export type BulkListingJobStatus =
+  | "queued"
+  | "listing"
+  | "listed"
+  | "failed"
+  | "vero_hold";
 
 export interface BulkListingJob {
   id: string;
@@ -11,6 +16,7 @@ export interface BulkListingJob {
   profitPercent: number | null;
   fixedPrice: number | null;
   status: BulkListingJobStatus;
+  veroAck: boolean;
   errorMessage: string | null;
   listingUrl: string | null;
   listedTitle: string | null;

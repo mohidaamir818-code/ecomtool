@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { processDueBulkListingJobs } from "@/lib/bulk-listing/service";
 import { processDueCompetitorWatchUpdates } from "@/lib/competitors/service";
 import { processDueHandlingUpdates } from "@/lib/handling/service";
 import { processDueQueueItems } from "@/lib/quota/queue-service";
@@ -16,10 +17,11 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const [queueProcessed, watchesProcessed, handlingProcessed] = await Promise.all([
+    const [queueProcessed, watchesProcessed, handlingProcessed, bulkListed] = await Promise.all([
       processDueQueueItems(),
       processDueCompetitorWatchUpdates(),
       processDueHandlingUpdates(),
+      processDueBulkListingJobs(),
     ]);
 
     return NextResponse.json({
@@ -27,6 +29,7 @@ export async function POST(request: NextRequest) {
       queueProcessed,
       watchesProcessed,
       handlingProcessed,
+      bulkListed,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to process queue.";

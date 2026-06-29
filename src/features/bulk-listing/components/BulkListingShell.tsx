@@ -49,6 +49,8 @@ function formatStatus(status: BulkListingJob["status"]): string {
       return "Listed";
     case "failed":
       return "Failed";
+    case "vero_hold":
+      return "VeRO — needs OK";
     default:
       return status;
   }
@@ -64,6 +66,8 @@ function statusClass(status: BulkListingJob["status"]): string {
       return "bg-emerald-100 text-emerald-700";
     case "failed":
       return "bg-red-100 text-red-700";
+    case "vero_hold":
+      return "bg-purple-100 text-purple-700";
     default:
       return "bg-gray-100 text-gray-600";
   }
@@ -89,6 +93,8 @@ export function BulkListingShell() {
   const [notice, setNotice] = useState<string | null>(null);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [pendingList, setPendingList] = useState(false);
+  const [showVeroModal, setShowVeroModal] = useState(false);
+  const [veroResolving, setVeroResolving] = useState(false);
   const [ebaySettings, setEbaySettings] = useState<EbayAutoListingSettings>(() =>
     normalizeEbayAutoListingSettings(null),
   );
@@ -165,6 +171,15 @@ export function BulkListingShell() {
     }
     return base;
   }, [activeBatchJobs]);
+
+  const veroHoldJobs = useMemo(
+    () => activeBatchJobs.filter((job) => job.status === "vero_hold"),
+    [activeBatchJobs],
+  );
+  const hasQueued = useMemo(
+    () => activeBatchJobs.some((job) => job.status === "queued" || job.status === "listing"),
+    [activeBatchJobs],
+  );
 
   const runProcessor = useCallback(async () => {
     if (!userId || processingRef.current) return;
@@ -300,7 +315,7 @@ export function BulkListingShell() {
       const response = await fetch("/api/bulk-listing", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, rows: rowsToSubmit }),
+        body: JSON.stringify({ userId, rows: rowsToSubmit, ebaySettings, amazefSettings }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data?.error ?? "Failed to start bulk listing.");
@@ -319,7 +334,7 @@ export function BulkListingShell() {
     } finally {
       setListing(false);
     }
-  }, [userId, draftRows, platform, platformEnabled, runProcessor]);
+  }, [userId, draftRows, platform, platformEnabled, ebaySettings, amazefSettings, runProcessor]);
 
   // After the seller enables auto listing from the popup, continue the queued list.
   useEffect(() => {
@@ -327,6 +342,39 @@ export function BulkListingShell() {
     setPendingList(false);
     void handleListAll();
   }, [pendingList, platformEnabled, handleListAll]);
+
+  // Once everything else is listed, ask the seller about the parked VeRO products.
+  useEffect(() => {
+    if (!processing && !hasQueued && veroHoldJobs.length > 0) {
+      setShowVeroModal(true);
+    }
+  }, [processing, hasQueued, veroHoldJobs.length]);
+
+  async function resolveVero(approve: boolean) {
+    if (!userId) return;
+    setVeroResolving(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/bulk-listing/vero", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, approve }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error ?? "Failed to update VeRO products.");
+
+      setJobs(data.jobs ?? []);
+      setShowVeroModal(false);
+      if (approve) {
+        setNotice("Listing the approved VeRO products…");
+        await runProcessor();
+      }
+    } catch (veroError) {
+      setError(veroError instanceof Error ? veroError.message : "Failed to update VeRO products.");
+    } finally {
+      setVeroResolving(false);
+    }
+  }
 
   function handleSaveSettings(next: EbayAutoListingSettings | AmazefAutoListingSettings) {
     if (!userId) return;
@@ -688,6 +736,8 @@ export function BulkListingShell() {
                           </p>
                         ) : job.status === "listing" ? (
                           <p className="text-xs text-sky-600">Auto listing in progress…</p>
+                        ) : job.status === "vero_hold" ? (
+                          <p className="text-xs text-purple-600">Awaiting your VeRO approval</p>
                         ) : (
                           <p className="text-xs text-[#9CA3AF]">Waiting…</p>
                         )}
@@ -727,6 +777,50 @@ export function BulkListingShell() {
             onClose={handleCloseSettings}
           />
         )
+      ) : null}
+
+      {showVeroModal && veroHoldJobs.length > 0 ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-6 shadow-xl">
+            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-purple-100 text-xl text-purple-600">
+              ⚠️
+            </div>
+            <h2 className="mt-4 text-lg font-bold text-[#111827]">
+              {veroHoldJobs.length} VeRO product{veroHoldJobs.length > 1 ? "s" : ""} need your OK
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-[#6B7280]">
+              All your other products are listed. These items may be brand/VeRO-protected. Since
+              you allow VeRO listing in your settings, confirm to list them too — or skip them.
+            </p>
+
+            <div className="mt-4 max-h-40 space-y-1.5 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 p-3">
+              {veroHoldJobs.map((job) => (
+                <p key={job.id} className="truncate text-xs text-[#6B7280]" title={job.productUrl}>
+                  {job.productUrl}
+                </p>
+              ))}
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                disabled={veroResolving}
+                onClick={() => void resolveVero(false)}
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50 disabled:opacity-60"
+              >
+                Skip these
+              </button>
+              <button
+                type="button"
+                disabled={veroResolving}
+                onClick={() => void resolveVero(true)}
+                className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand/90 disabled:opacity-60"
+              >
+                {veroResolving ? "Working…" : "List them anyway"}
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </DashboardLayout>
   );
