@@ -16,6 +16,9 @@ export interface AmazefAutoListingSettings {
   undercutMode: "auto" | "percent" | "amount";
   marketUndercutPercent: number;
   marketUndercutAmount: number;
+  // Charm pricing: always end the price at .99, just below the market average
+  // (only when it still keeps the seller's minimum profit).
+  charmPricingEnabled: boolean;
 }
 
 export const DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS: AmazefAutoListingSettings = {
@@ -31,6 +34,7 @@ export const DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS: AmazefAutoListingSettings = {
   undercutMode: "auto",
   marketUndercutPercent: 3,
   marketUndercutAmount: 1,
+  charmPricingEnabled: false,
 };
 
 export function amazefAutoListingSettingsKey(userId: string) {
@@ -87,6 +91,7 @@ export function normalizeAutoListingSettings(
     undercutMode,
     marketUndercutPercent,
     marketUndercutAmount,
+    charmPricingEnabled: Boolean(input.charmPricingEnabled),
   };
 }
 

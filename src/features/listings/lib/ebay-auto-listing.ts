@@ -20,6 +20,9 @@ export interface EbayAutoListingSettings {
   undercutMode: "auto" | "percent" | "amount";
   marketUndercutPercent: number;
   marketUndercutAmount: number;
+  // Charm pricing: always end the price at .99, just below the market average
+  // (only when it still keeps the seller's minimum profit).
+  charmPricingEnabled: boolean;
 }
 
 export const DEFAULT_EBAY_AUTO_LISTING_SETTINGS: EbayAutoListingSettings = {
@@ -36,6 +39,7 @@ export const DEFAULT_EBAY_AUTO_LISTING_SETTINGS: EbayAutoListingSettings = {
   undercutMode: "auto",
   marketUndercutPercent: 3,
   marketUndercutAmount: 1,
+  charmPricingEnabled: false,
 };
 
 export function ebayAutoListingSettingsKey(userId: string) {
@@ -112,6 +116,7 @@ export function normalizeEbayAutoListingSettings(
     undercutMode,
     marketUndercutPercent,
     marketUndercutAmount,
+    charmPricingEnabled: Boolean(input.charmPricingEnabled),
   };
 }
 

@@ -21,6 +21,20 @@ export interface SmartPriceInput {
   undercutMode: UndercutMode;
   undercutPercent: number;
   undercutAmount: number;
+  /** When true, list at the highest x.99 just below the market average (charm pricing). */
+  charmPricing: boolean;
+}
+
+/**
+ * Rounds a price down to the nearest charm price ending in .99 (e.g. 5.00 → 4.99,
+ * 5.80 → 4.99, 6.40 → 5.99). Prices below 1 are left untouched.
+ */
+export function roundDownToCharm(price: number): number {
+  if (!Number.isFinite(price) || price < 1) return price;
+  const base = Math.floor(price);
+  const frac = price - base;
+  if (frac >= 0.99) return Number((base + 0.99).toFixed(2));
+  return Number((base - 0.01).toFixed(2)); // (base - 1) + 0.99
 }
 
 export interface SmartPriceResult {
@@ -66,7 +80,11 @@ export function computeSmartPrice(input: SmartPriceInput): SmartPriceResult | nu
   const floor = priceAtMinProfit(aliPrice, feePrefs, minProfitPercent);
 
   let rawTarget: number;
-  if (undercutMode === "amount") {
+  if (input.charmPricing) {
+    // Charm pricing: list at the highest x.99 just below the market average.
+    // This naturally undercuts the market while keeping an attractive .99 price.
+    rawTarget = roundDownToCharm(market.average);
+  } else if (undercutMode === "amount") {
     rawTarget = market.average - Math.max(input.undercutAmount, 0);
   } else if (undercutMode === "percent") {
     const pct = Math.min(Math.max(input.undercutPercent, 0), 50);
@@ -79,6 +97,8 @@ export function computeSmartPrice(input: SmartPriceInput): SmartPriceResult | nu
 
   const target = Number(rawTarget.toFixed(2));
 
+  // Charm price only applies when it stays above the min-profit floor — otherwise
+  // we fall back to the floor so the seller never takes a loss.
   if (target >= floor) {
     return {
       price: target,

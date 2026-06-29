@@ -191,6 +191,7 @@ export async function runEbayAutoListPipeline(
       undercutMode: settings.undercutMode,
       undercutPercent: settings.marketUndercutPercent,
       undercutAmount: settings.marketUndercutAmount,
+      charmPricing: settings.charmPricingEnabled,
     });
     if (smart) smartPrice = smart.price;
   }
