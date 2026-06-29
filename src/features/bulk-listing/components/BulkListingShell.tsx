@@ -2,13 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DashboardLayout } from "@/features/dashboard/components/DashboardLayout";
+import { AmazefAutoListingSettingsModal } from "@/features/listings/components/AmazefAutoListingSettingsModal";
+import { EbayAutoListingSettingsModal } from "@/features/listings/components/EbayAutoListingSettingsModal";
 import {
   loadAutoListingSettings,
   normalizeAutoListingSettings,
+  saveAutoListingSettings,
+  type AmazefAutoListingSettings,
 } from "@/features/listings/lib/amazef-auto-listing";
 import {
   loadEbayAutoListingSettings,
   normalizeEbayAutoListingSettings,
+  saveEbayAutoListingSettings,
+  type EbayAutoListingSettings,
 } from "@/features/listings/lib/ebay-auto-listing";
 import type { BulkListingJob } from "@/types/bulk-listing";
 import type { ListingPlatform } from "@/types/listing-generator";
@@ -80,17 +86,21 @@ export function BulkListingShell() {
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [pendingList, setPendingList] = useState(false);
+  const [ebaySettings, setEbaySettings] = useState<EbayAutoListingSettings>(() =>
+    normalizeEbayAutoListingSettings(null),
+  );
+  const [amazefSettings, setAmazefSettings] = useState<AmazefAutoListingSettings>(() =>
+    normalizeAutoListingSettings(null),
+  );
   const processingRef = useRef(false);
   const resumedRef = useRef(false);
 
-  const ebaySettings = useMemo(() => {
-    if (!userId) return normalizeEbayAutoListingSettings(null);
-    return loadEbayAutoListingSettings(userId);
-  }, [userId]);
-
-  const amazefSettings = useMemo(() => {
-    if (!userId) return normalizeAutoListingSettings(null);
-    return loadAutoListingSettings(userId);
+  useEffect(() => {
+    if (!userId) return;
+    setEbaySettings(loadEbayAutoListingSettings(userId));
+    setAmazefSettings(loadAutoListingSettings(userId));
   }, [userId]);
 
   const parsedUrls = useMemo(() => parseUrls(urlsText), [urlsText]);
@@ -183,7 +193,7 @@ export function BulkListingShell() {
     if (jobs.some((job) => job.status === "queued")) void runProcessor();
   }, [loading, userId, jobs, runProcessor]);
 
-  async function handleListAll() {
+  const handleListAll = useCallback(async () => {
     if (!userId) return;
 
     if (validUrls.length === 0) {
@@ -197,9 +207,11 @@ export function BulkListingShell() {
     }
 
     if (!platformEnabled) {
-      setError(
-        `Turn on ${platform === "ebay" ? "eBay" : "Amazef"} auto listing in AI Listing settings first.`,
-      );
+      // Auto listing is off for this platform — prompt the seller to set it up.
+      // Once enabled, the listing continues automatically.
+      setError(null);
+      setPendingList(true);
+      setShowSettingsModal(true);
       return;
     }
 
@@ -245,6 +257,44 @@ export function BulkListingShell() {
     } finally {
       setListing(false);
     }
+  }, [
+    userId,
+    validUrls,
+    platform,
+    platformEnabled,
+    priceMode,
+    profitPercent,
+    fixedPrice,
+    runProcessor,
+  ]);
+
+  // After the seller enables auto listing from the popup, continue the queued list.
+  useEffect(() => {
+    if (!pendingList || !platformEnabled) return;
+    setPendingList(false);
+    void handleListAll();
+  }, [pendingList, platformEnabled, handleListAll]);
+
+  function handleSaveSettings(next: EbayAutoListingSettings | AmazefAutoListingSettings) {
+    if (!userId) return;
+    const enabled = { ...next, enabled: true };
+
+    if (platform === "ebay") {
+      const settings = enabled as EbayAutoListingSettings;
+      saveEbayAutoListingSettings(userId, settings);
+      setEbaySettings(settings);
+    } else {
+      const settings = enabled as AmazefAutoListingSettings;
+      saveAutoListingSettings(userId, settings);
+      setAmazefSettings(settings);
+    }
+
+    setShowSettingsModal(false);
+  }
+
+  function handleCloseSettings() {
+    setShowSettingsModal(false);
+    setPendingList(false);
   }
 
   async function handleRetry(jobId: string) {
@@ -592,6 +642,22 @@ export function BulkListingShell() {
           </div>
         </div>
       </div>
+
+      {showSettingsModal ? (
+        platform === "ebay" ? (
+          <EbayAutoListingSettingsModal
+            initialSettings={ebaySettings}
+            onSave={handleSaveSettings}
+            onClose={handleCloseSettings}
+          />
+        ) : (
+          <AmazefAutoListingSettingsModal
+            initialSettings={amazefSettings}
+            onSave={handleSaveSettings}
+            onClose={handleCloseSettings}
+          />
+        )
+      ) : null}
     </DashboardLayout>
   );
 }
