@@ -7,6 +7,10 @@ export interface AmazefAutoListingSettings {
   maxStock: number;
   listVeroProducts: boolean;
   veroWarningAcknowledged: boolean;
+  // Smart pricing: prices just below the live market average so listings sell
+  // fast while staying above the seller's minimum profit.
+  smartPricingEnabled: boolean;
+  marketUndercutPercent: number;
 }
 
 export const DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS: AmazefAutoListingSettings = {
@@ -18,6 +22,8 @@ export const DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS: AmazefAutoListingSettings = {
   maxStock: 50,
   listVeroProducts: false,
   veroWarningAcknowledged: false,
+  smartPricingEnabled: true,
+  marketUndercutPercent: 3,
 };
 
 export function amazefAutoListingSettingsKey(userId: string) {
@@ -44,6 +50,12 @@ export function normalizeAutoListingSettings(
   );
   const minStock = clampNumber(input.minStock, 1, 9999, base.minStock);
   const maxStock = clampNumber(input.maxStock, minStock, 99999, Math.max(minStock, base.maxStock));
+  const marketUndercutPercent = clampNumber(
+    input.marketUndercutPercent,
+    0,
+    50,
+    base.marketUndercutPercent,
+  );
 
   return {
     enabled: Boolean(input.enabled),
@@ -54,6 +66,8 @@ export function normalizeAutoListingSettings(
     maxStock,
     listVeroProducts: Boolean(input.listVeroProducts),
     veroWarningAcknowledged: Boolean(input.veroWarningAcknowledged),
+    smartPricingEnabled: input.smartPricingEnabled ?? base.smartPricingEnabled,
+    marketUndercutPercent,
   };
 }
 

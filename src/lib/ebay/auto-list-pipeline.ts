@@ -19,9 +19,12 @@ import { selectFulfillmentPolicyForAliExpress } from "@/lib/listings/ebay-fulfil
 import { saveListedProduct } from "@/lib/listings/listed-products-service";
 import { fetchListingProductSource } from "@/lib/listings/product-source";
 import {
+  buildBreakdownForPrice,
   calculatePricingBreakdown,
   resolveBaseAliPrice,
 } from "@/lib/listings/pricing";
+import { getMarketAveragePrice } from "@/lib/pricing/market-price";
+import { computeSmartPrice } from "@/lib/pricing/smart-pricing";
 import {
   getSellerPreferences,
   sellerPreferencesToFeePrefs,
@@ -164,6 +167,7 @@ export async function runEbayAutoListPipeline(
     ebayFinalValueFeePercent: settings.platformFeePercent,
   };
   const aliPrice = resolveBaseAliPrice(product);
+  const marketplaceId = await getSellerMarketplaceId(userId);
 
   // Seller can force a fixed listing price (bulk listing). When provided, the
   // profit-bounds search is bypassed and the product is listed at that price.
@@ -172,14 +176,33 @@ export async function runEbayAutoListPipeline(
       ? options.manualPriceOverride
       : null;
 
+  // Smart pricing: when enabled and no fixed price is set, look up the live eBay
+  // competitor average (1 cached Browse API call) and price just below it while
+  // staying above the seller's minimum profit. Falls back to normal profit
+  // bounds when there isn't enough market data.
+  let smartPrice: number | null = null;
+  if (fixedPrice == null && settings.smartPricingEnabled) {
+    const market = await getMarketAveragePrice(product.title, marketplaceId);
+    const smart = computeSmartPrice({
+      aliPrice,
+      feePrefs,
+      minProfitPercent: settings.minProfitPercent,
+      market,
+      undercutPercent: settings.marketUndercutPercent,
+    });
+    if (smart) smartPrice = smart.price;
+  }
+
+  const effectivePrice = fixedPrice ?? smartPrice;
+
   let pricingPrefs: ListingPricingPreferences;
   let pricingBreakdown: PricingBreakdown;
   let listingPrice: number;
 
-  if (fixedPrice != null) {
+  if (effectivePrice != null) {
     pricingPrefs = { ...feePrefs };
-    pricingBreakdown = calculatePricingBreakdown(aliPrice, pricingPrefs);
-    listingPrice = fixedPrice;
+    pricingBreakdown = buildBreakdownForPrice(aliPrice, pricingPrefs, effectivePrice);
+    listingPrice = effectivePrice;
   } else {
     const pricing = resolvePricingWithinProfitBounds(
       aliPrice,
@@ -204,7 +227,7 @@ export async function runEbayAutoListPipeline(
   let draft = buildInitialDraft(product, listing, {
     pricing: pricingPrefs,
     pricingBreakdown,
-    manualPriceOverride: fixedPrice,
+    manualPriceOverride: effectivePrice,
     promotions: settings.promotions,
   });
 
@@ -221,7 +244,6 @@ export async function runEbayAutoListPipeline(
     };
   }
 
-  const marketplaceId = await getSellerMarketplaceId(userId);
   const policies = await fetchSellerPolicies(token, marketplaceId, { userId });
 
   if (policies.noPoliciesFound) {

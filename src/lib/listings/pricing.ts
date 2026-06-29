@@ -40,6 +40,38 @@ export function calculatePricingBreakdown(
   };
 }
 
+/**
+ * Builds a pricing breakdown for a fixed/known final price (used by smart
+ * pricing and fixed-price listings). Mirrors the fee math of
+ * calculatePricingBreakdown but works backwards from the chosen price so the
+ * displayed profit reflects what the product is actually listed at.
+ */
+export function buildBreakdownForPrice(
+  aliExpressPrice: number,
+  prefs: ListingPricingPreferences,
+  finalPrice: number,
+): PricingBreakdown {
+  const baseCost = aliExpressPrice + prefs.shippingCost;
+  const ebayFees = Number(
+    (finalPrice * (prefs.ebayFinalValueFeePercent / 100) + prefs.ebayTransactionFee).toFixed(2),
+  );
+  const paymentFees = Number((finalPrice * (prefs.paymentFeePercent / 100)).toFixed(2));
+  const totalFees = Number((ebayFees + paymentFees).toFixed(2));
+  const profit = Number((finalPrice - baseCost - totalFees).toFixed(2));
+  const profitPercent = finalPrice > 0 ? Number(((profit / finalPrice) * 100).toFixed(1)) : 0;
+
+  return {
+    aliExpressCost: aliExpressPrice,
+    shippingCost: prefs.shippingCost,
+    baseCost: Number(baseCost.toFixed(2)),
+    ebayFees: totalFees,
+    profit,
+    profitPercent,
+    recommendedPrice: Number(finalPrice.toFixed(2)),
+    currency: prefs.currency,
+  };
+}
+
 export function buildVariantPrices(
   product: ListingProductSource,
   baseEbayPrice: number,

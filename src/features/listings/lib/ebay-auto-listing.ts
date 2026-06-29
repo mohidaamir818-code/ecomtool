@@ -11,6 +11,10 @@ export interface EbayAutoListingSettings {
   listVeroProducts: boolean;
   veroWarningAcknowledged: boolean;
   promotions: VolumePromotionTier[];
+  // Smart pricing: prices just below the live eBay competitor average so listings
+  // sell fast while staying above the seller's minimum profit.
+  smartPricingEnabled: boolean;
+  marketUndercutPercent: number;
 }
 
 export const DEFAULT_EBAY_AUTO_LISTING_SETTINGS: EbayAutoListingSettings = {
@@ -23,6 +27,8 @@ export const DEFAULT_EBAY_AUTO_LISTING_SETTINGS: EbayAutoListingSettings = {
   listVeroProducts: false,
   veroWarningAcknowledged: false,
   promotions: DEFAULT_PROMOTIONS.map((tier) => ({ ...tier })),
+  smartPricingEnabled: true,
+  marketUndercutPercent: 3,
 };
 
 export function ebayAutoListingSettingsKey(userId: string) {
@@ -68,6 +74,12 @@ export function normalizeEbayAutoListingSettings(
   );
   const minStock = clampNumber(input.minStock, 1, 9999, base.minStock);
   const maxStock = clampNumber(input.maxStock, minStock, 99999, Math.max(minStock, base.maxStock));
+  const marketUndercutPercent = clampNumber(
+    input.marketUndercutPercent,
+    0,
+    50,
+    base.marketUndercutPercent,
+  );
 
   return {
     enabled: Boolean(input.enabled),
@@ -79,6 +91,8 @@ export function normalizeEbayAutoListingSettings(
     listVeroProducts: Boolean(input.listVeroProducts),
     veroWarningAcknowledged: Boolean(input.veroWarningAcknowledged),
     promotions: normalizePromotions(input.promotions),
+    smartPricingEnabled: input.smartPricingEnabled ?? base.smartPricingEnabled,
+    marketUndercutPercent,
   };
 }
 

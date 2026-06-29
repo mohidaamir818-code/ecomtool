@@ -112,6 +112,44 @@ export function AmazefAutoListingSettingsModal({
           </label>
         </div>
 
+        <div className="mt-6 rounded-lg border border-emerald-100 bg-emerald-50/60 px-4 py-3">
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
+              checked={form.smartPricingEnabled}
+              onChange={(event) => updateField("smartPricingEnabled", event.target.checked)}
+            />
+            <span>
+              <span className="font-medium text-[#111827]">Smart pricing (recommended)</span>
+              <span className="mt-1 block text-xs text-[#6B7280]">
+                AI checks the live market average for each product and lists just below it to
+                sell faster — while always keeping your minimum profit. If the market is too
+                cheap, it falls back to your profit % rules.
+              </span>
+            </span>
+          </label>
+          {form.smartPricingEnabled ? (
+            <label className="mt-3 block text-sm">
+              <span className="font-medium text-[#111827]">Undercut market by %</span>
+              <input
+                type="number"
+                min={0}
+                max={50}
+                step={0.5}
+                value={form.marketUndercutPercent}
+                onChange={(event) =>
+                  updateField("marketUndercutPercent", Number(event.target.value))
+                }
+                className="mt-1 w-28 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+              />
+              <span className="mt-1 block text-xs text-[#6B7280]">
+                e.g. 3% lists a bit below the average competitor price.
+              </span>
+            </label>
+          ) : null}
+        </div>
+
         <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-lg border border-amber-100 bg-amber-50/60 px-4 py-3 text-sm">
           <input
             type="checkbox"
