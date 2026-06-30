@@ -13,6 +13,16 @@ export type UndercutMode = "auto" | "percent" | "amount";
 /** The undercut our system applies in "auto" mode. */
 export const AUTO_UNDERCUT_PERCENT = 5;
 
+/**
+ * A custom charm-ending rule: prices at or below `maxPrice` use `ending` cents
+ * (0–99). `maxPrice: null` is the catch-all for everything above the other rules.
+ * Example: [{maxPrice:1.5, ending:99}, {maxPrice:2, ending:59}, {maxPrice:null, ending:89}]
+ */
+export interface CharmRule {
+  maxPrice: number | null;
+  ending: number;
+}
+
 export interface SmartPriceInput {
   aliPrice: number;
   feePrefs: ListingPricingPreferences;
@@ -21,20 +31,48 @@ export interface SmartPriceInput {
   undercutMode: UndercutMode;
   undercutPercent: number;
   undercutAmount: number;
-  /** When true, list at the highest x.99 just below the market average (charm pricing). */
+  /** When true, end the price at a charm value just below the market average. */
   charmPricing: boolean;
+  /**
+   * Optional per-price-range endings. When empty, charm pricing uses .99 for all
+   * prices (the simple default).
+   */
+  charmRules?: CharmRule[];
 }
 
 /**
- * Rounds a price down to the nearest charm price ending in .99 (e.g. 5.00 → 4.99,
- * 5.80 → 4.99, 6.40 → 5.99). Prices below 1 are left untouched.
+ * Rounds a price down to the nearest value ending in `endingCents` (0–99).
+ * e.g. ending 99: 5.00 → 4.99, 5.80 → 4.99; ending 59: 1.90 → 1.59.
+ * Prices below 1 are left untouched.
  */
-export function roundDownToCharm(price: number): number {
+export function roundDownToEnding(price: number, endingCents: number): number {
   if (!Number.isFinite(price) || price < 1) return price;
+  const ending = Math.min(Math.max(Math.round(endingCents), 0), 99) / 100;
   const base = Math.floor(price);
-  const frac = price - base;
-  if (frac >= 0.99) return Number((base + 0.99).toFixed(2));
-  return Number((base - 0.01).toFixed(2)); // (base - 1) + 0.99
+  const candidate = base + ending;
+  if (candidate <= price + 1e-9) return Number(candidate.toFixed(2));
+  return Number((base - 1 + ending).toFixed(2));
+}
+
+/** Back-compat: charm price ending in .99. */
+export function roundDownToCharm(price: number): number {
+  return roundDownToEnding(price, 99);
+}
+
+/** Picks the charm ending (cents) for a price from the seller's rules. */
+export function resolveCharmEnding(price: number, rules?: CharmRule[]): number {
+  if (!rules || rules.length === 0) return 99;
+
+  const sorted = [...rules].sort((a, b) => {
+    if (a.maxPrice == null) return 1;
+    if (b.maxPrice == null) return -1;
+    return a.maxPrice - b.maxPrice;
+  });
+
+  for (const rule of sorted) {
+    if (rule.maxPrice == null || price <= rule.maxPrice) return rule.ending;
+  }
+  return sorted[sorted.length - 1]?.ending ?? 99;
 }
 
 export interface SmartPriceResult {
@@ -81,9 +119,11 @@ export function computeSmartPrice(input: SmartPriceInput): SmartPriceResult | nu
 
   let rawTarget: number;
   if (input.charmPricing) {
-    // Charm pricing: list at the highest x.99 just below the market average.
-    // This naturally undercuts the market while keeping an attractive .99 price.
-    rawTarget = roundDownToCharm(market.average);
+    // Charm pricing: end the price at the seller's chosen charm value (per price
+    // range when custom rules are set, otherwise .99), just below the market
+    // average so it naturally undercuts while looking attractive.
+    const ending = resolveCharmEnding(market.average, input.charmRules);
+    rawTarget = roundDownToEnding(market.average, ending);
   } else if (undercutMode === "amount") {
     rawTarget = market.average - Math.max(input.undercutAmount, 0);
   } else if (undercutMode === "percent") {

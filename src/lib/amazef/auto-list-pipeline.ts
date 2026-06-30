@@ -159,6 +159,7 @@ export async function runAmazefAutoListPipeline(
       undercutPercent: settings.marketUndercutPercent,
       undercutAmount: settings.marketUndercutAmount,
       charmPricing: settings.charmPricingEnabled,
+      charmRules: settings.charmRules,
     });
     if (smart) smartPrice = smart.price;
   }

@@ -18,12 +18,22 @@ export interface RulesParseResult {
   summary: string;
   /** When not understood: a message (seller's language) asking them to rewrite. */
   clarification: string | null;
+  /**
+   * Optional one-time follow-up question (seller's language) — e.g. asking for
+   * their fees when they configured pricing/profit but didn't mention any. The
+   * parsed settings are still returned so the seller can answer or apply as-is.
+   */
+  question: string | null;
   /** Partial settings to merge into the form (only the fields the seller mentioned). */
   settings: ParsedRuleSettings;
 }
 
 const EBAY_FIELDS = `
-- platformFeePercent (number) — eBay fee %
+- platformFeePercent (number) — eBay final value / platform fee %
+- paymentFeePercent (number) — payment processing fee %
+- transactionFeeAmount (number) — fixed per-order transaction fee (money)
+- shippingCost (number) — the seller's shipping/postage cost (money)
+- profitMarginPercent (number) — the seller's target profit margin %
 - minProfitPercent (number) — minimum profit %, the seller is never allowed to lose money below this
 - maxProfitPercent (number) — maximum profit %
 - minStock (number), maxStock (number)
@@ -31,7 +41,13 @@ const EBAY_FIELDS = `
 - undercutMode ("auto" | "percent" | "amount") — how far below the market average to price
 - marketUndercutPercent (number) — used when undercutMode is "percent"
 - marketUndercutAmount (number) — used when undercutMode is "amount" (money below the average)
-- charmPricingEnabled (boolean) — always end prices at .99
+- charmPricingEnabled (boolean) — end prices at a charm value (.99 by default)
+- charmRules (array) — OPTIONAL custom charm endings by price range. Each item is
+  { "maxPrice": number|null, "ending": number(0-99) } meaning prices at or below maxPrice end at
+  ".ending" cents; maxPrice null = all higher prices. Example: the seller says "agar £1 jaisa ho to
+  .99, agar £1.80 ya £1.90 ho to .59, baqi .89" → set charmPricingEnabled true and charmRules
+  [{"maxPrice":1.5,"ending":99},{"maxPrice":1.99,"ending":59},{"maxPrice":null,"ending":89}].
+  The numbers the seller gives are EXAMPLES of ranges, never a single exact price only.
 - autoPromoteEnabled (boolean) — add listings to eBay Promoted Listings automatically
 - autoPromoteMinProfit (number) — only promote when per-item profit (money) is at least this
 - autoPromoteAdRatePercent (number) — Promoted Listings ad rate %
@@ -39,7 +55,11 @@ const EBAY_FIELDS = `
 `;
 
 const AMAZEF_FIELDS = `
-- platformFeePercent (number) — Amazef fee %
+- platformFeePercent (number) — Amazef platform fee %
+- paymentFeePercent (number) — payment processing fee %
+- transactionFeeAmount (number) — fixed per-order transaction fee (money)
+- shippingCost (number) — the seller's shipping/postage cost (money)
+- profitMarginPercent (number) — the seller's target profit margin %
 - minProfitPercent (number) — minimum profit %, the seller is never allowed to lose money below this
 - maxProfitPercent (number) — maximum profit %
 - minStock (number), maxStock (number)
@@ -47,7 +67,13 @@ const AMAZEF_FIELDS = `
 - undercutMode ("auto" | "percent" | "amount") — how far below the market average to price
 - marketUndercutPercent (number) — used when undercutMode is "percent"
 - marketUndercutAmount (number) — used when undercutMode is "amount" (money below the average)
-- charmPricingEnabled (boolean) — always end prices at .99
+- charmPricingEnabled (boolean) — end prices at a charm value (.99 by default)
+- charmRules (array) — OPTIONAL custom charm endings by price range. Each item is
+  { "maxPrice": number|null, "ending": number(0-99) } meaning prices at or below maxPrice end at
+  ".ending" cents; maxPrice null = all higher prices. Example: the seller says "agar £1 jaisa ho to
+  .99, agar £1.80 ya £1.90 ho to .59, baqi .89" → set charmPricingEnabled true and charmRules
+  [{"maxPrice":1.5,"ending":99},{"maxPrice":1.99,"ending":59},{"maxPrice":null,"ending":89}].
+  The numbers the seller gives are EXAMPLES of ranges, never a single exact price only.
 - listVeroProducts (boolean)
 `;
 
@@ -70,9 +96,17 @@ Rules:
 - Only include fields the seller actually mentions or clearly implies. Leave everything else out.
 - Never output a value that would make the seller lose money. If they ask to price below cost,
   set understood=false and explain in the clarification.
+- Profit RANGES: if the seller gives a range like "profit 25 to 35%", "25 se 35%", or "25-35%",
+  map it to minProfitPercent=25 and maxProfitPercent=35. A single value like "35%" means
+  minProfitPercent=35 (and you may leave maxProfitPercent unless they imply an upper bound).
 - If the instruction is clear, set "understood": true and write a short "summary" describing
   exactly what you will apply. IMPORTANT: write the summary in the SAME language and script the
   seller used (English, Roman Urdu, or Urdu).
+- FEES: if the seller configured profit/pricing/promotion but did NOT mention any fees
+  (platformFeePercent or paymentFeePercent), AND the current settings still appear to use default
+  fees, then keep "understood": true and still return the parsed settings, but set "question" to a
+  short message (in the seller's language) asking them to also tell their platform/payment fees so
+  the profit stays accurate. If fees were given or already set, "question" must be null.
 - If the instruction is unclear, ambiguous, or you are not confident, set "understood": false,
   leave "settings" empty, and write a "clarification" message (in the seller's language) asking
   them to rewrite more clearly with a concrete example.
@@ -88,6 +122,7 @@ Respond with ONLY valid JSON in this exact shape:
   "understood": boolean,
   "summary": string,
   "clarification": string | null,
+  "question": string | null,
   "settings": { ...only the fields to change... }
 }`;
 }
@@ -103,6 +138,7 @@ export async function parseRulesPrompt(input: {
       understood: false,
       summary: "",
       clarification: "Please describe your pricing or promotion rules.",
+      question: null,
       settings: {},
     };
   }
@@ -121,6 +157,10 @@ export async function parseRulesPrompt(input: {
         : understood
           ? null
           : "I could not understand that. Please rewrite your rules with a clear example.",
+    question:
+      understood && typeof result.question === "string" && result.question.trim()
+        ? result.question.trim()
+        : null,
     settings:
       understood && result.settings && typeof result.settings === "object"
         ? (result.settings as ParsedRuleSettings)

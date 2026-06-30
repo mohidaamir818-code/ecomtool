@@ -1,3 +1,12 @@
+/**
+ * Custom charm-ending rule: prices at or below `maxPrice` end at `ending` cents
+ * (0–99). `maxPrice: null` is the catch-all for everything above the other rules.
+ */
+export interface CharmRule {
+  maxPrice: number | null;
+  ending: number;
+}
+
 export interface AmazefAutoListingSettings {
   enabled: boolean;
   platformFeePercent: number;
@@ -19,6 +28,9 @@ export interface AmazefAutoListingSettings {
   // Charm pricing: always end the price at .99, just below the market average
   // (only when it still keeps the seller's minimum profit).
   charmPricingEnabled: boolean;
+  // Optional per-price-range endings (e.g. ≤£1.5 → .99, ≤£2 → .59, else → .89).
+  // Empty means charm pricing uses .99 for everything.
+  charmRules: CharmRule[];
 }
 
 export const DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS: AmazefAutoListingSettings = {
@@ -35,6 +47,7 @@ export const DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS: AmazefAutoListingSettings = {
   marketUndercutPercent: 3,
   marketUndercutAmount: 1,
   charmPricingEnabled: false,
+  charmRules: [],
 };
 
 export function amazefAutoListingSettingsKey(userId: string) {
@@ -43,6 +56,23 @@ export function amazefAutoListingSettingsKey(userId: string) {
 
 export function amazefShippingStorageKey(userId: string) {
   return `amazef-default-shipping-days-${userId}`;
+}
+
+export function normalizeCharmRules(input: unknown): CharmRule[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((raw) => {
+      const rule = raw as Partial<CharmRule>;
+      const maxPriceValue = Number(rule.maxPrice);
+      const maxPrice =
+        rule.maxPrice == null || !Number.isFinite(maxPriceValue) || maxPriceValue <= 0
+          ? null
+          : Number(maxPriceValue.toFixed(2));
+      const ending = Math.min(Math.max(Math.round(Number(rule.ending)), 0), 99);
+      if (!Number.isFinite(ending)) return null;
+      return { maxPrice, ending } as CharmRule;
+    })
+    .filter((rule): rule is CharmRule => rule !== null);
 }
 
 export function normalizeAutoListingSettings(
@@ -92,6 +122,7 @@ export function normalizeAutoListingSettings(
     marketUndercutPercent,
     marketUndercutAmount,
     charmPricingEnabled: Boolean(input.charmPricingEnabled),
+    charmRules: normalizeCharmRules(input.charmRules),
   };
 }
 

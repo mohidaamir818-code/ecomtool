@@ -660,6 +660,18 @@ export function ListingsShell() {
     finalizeEbayAutoSettings(settings as EbayAutoListingSettings);
   }
 
+  // Applied when the AI rules prompt sets detailed fee/price fields that live in
+  // seller preferences. Updates local state and persists in the background.
+  function handleApplyPreferencesFromAi(preferences: SellerPreferences) {
+    setSellerPrefs(preferences);
+    if (!userId) return;
+    void persistSellerPreferences(userId, preferences)
+      .then(() => triggerSavedToast())
+      .catch(() => {
+        // Best-effort; the value is still applied locally and saved on next step.
+      });
+  }
+
   function handleAutoListingToggle(enabled: boolean) {
     if (enabled) {
       setShowAutoSettingsModal(true);
@@ -1484,6 +1496,8 @@ export function ListingsShell() {
           initialSettings={amazefAutoSettings}
           onSave={handleAutoSettingsSave}
           onClose={() => setShowAutoSettingsModal(false)}
+          sellerPreferences={sellerPrefs}
+          onApplyPreferences={handleApplyPreferencesFromAi}
         />
       ) : null}
 
@@ -1492,6 +1506,8 @@ export function ListingsShell() {
           initialSettings={ebayAutoSettings}
           onSave={handleAutoSettingsSave}
           onClose={() => setShowAutoSettingsModal(false)}
+          sellerPreferences={sellerPrefs}
+          onApplyPreferences={handleApplyPreferencesFromAi}
         />
       ) : null}
 

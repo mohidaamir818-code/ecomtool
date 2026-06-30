@@ -8,16 +8,31 @@ import {
   type AmazefAutoListingSettings,
 } from "@/features/listings/lib/amazef-auto-listing";
 
+import type { SellerPreferences } from "@/types/listing-generator";
+
+// Fee/price fields the AI prompt can set that live in seller preferences (not in
+// the auto-listing settings object). Applied via onApplyPreferences when present.
+const PREFERENCE_KEYS = [
+  "paymentFeePercent",
+  "transactionFeeAmount",
+  "shippingCost",
+  "profitMarginPercent",
+] as const;
+
 interface AmazefAutoListingSettingsModalProps {
   initialSettings: AmazefAutoListingSettings;
   onSave: (settings: AmazefAutoListingSettings) => void;
   onClose: () => void;
+  sellerPreferences?: SellerPreferences | null;
+  onApplyPreferences?: (preferences: SellerPreferences) => void;
 }
 
 export function AmazefAutoListingSettingsModal({
   initialSettings,
   onSave,
   onClose,
+  sellerPreferences,
+  onApplyPreferences,
 }: AmazefAutoListingSettingsModalProps) {
   const [form, setForm] = useState<AmazefAutoListingSettings>(() =>
     normalizeAutoListingSettings(initialSettings),
@@ -28,6 +43,8 @@ export function AmazefAutoListingSettingsModal({
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiClarify, setAiClarify] = useState("");
+  const [aiQuestion, setAiQuestion] = useState("");
+  const [aiFeeAnswer, setAiFeeAnswer] = useState("");
   const [aiPending, setAiPending] = useState<{ summary: string; settings: Record<string, unknown> } | null>(
     null,
   );
@@ -41,6 +58,8 @@ export function AmazefAutoListingSettingsModal({
     if (!instruction) return;
     setAiBusy(true);
     setAiClarify("");
+    setAiQuestion("");
+    setAiFeeAnswer("");
     setAiPending(null);
     try {
       const response = await fetch("/api/listings/parse-rules", {
@@ -57,12 +76,55 @@ export function AmazefAutoListingSettingsModal({
         understood: boolean;
         summary: string;
         clarification: string | null;
+        question: string | null;
         settings: Record<string, unknown>;
       };
       if (result.understood) {
         setAiPending({ summary: result.summary, settings: result.settings });
+        if (result.question) setAiQuestion(result.question);
       } else {
         setAiClarify(result.clarification ?? "Please rewrite your rules more clearly.");
+      }
+    } catch {
+      setAiClarify("Something went wrong. Please try again.");
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
+  async function handleAiFeeAnswer() {
+    const answer = aiFeeAnswer.trim();
+    if (!answer || !aiPending) return;
+    const combined = `${aiPrompt.trim()}\n\n${answer}`;
+    setAiBusy(true);
+    setAiClarify("");
+    try {
+      const response = await fetch("/api/listings/parse-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform: "amazef", instruction: combined, currentSettings: form }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setAiClarify(data?.error ?? "Could not understand your answer. Please try again.");
+        return;
+      }
+      const result = data.result as {
+        understood: boolean;
+        summary: string;
+        clarification: string | null;
+        question: string | null;
+        settings: Record<string, unknown>;
+      };
+      if (result.understood) {
+        setAiPending({
+          summary: result.summary,
+          settings: { ...aiPending.settings, ...result.settings },
+        });
+        setAiQuestion(result.question?.trim() ? result.question : "");
+        setAiFeeAnswer("");
+      } else {
+        setAiClarify(result.clarification ?? "Please rewrite your fees more clearly.");
       }
     } catch {
       setAiClarify("Something went wrong. Please try again.");
@@ -74,8 +136,22 @@ export function AmazefAutoListingSettingsModal({
   function handleAiApply() {
     if (!aiPending) return;
     setForm((current) => normalizeAutoListingSettings({ ...current, ...aiPending.settings }));
+
+    // Detailed fee/price fields live in seller preferences — apply them there.
+    if (onApplyPreferences && sellerPreferences) {
+      const prefPatch: Record<string, unknown> = {};
+      for (const key of PREFERENCE_KEYS) {
+        if (aiPending.settings[key] != null) prefPatch[key] = Number(aiPending.settings[key]);
+      }
+      if (Object.keys(prefPatch).length > 0) {
+        onApplyPreferences({ ...sellerPreferences, ...prefPatch } as SellerPreferences);
+      }
+    }
+
     setAiPending(null);
     setAiClarify("");
+    setAiQuestion("");
+    setAiFeeAnswer("");
     setAiPrompt("");
     setError("");
   }
@@ -116,6 +192,8 @@ export function AmazefAutoListingSettingsModal({
             onChange={(event) => {
               setAiPrompt(event.target.value);
               setAiClarify("");
+              setAiQuestion("");
+              setAiFeeAnswer("");
               setAiPending(null);
             }}
             rows={3}
@@ -144,6 +222,28 @@ export function AmazefAutoListingSettingsModal({
             <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm">
               <span className="block font-medium text-[#111827]">Here’s what I understood:</span>
               <span className="mt-1 block text-[#374151]">{aiPending.summary}</span>
+
+              {aiQuestion ? (
+                <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+                  <span className="block text-sm font-medium text-[#111827]">{aiQuestion}</span>
+                  <input
+                    type="text"
+                    value={aiFeeAnswer}
+                    onChange={(event) => setAiFeeAnswer(event.target.value)}
+                    placeholder="e.g. Amazef fee 15%, payment fee 2.9%"
+                    className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAiFeeAnswer}
+                    disabled={aiBusy || !aiFeeAnswer.trim()}
+                    className="mt-2 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                  >
+                    {aiBusy ? "Updating…" : "Add fees & update"}
+                  </button>
+                </div>
+              ) : null}
+
               <div className="mt-2 flex gap-2">
                 <button
                   type="button"
@@ -154,7 +254,11 @@ export function AmazefAutoListingSettingsModal({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setAiPending(null)}
+                  onClick={() => {
+                    setAiPending(null);
+                    setAiQuestion("");
+                    setAiFeeAnswer("");
+                  }}
                   className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-[#374151] hover:bg-gray-50"
                 >
                   No, I’ll rewrite
@@ -333,6 +437,23 @@ export function AmazefAutoListingSettingsModal({
                   </span>
                 </span>
               </label>
+              {form.charmPricingEnabled && form.charmRules.length > 0 ? (
+                <div className="mt-2 rounded-lg border border-emerald-100 bg-white px-3 py-2 text-xs text-[#374151]">
+                  <span className="font-medium text-[#111827]">Custom endings:</span>
+                  <ul className="mt-1 space-y-0.5">
+                    {form.charmRules.map((rule, index) => (
+                      <li key={index}>
+                        {rule.maxPrice == null
+                          ? `All other prices → .${String(rule.ending).padStart(2, "0")}`
+                          : `Up to ${rule.maxPrice.toFixed(2)} → .${String(rule.ending).padStart(2, "0")}`}
+                      </li>
+                    ))}
+                  </ul>
+                  <span className="mt-1 block text-[#6B7280]">
+                    Set these by describing them in the AI box above.
+                  </span>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
