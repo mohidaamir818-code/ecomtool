@@ -17,6 +17,9 @@ const EBAY_SCOPES = [
   "https://api.ebay.com/oauth/api_scope/sell.inventory",
   "https://api.ebay.com/oauth/api_scope/sell.account",
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
+  // Promoted Listings (auto promotion). Sellers connected before this was added
+  // re-authorize once to grant it.
+  "https://api.ebay.com/oauth/api_scope/sell.marketing",
 ].join(" ");
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 

@@ -26,9 +26,60 @@ export function EbayAutoListingSettingsModal({
   const [error, setError] = useState("");
   const alreadyEnabled = initialSettings.enabled;
 
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiClarify, setAiClarify] = useState("");
+  const [aiPending, setAiPending] = useState<{ summary: string; settings: Record<string, unknown> } | null>(
+    null,
+  );
+
   useEffect(() => {
     setForm(normalizeEbayAutoListingSettings(initialSettings));
   }, [initialSettings]);
+
+  async function handleAiParse() {
+    const instruction = aiPrompt.trim();
+    if (!instruction) return;
+    setAiBusy(true);
+    setAiClarify("");
+    setAiPending(null);
+    try {
+      const response = await fetch("/api/listings/parse-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform: "ebay", instruction, currentSettings: form }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setAiClarify(data?.error ?? "Could not understand your rules. Please try again.");
+        return;
+      }
+      const result = data.result as {
+        understood: boolean;
+        summary: string;
+        clarification: string | null;
+        settings: Record<string, unknown>;
+      };
+      if (result.understood) {
+        setAiPending({ summary: result.summary, settings: result.settings });
+      } else {
+        setAiClarify(result.clarification ?? "Please rewrite your rules more clearly.");
+      }
+    } catch {
+      setAiClarify("Something went wrong. Please try again.");
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
+  function handleAiApply() {
+    if (!aiPending) return;
+    setForm((current) => normalizeEbayAutoListingSettings({ ...current, ...aiPending.settings }));
+    setAiPending(null);
+    setAiClarify("");
+    setAiPrompt("");
+    setError("");
+  }
 
   function updateField<K extends keyof EbayAutoListingSettings>(
     key: K,
@@ -65,6 +116,67 @@ export function EbayAutoListingSettingsModal({
         <p className="mt-2 text-sm text-[#6B7280]">
           Set your rules once. AI will apply them automatically for every URL you submit.
         </p>
+
+        <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50/60 p-4">
+          <span className="text-sm font-semibold text-[#111827]">
+            Describe your rules (English or Urdu)
+          </span>
+          <p className="mt-1 text-xs text-[#6B7280]">
+            e.g. “Jis product pe £5 se zyada profit ho us pe 8% promotion lagao, price hamesha
+            .99 par rakho.” AI will fill the settings below for you.
+          </p>
+          <textarea
+            value={aiPrompt}
+            onChange={(event) => {
+              setAiPrompt(event.target.value);
+              setAiClarify("");
+              setAiPending(null);
+            }}
+            rows={3}
+            placeholder="Write your pricing and promotion rules here…"
+            className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+          />
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleAiParse}
+              disabled={aiBusy || !aiPrompt.trim()}
+              className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {aiBusy ? "Understanding…" : "Apply with AI"}
+            </button>
+            {aiBusy ? <span className="text-xs text-[#6B7280]">Reading your rules…</span> : null}
+          </div>
+
+          {aiClarify ? (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              {aiClarify}
+            </div>
+          ) : null}
+
+          {aiPending ? (
+            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm">
+              <span className="block font-medium text-[#111827]">Here’s what I understood:</span>
+              <span className="mt-1 block text-[#374151]">{aiPending.summary}</span>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleAiApply}
+                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                >
+                  Yes, apply
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAiPending(null)}
+                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-[#374151] hover:bg-gray-50"
+                >
+                  No, I’ll rewrite
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
 
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <label className="block text-sm sm:col-span-2">
@@ -272,6 +384,61 @@ export function EbayAutoListingSettingsModal({
                     Lists just below the market average at a tidy .99 price (e.g. market £5 →
                     £4.99). Skipped automatically if it would drop below your minimum profit.
                   </span>
+                </span>
+              </label>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/60 px-4 py-3">
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
+              checked={form.autoPromoteEnabled}
+              onChange={(event) => updateField("autoPromoteEnabled", event.target.checked)}
+            />
+            <span>
+              <span className="font-medium text-[#111827]">Auto promote on eBay</span>
+              <span className="mt-1 block text-xs text-[#6B7280]">
+                After listing, eligible products are added to your Promoted Listings campaign
+                automatically so they show higher in search.
+              </span>
+            </span>
+          </label>
+          {form.autoPromoteEnabled ? (
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="block text-sm">
+                <span className="font-medium text-[#111827]">Only promote if profit ≥</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.5}
+                  value={form.autoPromoteMinProfit}
+                  onChange={(event) =>
+                    updateField("autoPromoteMinProfit", Number(event.target.value))
+                  }
+                  className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                />
+                <span className="mt-1 block text-xs text-[#6B7280]">
+                  Per item, after fees. 0 promotes everything.
+                </span>
+              </label>
+              <label className="block text-sm">
+                <span className="font-medium text-[#111827]">Ad rate %</span>
+                <input
+                  type="number"
+                  min={2}
+                  max={100}
+                  step={0.5}
+                  value={form.autoPromoteAdRatePercent}
+                  onChange={(event) =>
+                    updateField("autoPromoteAdRatePercent", Number(event.target.value))
+                  }
+                  className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                />
+                <span className="mt-1 block text-xs text-[#6B7280]">
+                  Fee charged by eBay only when the item sells via the ad.
                 </span>
               </label>
             </div>

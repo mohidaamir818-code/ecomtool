@@ -5,6 +5,7 @@ import { requireConfirmedLocation } from "@/lib/ebay/inventory-location";
 import { getSellerMarketplaceId } from "@/lib/ebay/marketplace";
 import { getEbayUserAccessToken } from "@/lib/ebay/oauth-user";
 import { listDraftOnEbay } from "@/lib/ebay/sell-inventory";
+import { promoteListing } from "@/lib/ebay/promoted-listings";
 import { sendEmail } from "@/lib/email/send-email";
 import { generateEbayListing } from "@/lib/gemini/generate-listing";
 import { checkVeroSafety } from "@/lib/gemini/vero-check";
@@ -318,6 +319,28 @@ export async function runEbayAutoListPipeline(
     await saveListedProduct(userId, "ebay", draft, listResult);
   } catch (error) {
     console.error("[eBay auto-list] Failed to save listed product:", error);
+  }
+
+  // Auto promotion: once listed, add the item to the seller's Promoted Listings
+  // campaign when its profit clears the seller's threshold. Best-effort — a
+  // promotion failure never affects the successful listing.
+  if (
+    settings.autoPromoteEnabled &&
+    listResult.listingId &&
+    pricingBreakdown.profit >= settings.autoPromoteMinProfit
+  ) {
+    try {
+      const result = await promoteListing(
+        userId,
+        listResult.listingId,
+        settings.autoPromoteAdRatePercent,
+      );
+      if (!result.promoted) {
+        console.warn("[eBay auto-list] Promotion skipped:", result.reason);
+      }
+    } catch (error) {
+      console.error("[eBay auto-list] Promotion error:", error);
+    }
   }
 
   const email = await getUserEmail(userId);

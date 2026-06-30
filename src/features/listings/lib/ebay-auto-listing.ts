@@ -23,6 +23,12 @@ export interface EbayAutoListingSettings {
   // Charm pricing: always end the price at .99, just below the market average
   // (only when it still keeps the seller's minimum profit).
   charmPricingEnabled: boolean;
+  // Auto promotion (eBay Promoted Listings): after a product is listed, it is
+  // added to the seller's promotion campaign automatically — but only when the
+  // per-item profit is at or above autoPromoteMinProfit (0 = always promote).
+  autoPromoteEnabled: boolean;
+  autoPromoteMinProfit: number;
+  autoPromoteAdRatePercent: number;
 }
 
 export const DEFAULT_EBAY_AUTO_LISTING_SETTINGS: EbayAutoListingSettings = {
@@ -40,6 +46,9 @@ export const DEFAULT_EBAY_AUTO_LISTING_SETTINGS: EbayAutoListingSettings = {
   marketUndercutPercent: 3,
   marketUndercutAmount: 1,
   charmPricingEnabled: false,
+  autoPromoteEnabled: false,
+  autoPromoteMinProfit: 5,
+  autoPromoteAdRatePercent: 5,
 };
 
 export function ebayAutoListingSettingsKey(userId: string) {
@@ -117,6 +126,14 @@ export function normalizeEbayAutoListingSettings(
     marketUndercutPercent,
     marketUndercutAmount,
     charmPricingEnabled: Boolean(input.charmPricingEnabled),
+    autoPromoteEnabled: Boolean(input.autoPromoteEnabled),
+    autoPromoteMinProfit: clampNumber(input.autoPromoteMinProfit, 0, 100000, base.autoPromoteMinProfit),
+    autoPromoteAdRatePercent: clampNumber(
+      input.autoPromoteAdRatePercent,
+      2,
+      100,
+      base.autoPromoteAdRatePercent,
+    ),
   };
 }
 
