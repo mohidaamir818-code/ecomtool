@@ -49,9 +49,72 @@ export function AmazefAutoListingSettingsModal({
     null,
   );
 
+  // Second box: seller's own custom price-ending / pricing rules in plain words.
+  const [rulePrompt, setRulePrompt] = useState("");
+  const [ruleBusy, setRuleBusy] = useState(false);
+  const [ruleClarify, setRuleClarify] = useState("");
+  const [rulePending, setRulePending] = useState<{ summary: string; settings: Record<string, unknown> } | null>(
+    null,
+  );
+
   useEffect(() => {
     setForm(normalizeAutoListingSettings(initialSettings));
   }, [initialSettings]);
+
+  async function handleRuleParse() {
+    const instruction = rulePrompt.trim();
+    if (!instruction) return;
+    setRuleBusy(true);
+    setRuleClarify("");
+    setRulePending(null);
+    try {
+      const response = await fetch("/api/listings/parse-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform: "amazef", instruction, currentSettings: form }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setRuleClarify(data?.error ?? "Could not understand your rules. Please try again.");
+        return;
+      }
+      const result = data.result as {
+        understood: boolean;
+        summary: string;
+        clarification: string | null;
+        settings: Record<string, unknown>;
+      };
+      if (result.understood) {
+        setRulePending({ summary: result.summary, settings: result.settings });
+      } else {
+        setRuleClarify(result.clarification ?? "Please rewrite your rules more clearly.");
+      }
+    } catch {
+      setRuleClarify("Something went wrong. Please try again.");
+    } finally {
+      setRuleBusy(false);
+    }
+  }
+
+  function handleRuleApply() {
+    if (!rulePending) return;
+    setForm((current) => normalizeAutoListingSettings({ ...current, ...rulePending.settings }));
+
+    if (onApplyPreferences && sellerPreferences) {
+      const prefPatch: Record<string, unknown> = {};
+      for (const key of PREFERENCE_KEYS) {
+        if (rulePending.settings[key] != null) prefPatch[key] = Number(rulePending.settings[key]);
+      }
+      if (Object.keys(prefPatch).length > 0) {
+        onApplyPreferences({ ...sellerPreferences, ...prefPatch } as SellerPreferences);
+      }
+    }
+
+    setRulePending(null);
+    setRuleClarify("");
+    setRulePrompt("");
+    setError("");
+  }
 
   async function handleAiParse() {
     const instruction = aiPrompt.trim();
@@ -259,6 +322,67 @@ export function AmazefAutoListingSettingsModal({
                     setAiQuestion("");
                     setAiFeeAnswer("");
                   }}
+                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-[#374151] hover:bg-gray-50"
+                >
+                  No, I’ll rewrite
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50/60 p-4">
+          <span className="text-sm font-semibold text-[#111827]">
+            Your own price rules (e.g. .99 / .59 / .89 endings)
+          </span>
+          <p className="mt-1 text-xs text-[#6B7280]">
+            Write exactly how you want prices to end by range. e.g. “Agar £1 jaisa ho to .99, agar
+            £1.80 ya £1.90 ho to .59, baqi sab .89 par rakho.” AI samajh ke apply kar dega.
+          </p>
+          <textarea
+            value={rulePrompt}
+            onChange={(event) => {
+              setRulePrompt(event.target.value);
+              setRuleClarify("");
+              setRulePending(null);
+            }}
+            rows={3}
+            placeholder="Apni price-ending rules yahan likhein…"
+            className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+          />
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleRuleParse}
+              disabled={ruleBusy || !rulePrompt.trim()}
+              className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {ruleBusy ? "Understanding…" : "Apply with AI"}
+            </button>
+            {ruleBusy ? <span className="text-xs text-[#6B7280]">Reading your rules…</span> : null}
+          </div>
+
+          {ruleClarify ? (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              {ruleClarify}
+            </div>
+          ) : null}
+
+          {rulePending ? (
+            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm">
+              <span className="block font-medium text-[#111827]">Here’s what I understood:</span>
+              <span className="mt-1 block text-[#374151]">{rulePending.summary}</span>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleRuleApply}
+                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                >
+                  Yes, apply
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRulePending(null)}
                   className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-[#374151] hover:bg-gray-50"
                 >
                   No, I’ll rewrite
