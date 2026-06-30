@@ -57,6 +57,22 @@ export function AmazefAutoListingSettingsModal({
     null,
   );
 
+  // BOGO (Buy One Get One) rules, described by the seller in plain words.
+  const [bogoPrompt, setBogoPrompt] = useState("");
+  const [bogoBusy, setBogoBusy] = useState(false);
+  const [bogoClarify, setBogoClarify] = useState("");
+  const [bogoPending, setBogoPending] = useState<{ summary: string; settings: Record<string, unknown> } | null>(
+    null,
+  );
+
+  // Flash sale rules, described by the seller in plain words.
+  const [flashPrompt, setFlashPrompt] = useState("");
+  const [flashBusy, setFlashBusy] = useState(false);
+  const [flashClarify, setFlashClarify] = useState("");
+  const [flashPending, setFlashPending] = useState<{ summary: string; settings: Record<string, unknown> } | null>(
+    null,
+  );
+
   useEffect(() => {
     setForm(normalizeAutoListingSettings(initialSettings));
   }, [initialSettings]);
@@ -113,6 +129,64 @@ export function AmazefAutoListingSettingsModal({
     setRulePending(null);
     setRuleClarify("");
     setRulePrompt("");
+    setError("");
+  }
+
+  async function handlePromoParse(
+    instruction: string,
+    setBusy: (value: boolean) => void,
+    setClarify: (value: string) => void,
+    setPending: (value: { summary: string; settings: Record<string, unknown> } | null) => void,
+  ) {
+    const text = instruction.trim();
+    if (!text) return;
+    setBusy(true);
+    setClarify("");
+    setPending(null);
+    try {
+      const response = await fetch("/api/listings/parse-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform: "amazef", instruction: text, currentSettings: form }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setClarify(data?.error ?? "Could not understand your rules. Please try again.");
+        return;
+      }
+      const result = data.result as {
+        understood: boolean;
+        summary: string;
+        clarification: string | null;
+        settings: Record<string, unknown>;
+      };
+      if (result.understood) {
+        setPending({ summary: result.summary, settings: result.settings });
+      } else {
+        setClarify(result.clarification ?? "Please rewrite your rules more clearly.");
+      }
+    } catch {
+      setClarify("Something went wrong. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleBogoApply() {
+    if (!bogoPending) return;
+    setForm((current) => normalizeAutoListingSettings({ ...current, ...bogoPending.settings }));
+    setBogoPending(null);
+    setBogoClarify("");
+    setBogoPrompt("");
+    setError("");
+  }
+
+  function handleFlashApply() {
+    if (!flashPending) return;
+    setForm((current) => normalizeAutoListingSettings({ ...current, ...flashPending.settings }));
+    setFlashPending(null);
+    setFlashClarify("");
+    setFlashPrompt("");
     setError("");
   }
 
@@ -383,6 +457,131 @@ export function AmazefAutoListingSettingsModal({
                 <button
                   type="button"
                   onClick={() => setRulePending(null)}
+                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-[#374151] hover:bg-gray-50"
+                >
+                  No, I’ll rewrite
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="mt-3 rounded-xl border border-orange-200 bg-orange-50/60 p-4">
+          <span className="text-sm font-semibold text-[#111827]">
+            Buy One Get One (BOGO) rules
+          </span>
+          <p className="mt-1 text-xs text-[#6B7280]">
+            Apne words me likhein kab BOGO lagani hai. e.g. “Jis product par profit £4 se zyada ho
+            us par Buy One Get One Free laga do.” AI samajh ke apply kar dega — kuch bhi likhein.
+          </p>
+          <textarea
+            value={bogoPrompt}
+            onChange={(event) => {
+              setBogoPrompt(event.target.value);
+              setBogoClarify("");
+              setBogoPending(null);
+            }}
+            rows={3}
+            placeholder="Apni BOGO rules yahan likhein…"
+            className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+          />
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                handlePromoParse(bogoPrompt, setBogoBusy, setBogoClarify, setBogoPending)
+              }
+              disabled={bogoBusy || !bogoPrompt.trim()}
+              className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {bogoBusy ? "Understanding…" : "Apply with AI"}
+            </button>
+            {bogoBusy ? <span className="text-xs text-[#6B7280]">Reading your rules…</span> : null}
+          </div>
+
+          {bogoClarify ? (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              {bogoClarify}
+            </div>
+          ) : null}
+
+          {bogoPending ? (
+            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm">
+              <span className="block font-medium text-[#111827]">Here’s what I understood:</span>
+              <span className="mt-1 block text-[#374151]">{bogoPending.summary}</span>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleBogoApply}
+                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                >
+                  Yes, apply
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBogoPending(null)}
+                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-[#374151] hover:bg-gray-50"
+                >
+                  No, I’ll rewrite
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50/60 p-4">
+          <span className="text-sm font-semibold text-[#111827]">Flash sale rules</span>
+          <p className="mt-1 text-xs text-[#6B7280]">
+            Apne words me likhein flash sale kaise chahiye. e.g. “Price wahi rakho, bas flash sale
+            me upar discount dikhao taake buyer ko lage sale hai.” Ya “20% off flash sale par lagao
+            jab profit £5 se zyada ho.” AI samajh ke apply kar dega.
+          </p>
+          <textarea
+            value={flashPrompt}
+            onChange={(event) => {
+              setFlashPrompt(event.target.value);
+              setFlashClarify("");
+              setFlashPending(null);
+            }}
+            rows={3}
+            placeholder="Apni flash sale rules yahan likhein…"
+            className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+          />
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                handlePromoParse(flashPrompt, setFlashBusy, setFlashClarify, setFlashPending)
+              }
+              disabled={flashBusy || !flashPrompt.trim()}
+              className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {flashBusy ? "Understanding…" : "Apply with AI"}
+            </button>
+            {flashBusy ? <span className="text-xs text-[#6B7280]">Reading your rules…</span> : null}
+          </div>
+
+          {flashClarify ? (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              {flashClarify}
+            </div>
+          ) : null}
+
+          {flashPending ? (
+            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm">
+              <span className="block font-medium text-[#111827]">Here’s what I understood:</span>
+              <span className="mt-1 block text-[#374151]">{flashPending.summary}</span>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleFlashApply}
+                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                >
+                  Yes, apply
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFlashPending(null)}
                   className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-[#374151] hover:bg-gray-50"
                 >
                   No, I’ll rewrite

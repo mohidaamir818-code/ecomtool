@@ -28,9 +28,35 @@ interface AmazefCreateResponse {
   error?: string;
 }
 
+/**
+ * Promotions the Amazef agent should apply after creating the listing. Built by
+ * the auto-list pipeline from the seller's AI-configured rules. The agent is
+ * responsible for actually applying BOGO / flash sale on amazef.com and must
+ * never let the real selling price drop below `floorPrice`.
+ */
+export interface AmazefPromotionPayload {
+  /** Lowest price (in the listing currency) that still keeps the seller's minimum profit. */
+  floorPrice?: number;
+  bogo?: {
+    enabled: true;
+    /** The seller's own plain-language description of how BOGO should work. */
+    rule: string;
+  };
+  flashSale?: {
+    enabled: true;
+    /** When true, keep the real price the same and only SHOW a discount/“was” price. */
+    keepPrice: boolean;
+    /** The discount % to show (keepPrice) or apply (real, clamped to floorPrice). */
+    discountPercent: number;
+    /** The seller's own plain-language description of how the flash sale should work. */
+    rule: string;
+  };
+}
+
 export async function listDraftOnAmazef(
   userId: string,
   draft: ListingDraft,
+  promotions?: AmazefPromotionPayload,
 ): Promise<ListOnEbayResult> {
   const baseUrl = serverEnv.amazefListingUrl();
   if (!baseUrl) {
@@ -75,6 +101,7 @@ export async function listDraftOnAmazef(
         externalUserRef: amazefEmail,
         draft: listingDraft,
         shippingDays: shippingDaysLabel,
+        ...(promotions && Object.keys(promotions).length > 0 ? { promotions } : {}),
       }),
       cache: "no-store",
       signal: controller.signal,

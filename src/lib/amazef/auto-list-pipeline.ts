@@ -1,6 +1,6 @@
 import "server-only";
 
-import { listDraftOnAmazef } from "@/lib/amazef/listing";
+import { listDraftOnAmazef, type AmazefPromotionPayload } from "@/lib/amazef/listing";
 import { saveListedProduct } from "@/lib/listings/listed-products-service";
 import { sendEmail } from "@/lib/email/send-email";
 import { generateEbayListing } from "@/lib/gemini/generate-listing";
@@ -68,6 +68,54 @@ function resolvePricingWithinProfitBounds(
   }
 
   return bestInRange ?? bestAboveMin;
+}
+
+/** Lowest price that still keeps the seller's minimum profit — a safety floor for promotions. */
+function priceFloorAtMinProfit(
+  aliPrice: number,
+  basePrefs: ListingPricingPreferences,
+  minProfitPercent: number,
+  fallback: number,
+): number {
+  for (let margin = 0; margin <= 85; margin += 0.5) {
+    const breakdown = calculatePricingBreakdown(aliPrice, {
+      ...basePrefs,
+      profitMarginPercent: margin,
+    });
+    if (breakdown.profitPercent >= minProfitPercent) return breakdown.recommendedPrice;
+  }
+  return fallback;
+}
+
+/**
+ * Builds the promotion payload for the Amazef agent from the seller's AI-configured
+ * rules. BOGO / flash sale are only attached when the per-item profit clears the
+ * seller's threshold, and a safety floor price is always included.
+ */
+function buildAmazefPromotions(
+  settings: AmazefAutoListingSettings,
+  itemProfit: number,
+  floorPrice: number,
+): AmazefPromotionPayload | undefined {
+  const payload: AmazefPromotionPayload = {};
+
+  if (settings.bogoEnabled && itemProfit >= settings.bogoMinProfit) {
+    payload.bogo = { enabled: true, rule: settings.bogoRule };
+  }
+
+  if (settings.flashSaleEnabled && itemProfit >= settings.flashSaleMinProfit) {
+    payload.flashSale = {
+      enabled: true,
+      keepPrice: settings.flashSaleKeepPrice,
+      discountPercent: settings.flashSaleDiscountPercent,
+      rule: settings.flashSaleRule,
+    };
+  }
+
+  if (!payload.bogo && !payload.flashSale) return undefined;
+
+  payload.floorPrice = Number(floorPrice.toFixed(2));
+  return payload;
 }
 
 function applyStockLimits(draft: ListingDraft, minStock: number, maxStock: number): ListingDraft {
@@ -230,7 +278,22 @@ export async function runAmazefAutoListPipeline(
 
   draft = await assignSkusToDraft(userId, draft);
 
-  const listResult = await listDraftOnAmazef(userId, draft);
+  // Seller-configured BOGO / flash sale rules, attached only when this product's
+  // profit clears the seller's threshold. The Amazef agent applies them and must
+  // not drop the real price below the included floor price.
+  const promotionFloor = priceFloorAtMinProfit(
+    aliPrice,
+    feePrefs,
+    settings.minProfitPercent,
+    listingPrice,
+  );
+  const amazefPromotions = buildAmazefPromotions(
+    settings,
+    pricingBreakdown.profit,
+    promotionFloor,
+  );
+
+  const listResult = await listDraftOnAmazef(userId, draft, amazefPromotions);
 
   try {
     await saveListedProduct(userId, "amazef", draft, listResult);

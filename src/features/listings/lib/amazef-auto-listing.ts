@@ -31,6 +31,23 @@ export interface AmazefAutoListingSettings {
   // Optional per-price-range endings (e.g. ≤£1.5 → .99, ≤£2 → .59, else → .89).
   // Empty means charm pricing uses .99 for everything.
   charmRules: CharmRule[];
+  // Buy One Get One (BOGO) promotion, configured in the seller's own words via AI.
+  bogoEnabled: boolean;
+  // Only apply BOGO when the per-item profit (money) is at least this.
+  bogoMinProfit: number;
+  // The seller's own plain-language description of how BOGO should work.
+  bogoRule: string;
+  // Flash sale promotion, configured in the seller's own words via AI.
+  flashSaleEnabled: boolean;
+  // When true, the real selling price stays the same and we only SHOW a higher
+  // "was" price / discount so buyers feel it's on sale (no real loss).
+  flashSaleKeepPrice: boolean;
+  // The discount % to show/apply in the flash sale.
+  flashSaleDiscountPercent: number;
+  // Only apply the flash sale when the per-item profit (money) is at least this.
+  flashSaleMinProfit: number;
+  // The seller's own plain-language description of how the flash sale should work.
+  flashSaleRule: string;
 }
 
 export const DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS: AmazefAutoListingSettings = {
@@ -48,6 +65,14 @@ export const DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS: AmazefAutoListingSettings = {
   marketUndercutAmount: 1,
   charmPricingEnabled: false,
   charmRules: [],
+  bogoEnabled: false,
+  bogoMinProfit: 0,
+  bogoRule: "",
+  flashSaleEnabled: false,
+  flashSaleKeepPrice: false,
+  flashSaleDiscountPercent: 0,
+  flashSaleMinProfit: 0,
+  flashSaleRule: "",
 };
 
 export function amazefAutoListingSettingsKey(userId: string) {
@@ -123,6 +148,19 @@ export function normalizeAutoListingSettings(
     marketUndercutAmount,
     charmPricingEnabled: Boolean(input.charmPricingEnabled),
     charmRules: normalizeCharmRules(input.charmRules),
+    bogoEnabled: Boolean(input.bogoEnabled),
+    bogoMinProfit: clampNumber(input.bogoMinProfit, 0, 100000, base.bogoMinProfit),
+    bogoRule: clampString(input.bogoRule, base.bogoRule),
+    flashSaleEnabled: Boolean(input.flashSaleEnabled),
+    flashSaleKeepPrice: Boolean(input.flashSaleKeepPrice),
+    flashSaleDiscountPercent: clampNumber(
+      input.flashSaleDiscountPercent,
+      0,
+      90,
+      base.flashSaleDiscountPercent,
+    ),
+    flashSaleMinProfit: clampNumber(input.flashSaleMinProfit, 0, 100000, base.flashSaleMinProfit),
+    flashSaleRule: clampString(input.flashSaleRule, base.flashSaleRule),
   };
 }
 
@@ -130,6 +168,11 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(max, Math.max(min, parsed));
+}
+
+function clampString(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  return value.trim().slice(0, 500);
 }
 
 export function loadAutoListingSettings(userId: string): AmazefAutoListingSettings {

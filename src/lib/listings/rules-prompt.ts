@@ -74,6 +74,16 @@ const AMAZEF_FIELDS = `
   .99, agar £1.80 ya £1.90 ho to .59, baqi .89" → set charmPricingEnabled true and charmRules
   [{"maxPrice":1.5,"ending":99},{"maxPrice":1.99,"ending":59},{"maxPrice":null,"ending":89}].
   The numbers the seller gives are EXAMPLES of ranges, never a single exact price only.
+- bogoEnabled (boolean) — apply a Buy One Get One (BOGO) promotion
+- bogoMinProfit (number) — only apply BOGO when per-item profit (money) is at least this
+- bogoRule (string) — a short summary of the seller's BOGO rule, written in their own words/language
+- flashSaleEnabled (boolean) — add the listing to a flash sale
+- flashSaleKeepPrice (boolean) — set TRUE when the seller wants the REAL selling price to stay the
+  SAME and only SHOW a higher "was" price / discount so buyers feel it is on sale (no real loss).
+  Example: "price wahi rakho bas flash sale me upar discount dikhao" → flashSaleKeepPrice true.
+- flashSaleDiscountPercent (number) — the discount % to show or apply in the flash sale
+- flashSaleMinProfit (number) — only apply the flash sale when per-item profit (money) is at least this
+- flashSaleRule (string) — a short summary of the seller's flash-sale rule, in their own words/language
 - listVeroProducts (boolean)
 `;
 
