@@ -546,23 +546,8 @@ export function AmazefAutoListingSettingsModal({
                 Whatever you choose, the price never drops below your minimum profit.
               </span>
 
-              <label className="mt-3 flex items-start gap-2 border-t border-emerald-100 pt-3 text-sm">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
-                  checked={form.charmPricingEnabled}
-                  onChange={(event) => updateField("charmPricingEnabled", event.target.checked)}
-                />
-                <span>
-                  <span className="font-medium text-[#111827]">End prices at .99</span>
-                  <span className="mt-0.5 block text-xs text-[#6B7280]">
-                    Lists just below the market average at a tidy .99 price (e.g. market £5 →
-                    £4.99). Skipped automatically if it would drop below your minimum profit.
-                  </span>
-                </span>
-              </label>
               {form.charmPricingEnabled && form.charmRules.length > 0 ? (
-                <div className="mt-2 rounded-lg border border-emerald-100 bg-white px-3 py-2 text-xs text-[#374151]">
+                <div className="mt-3 rounded-lg border-t border-emerald-100 bg-white px-3 py-2 text-xs text-[#374151]">
                   <span className="font-medium text-[#111827]">Custom endings:</span>
                   <ul className="mt-1 space-y-0.5">
                     {form.charmRules.map((rule, index) => (
