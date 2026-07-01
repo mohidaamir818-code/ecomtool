@@ -38,6 +38,7 @@ export function SupplierFinderShell() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<SupplierSearchResponse | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const aliQuota = usePlatformQuota(userId, "aliexpress");
@@ -129,10 +130,7 @@ export function SupplierFinderShell() {
     void runSearch((result.page ?? 1) + 1, true);
   }
 
-  function handlePhotoChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
+  function applyPhotoFile(file: File) {
     if (!file.type.startsWith("image/")) {
       setError("Please upload an image file (JPG, PNG, or WebP).");
       return;
@@ -152,6 +150,30 @@ export function SupplierFinderShell() {
       setResult(null);
     };
     reader.readAsDataURL(file);
+  }
+
+  function handlePhotoChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    applyPhotoFile(file);
+  }
+
+  function handlePhotoDrop(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsDragging(false);
+    const file = event.dataTransfer.files?.[0];
+    if (!file) return;
+    applyPhotoFile(file);
+  }
+
+  function handlePhotoDragOver(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsDragging(true);
+  }
+
+  function handlePhotoDragLeave(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsDragging(false);
   }
 
   function clearPhoto() {
@@ -217,7 +239,14 @@ export function SupplierFinderShell() {
                 onChange={handlePhotoChange}
               />
               {photoPreview ? (
-                <div className="flex flex-wrap items-start gap-4">
+                <div
+                  className={`flex flex-wrap items-start gap-4 rounded-xl border-2 border-dashed p-3 transition ${
+                    isDragging ? "border-brand bg-brand/5" : "border-transparent"
+                  }`}
+                  onDragOver={handlePhotoDragOver}
+                  onDragLeave={handlePhotoDragLeave}
+                  onDrop={handlePhotoDrop}
+                >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={photoPreview}
@@ -239,19 +268,36 @@ export function SupplierFinderShell() {
                     >
                       Remove
                     </button>
+                    <span className="text-xs text-[#6B7280]">Or drag & drop a new photo here</span>
                   </div>
                 </div>
               ) : (
-                <button
-                  type="button"
+                <div
+                  role="button"
+                  tabIndex={0}
                   onClick={() => fileInputRef.current?.click()}
-                  className="flex w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-200 px-6 py-10 text-center hover:border-brand hover:bg-brand/5"
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      fileInputRef.current?.click();
+                    }
+                  }}
+                  onDragOver={handlePhotoDragOver}
+                  onDragLeave={handlePhotoDragLeave}
+                  onDrop={handlePhotoDrop}
+                  className={`flex w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-10 text-center transition ${
+                    isDragging
+                      ? "border-brand bg-brand/10"
+                      : "border-gray-200 hover:border-brand hover:bg-brand/5"
+                  }`}
                 >
-                  <span className="text-sm font-semibold text-[#111827]">Upload a product photo</span>
+                  <span className="text-sm font-semibold text-[#111827]">
+                    {isDragging ? "Drop photo here" : "Upload or drag & drop a product photo"}
+                  </span>
                   <span className="mt-1 text-xs text-[#6B7280]">
                     AI reads the image and finds similar AliExpress products
                   </span>
-                </button>
+                </div>
               )}
             </div>
           ) : (
