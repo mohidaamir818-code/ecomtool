@@ -78,6 +78,29 @@ function resolveStockParams(region: SupplierStockRegion): {
   return { shipToCountry: "GB", currency: "GBP" };
 }
 
+/** AliExpress search works best with a short space-separated phrase, not comma lists. */
+function sanitizeSearchKeywords(input: string): string {
+  return input
+    .replace(/[,;|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 100);
+}
+
+function isEmptyAffiliateResultMessage(message: string): boolean {
+  return /result is empty|no result|not found|no product/i.test(message);
+}
+
+function emptySearchResult(page: number, pageSize: number): AffiliateSearchResult {
+  return {
+    products: [],
+    total: 0,
+    page,
+    pageSize,
+    hasMore: false,
+  };
+}
+
 async function callAffiliateApi(
   method: string,
   businessParams: Record<string, string>,
@@ -168,7 +191,7 @@ function normalizeProduct(raw: Record<string, unknown>): SupplierProduct | null 
 export async function searchAffiliateProducts(
   options: AffiliateSearchOptions,
 ): Promise<AffiliateSearchResult> {
-  const keywords = options.keywords.trim();
+  const keywords = sanitizeSearchKeywords(options.keywords);
   if (keywords.length < 2) {
     throw new Error("Search keywords must be at least 2 characters.");
   }
@@ -177,68 +200,83 @@ export async function searchAffiliateProducts(
   const pageSize = Math.min(50, Math.max(1, options.pageSize ?? 20));
   const stock = resolveStockParams(options.stockRegion);
 
-  const businessParams: Record<string, string> = {
-    keywords,
-    fields: PRODUCT_FIELDS,
-    page_no: String(page),
-    page_size: String(pageSize),
-    target_currency: stock.currency,
-    target_language: "EN",
-    ship_to_country: stock.shipToCountry,
-    sort: "LAST_VOLUME_DESC",
-  };
+  async function runQuery(includeDeliveryDays: boolean): Promise<AffiliateSearchResult> {
+    const businessParams: Record<string, string> = {
+      keywords,
+      fields: PRODUCT_FIELDS,
+      page_no: String(page),
+      page_size: String(pageSize),
+      target_currency: stock.currency,
+      target_language: "EN",
+      ship_to_country: stock.shipToCountry,
+      sort: "LAST_VOLUME_DESC",
+    };
 
-  if (stock.deliveryDays) {
-    businessParams.delivery_days = stock.deliveryDays;
-  }
+    if (includeDeliveryDays && stock.deliveryDays) {
+      businessParams.delivery_days = stock.deliveryDays;
+    }
 
-  const payload = await callAffiliateApi("aliexpress.affiliate.product.query", businessParams);
-  if (!payload) {
-    throw new Error("AliExpress Affiliate API returned an empty response.");
-  }
+    const payload = await callAffiliateApi("aliexpress.affiliate.product.query", businessParams);
+    if (!payload) {
+      throw new Error("AliExpress Affiliate API returned an empty response.");
+    }
 
-  const affiliateResponse = payload.aliexpress_affiliate_product_query_response as
-    | {
-        resp_result?: {
-          resp_code?: number;
-          resp_msg?: string;
-          result?: {
-            products?: { product?: unknown[] } | unknown[];
-            current_page_no?: number;
-            total_record_count?: number;
-            is_finished?: boolean;
+    const affiliateResponse = payload.aliexpress_affiliate_product_query_response as
+      | {
+          resp_result?: {
+            resp_code?: number;
+            resp_msg?: string;
+            result?: {
+              products?: { product?: unknown[] } | unknown[];
+              current_page_no?: number;
+              total_record_count?: number;
+              is_finished?: boolean;
+            };
           };
-        };
-      }
-    | undefined;
+        }
+      | undefined;
 
-  const respCode = affiliateResponse?.resp_result?.resp_code;
-  if (respCode != null && respCode !== 200 && respCode !== 0) {
-    throw new Error(
-      affiliateResponse?.resp_result?.resp_msg ?? "AliExpress Affiliate search failed.",
-    );
+    const respCode = affiliateResponse?.resp_result?.resp_code;
+    const respMsg = affiliateResponse?.resp_result?.resp_msg?.trim() ?? "";
+
+    if (respCode != null && respCode !== 200 && respCode !== 0) {
+      if (isEmptyAffiliateResultMessage(respMsg)) {
+        return emptySearchResult(page, pageSize);
+      }
+      throw new Error(respMsg || "AliExpress Affiliate search failed.");
+    }
+
+    const result = affiliateResponse?.resp_result?.result;
+    const rawProducts = result?.products;
+    const items = Array.isArray(rawProducts)
+      ? rawProducts
+      : Array.isArray(rawProducts?.product)
+        ? rawProducts.product
+        : rawProducts?.product && typeof rawProducts.product === "object"
+          ? [rawProducts.product]
+          : [];
+
+    const products = items
+      .map((item) => normalizeProduct(item as Record<string, unknown>))
+      .filter((item): item is SupplierProduct => item !== null);
+
+    const total = Number(result?.total_record_count ?? products.length);
+    const hasMore = result?.is_finished === false || page * pageSize < total;
+
+    return {
+      products,
+      total,
+      page,
+      pageSize,
+      hasMore,
+    };
   }
 
-  const result = affiliateResponse?.resp_result?.result;
-  const rawProducts = result?.products;
-  const items = Array.isArray(rawProducts)
-    ? rawProducts
-    : Array.isArray(rawProducts?.product)
-      ? rawProducts.product
-      : [];
+  const primary = await runQuery(true);
+  if (primary.products.length > 0 || !stock.deliveryDays) {
+    return primary;
+  }
 
-  const products = items
-    .map((item) => normalizeProduct(item as Record<string, unknown>))
-    .filter((item): item is SupplierProduct => item !== null);
-
-  const total = Number(result?.total_record_count ?? products.length);
-  const hasMore = result?.is_finished === false || page * pageSize < total;
-
-  return {
-    products,
-    total,
-    page,
-    pageSize,
-    hasMore,
-  };
+  // UK/US 3-day filter is strict — retry without delivery_days so photo/title searches still find matches.
+  return runQuery(false);
 }

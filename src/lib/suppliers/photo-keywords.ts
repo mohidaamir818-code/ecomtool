@@ -26,6 +26,21 @@ function parseDataUrl(input: string): { mediaType: string; data: string } | null
   return { mediaType: match[1].toLowerCase(), data: match[2] };
 }
 
+function buildAffiliateSearchQuery(title: string, keywords: string): string {
+  const normalizedTitle = title.replace(/[,;|]+/g, " ").replace(/\s+/g, " ").trim();
+  if (normalizedTitle.length >= 3) return normalizedTitle.slice(0, 80);
+
+  const terms = keywords
+    .split(/[,;|]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (terms.length > 0) {
+    return terms.slice(0, 5).join(" ").slice(0, 80);
+  }
+
+  return keywords.replace(/[,;|]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+}
+
 function detectMediaType(buffer: Buffer): "image/jpeg" | "image/png" | "image/webp" | "image/gif" {
   if (buffer[0] === 0xff && buffer[1] === 0xd8) return "image/jpeg";
   if (buffer[0] === 0x89 && buffer[1] === 0x50) return "image/png";
@@ -89,8 +104,8 @@ export async function extractSupplierKeywordsFromPhoto(input: {
             type: "text",
             text: `Look at this product photo. Return ONLY valid JSON:
 {
-  "title": "short product title in English",
-  "keywords": "3-8 AliExpress search keywords, comma-separated, most specific first"
+  "title": "short product title in English, 3-8 words",
+  "keywords": "extra descriptive words for the product, comma-separated"
 }
 
 Focus on what the product IS (type, material, color, key features). No brand names unless clearly visible.`,
@@ -118,8 +133,10 @@ Focus on what the product IS (type, material, color, key features). No brand nam
     throw new Error("Could not extract search keywords from this photo. Try another image.");
   }
 
+  const searchQuery = buildAffiliateSearchQuery(title, keywords);
+
   return {
-    keywords: keywords || title,
-    title: title || keywords,
+    keywords: searchQuery,
+    title: title || searchQuery,
   };
 }
