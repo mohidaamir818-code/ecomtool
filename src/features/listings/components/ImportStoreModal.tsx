@@ -54,6 +54,9 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
       const nextSuggestions: Record<string, StoreImportSuggestedMatch | null> = {};
       const nextUrls: Record<string, string> = {};
       const nextSelected: Record<string, boolean> = {};
+      setSuggestions({});
+      setSuggestionUrls({});
+      setSelectedToSave({});
 
       try {
         for (let index = 0; index < unlinkedIds.length; index += SUGGEST_BATCH_SIZE) {
@@ -84,11 +87,19 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
               nextSelected[listingId] = true;
             }
           }
-        }
 
-        setSuggestions(nextSuggestions);
-        setSuggestionUrls(nextUrls);
-        setSelectedToSave(nextSelected);
+          setSuggestions((current) => ({ ...current, ...nextSuggestions }));
+          setSuggestionUrls((current) => {
+            const updated = { ...current };
+            for (const [listingId, url] of Object.entries(nextUrls)) {
+              if (!updated[listingId]?.trim()) {
+                updated[listingId] = url;
+              }
+            }
+            return updated;
+          });
+          setSelectedToSave((current) => ({ ...current, ...nextSelected }));
+        }
 
         const foundCount = Object.values(nextSuggestions).filter(Boolean).length;
         if (foundCount > 0) {
