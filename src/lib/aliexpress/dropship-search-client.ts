@@ -460,11 +460,16 @@ function normalizeDropshipProduct(
 
   const price =
     parseNumber(raw.target_sale_price) ??
+    parseNumber(raw.targetSalePrice) ??
     parseNumber(raw.target_app_sale_price) ??
+    parseNumber(raw.targetAppSalePrice) ??
     parseNumber(raw.app_sale_price) ??
+    parseNumber(raw.appSalePrice) ??
     parseNumber(raw.sale_price) ??
+    parseNumber(raw.salePrice) ??
     parseNumber(raw.price) ??
     parseNumber(raw.original_price) ??
+    parseNumber(raw.originalPrice) ??
     0;
 
   if (!productId || !title) return null;
@@ -472,11 +477,15 @@ function normalizeDropshipProduct(
   const currency =
     typeof raw.target_sale_price_currency === "string"
       ? raw.target_sale_price_currency
-      : typeof raw.sale_price_currency === "string"
-        ? raw.sale_price_currency
-        : typeof raw.currency === "string"
-          ? raw.currency
-          : fallbackCurrency;
+      : typeof raw.targetSalePriceCurrency === "string"
+        ? raw.targetSalePriceCurrency
+        : typeof raw.sale_price_currency === "string"
+          ? raw.sale_price_currency
+          : typeof raw.salePriceCurrency === "string"
+            ? raw.salePriceCurrency
+            : typeof raw.currency === "string"
+              ? raw.currency
+              : fallbackCurrency;
 
   const productUrl = normalizeImageUrl(
     typeof raw.product_detail_url === "string"
@@ -495,7 +504,8 @@ function normalizeDropshipProduct(
     productUrl: productUrl ?? `https://www.aliexpress.com/item/${productId}.html`,
     price,
     currency,
-    originalPrice: parseNumber(raw.target_original_price ?? raw.original_price),
+    originalPrice:
+      parseNumber(raw.target_original_price ?? raw.targetOriginalPrice ?? raw.original_price ?? raw.originalPrice),
     commissionRate: null,
     orders: parseVolume(
       raw.lastest_volume ??
@@ -642,6 +652,47 @@ async function enrichProductMetrics(
   });
 }
 
+async function collectTextSearchWithPriceFilter(
+  keywords: string,
+  region: ReturnType<typeof resolveRegion>,
+  page: number,
+  pageSize: number,
+  minPrice?: number | null,
+  maxPrice?: number | null,
+): Promise<DropshipSearchResult> {
+  const collected: SupplierProduct[] = [];
+  const startApiPage = (page - 1) * 4 + 1;
+  let apiHasMore = false;
+
+  for (let scan = 0; scan < LOCAL_STOCK_API_SCAN_LIMIT && collected.length < pageSize; scan++) {
+    const apiPage = startApiPage + scan;
+    const payload = await callDropshipApi("aliexpress.ds.text.search", {
+      key_word: keywords,
+      local: "en",
+      countryCode: region.countryCode,
+      currency: region.currency,
+      pageSize: String(pageSize),
+      pageIndex: String(apiPage),
+      sortType: "orders",
+    });
+
+    const parsed = parseSearchPayload(payload, apiPage, pageSize, region.currency);
+    const matches = filterByPriceRange(parsed.products, minPrice, maxPrice);
+    collected.push(...matches);
+    apiHasMore = parsed.hasMore;
+
+    if (!parsed.hasMore) break;
+  }
+
+  return {
+    products: collected.slice(0, pageSize),
+    total: collected.length,
+    page,
+    pageSize,
+    hasMore: apiHasMore || collected.length > pageSize,
+  };
+}
+
 async function collectLocalStockFromTextSearch(
   keywords: string,
   region: ReturnType<typeof resolveRegion>,
@@ -723,19 +774,18 @@ export async function searchDropshipProducts(
     (options.minPrice != null && Number.isFinite(options.minPrice)) ||
     (options.maxPrice != null && Number.isFinite(options.maxPrice));
 
-  if (!hasPriceFilter) {
-    return parsed;
+  if (hasPriceFilter) {
+    return collectTextSearchWithPriceFilter(
+      keywords,
+      region,
+      page,
+      pageSize,
+      options.minPrice,
+      options.maxPrice,
+    );
   }
 
-  const filtered = filterByPriceRange(parsed.products, options.minPrice, options.maxPrice);
-
-  return {
-    products: filtered,
-    total: filtered.length,
-    page: parsed.page,
-    pageSize: parsed.pageSize,
-    hasMore: parsed.hasMore,
-  };
+  return parsed;
 }
 
 /**
