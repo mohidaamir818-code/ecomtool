@@ -9,8 +9,9 @@ import type { SupplierProduct, SupplierStockRegion } from "@/types/supplier-find
 const DROPSHIP_ENDPOINT = "https://api-sg.aliexpress.com/sync";
 const MAX_IMAGE_BYTES = 95 * 1024;
 const IMAGE_SEARCH_MAX_PRODUCTS = 150;
-const LOCAL_STOCK_MAX_DELIVERY_DAYS = 3;
-const LOCAL_STOCK_API_SCAN_LIMIT = 8;
+const LOCAL_STOCK_MAX_DELIVERY_DAYS = 5;
+const TEXT_SEARCH_MAX_API_PAGES = 20;
+const TEXT_SEARCH_SCAN_PAGE_SIZE = 50;
 
 export interface DropshipSearchOptions {
   keywords: string;
@@ -94,6 +95,33 @@ function resolveRegion(stockRegion: SupplierStockRegion): {
   return { shipTo: "GB", countryCode: "GB", currency: "GBP" };
 }
 
+function keywordMatchesTitle(title: string, keywords: string): boolean {
+  const terms = keywords
+    .toLowerCase()
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 2);
+  if (terms.length === 0) return true;
+
+  const haystack = title.toLowerCase();
+  return terms.every((term) => haystack.includes(term));
+}
+
+function shouldKeepSearchRecord(raw: Record<string, unknown>, keywords: string): boolean {
+  const title = String(
+    raw.product_title ?? raw.title ?? raw.subject ?? raw.product_name ?? "",
+  ).trim();
+  if (!title) return false;
+  return keywordMatchesTitle(title, keywords);
+}
+
+function hasActivePriceFilter(minPrice?: number | null, maxPrice?: number | null): boolean {
+  return (
+    (minPrice != null && Number.isFinite(minPrice)) ||
+    (maxPrice != null && Number.isFinite(maxPrice))
+  );
+}
+
 function filterByPriceRange(
   products: SupplierProduct[],
   minPrice?: number | null,
@@ -119,10 +147,14 @@ function isLocalStockDelivery(deliveryTime: number | null): boolean {
   return deliveryTime != null && deliveryTime <= LOCAL_STOCK_MAX_DELIVERY_DAYS;
 }
 
-async function fetchProductDeliveryTime(
+async function fetchProductLocalDetails(
   productId: string,
   region: ReturnType<typeof resolveRegion>,
-): Promise<number | null> {
+): Promise<{
+  deliveryTime: number | null;
+  price: number | null;
+  currency: string;
+} | null> {
   try {
     const payload = await callDropshipApi("aliexpress.ds.product.get", {
       product_id: productId,
@@ -132,8 +164,21 @@ async function fetchProductDeliveryTime(
     });
 
     const result = extractProductGetResult(payload);
-    const logistics = result?.logistics_info_dto as Record<string, unknown> | undefined;
-    return parseNumber(logistics?.delivery_time);
+    if (!result) return null;
+
+    const base = result.ae_item_base_info_dto as Record<string, unknown> | undefined;
+    const logistics = result.logistics_info_dto as Record<string, unknown> | undefined;
+    const price =
+      parseNumber(base?.target_sale_price) ??
+      parseNumber(base?.targetSalePrice) ??
+      parseNumber(base?.sale_price) ??
+      parseNumber(base?.salePrice);
+
+    return {
+      deliveryTime: parseNumber(logistics?.delivery_time),
+      price,
+      currency: region.currency,
+    };
   } catch {
     return null;
   }
@@ -155,13 +200,17 @@ async function filterByLocalStock(
     const batch = products.slice(index, index + concurrency);
     const results = await Promise.all(
       batch.map(async (product) => {
-        const deliveryTime = await fetchProductDeliveryTime(product.productId, region);
-        if (!isLocalStockDelivery(deliveryTime)) return null;
+        const details = await fetchProductLocalDetails(product.productId, region);
+        if (!details || !isLocalStockDelivery(details.deliveryTime)) return null;
 
         return {
           ...product,
+          price: details.price ?? product.price,
+          currency: details.currency,
           deliveryDays:
-            deliveryTime != null ? String(deliveryTime) : product.deliveryDays,
+            details.deliveryTime != null
+              ? String(details.deliveryTime)
+              : product.deliveryDays,
         };
       }),
     );
@@ -474,18 +523,26 @@ function normalizeDropshipProduct(
 
   if (!productId || !title) return null;
 
+  const targetPrice =
+    parseNumber(raw.target_sale_price) ?? parseNumber(raw.targetSalePrice);
   const currency =
-    typeof raw.target_sale_price_currency === "string"
-      ? raw.target_sale_price_currency
-      : typeof raw.targetSalePriceCurrency === "string"
-        ? raw.targetSalePriceCurrency
-        : typeof raw.sale_price_currency === "string"
-          ? raw.sale_price_currency
-          : typeof raw.salePriceCurrency === "string"
-            ? raw.salePriceCurrency
-            : typeof raw.currency === "string"
-              ? raw.currency
-              : fallbackCurrency;
+    targetPrice != null
+      ? fallbackCurrency
+      : typeof raw.target_original_price_currency === "string"
+        ? raw.target_original_price_currency
+        : typeof raw.targetOriginalPriceCurrency === "string"
+          ? raw.targetOriginalPriceCurrency
+          : typeof raw.target_sale_price_currency === "string"
+            ? raw.target_sale_price_currency
+            : typeof raw.targetSalePriceCurrency === "string"
+              ? raw.targetSalePriceCurrency
+              : typeof raw.sale_price_currency === "string"
+                ? raw.sale_price_currency
+                : typeof raw.salePriceCurrency === "string"
+                  ? raw.salePriceCurrency
+                  : typeof raw.currency === "string"
+                    ? raw.currency
+                    : fallbackCurrency;
 
   const productUrl = normalizeImageUrl(
     typeof raw.product_detail_url === "string"
@@ -652,81 +709,66 @@ async function enrichProductMetrics(
   });
 }
 
-async function collectTextSearchWithPriceFilter(
+async function collectRelevantTextSearchProducts(
   keywords: string,
   region: ReturnType<typeof resolveRegion>,
+  stockRegion: SupplierStockRegion,
   page: number,
   pageSize: number,
   minPrice?: number | null,
   maxPrice?: number | null,
 ): Promise<DropshipSearchResult> {
   const collected: SupplierProduct[] = [];
-  const startApiPage = (page - 1) * 4 + 1;
+  const seenIds = new Set<string>();
+  const startApiPage = (page - 1) * TEXT_SEARCH_MAX_API_PAGES + 1;
   let apiHasMore = false;
+  const needsLocalStock = requiresLocalStockFilter(stockRegion);
+  const needsPriceFilter = hasActivePriceFilter(minPrice, maxPrice);
 
-  for (let scan = 0; scan < LOCAL_STOCK_API_SCAN_LIMIT && collected.length < pageSize; scan++) {
+  for (let scan = 0; scan < TEXT_SEARCH_MAX_API_PAGES && collected.length < pageSize; scan++) {
     const apiPage = startApiPage + scan;
     const payload = await callDropshipApi("aliexpress.ds.text.search", {
       key_word: keywords,
       local: "en",
       countryCode: region.countryCode,
       currency: region.currency,
-      pageSize: String(pageSize),
+      pageSize: String(TEXT_SEARCH_SCAN_PAGE_SIZE),
       pageIndex: String(apiPage),
-      sortType: "orders",
+      sortType: "default",
     });
 
-    const parsed = parseSearchPayload(payload, apiPage, pageSize, region.currency);
-    const matches = filterByPriceRange(parsed.products, minPrice, maxPrice);
-    collected.push(...matches);
-    apiHasMore = parsed.hasMore;
+    const records = extractSearchProducts(payload).filter((record) =>
+      shouldKeepSearchRecord(record, keywords),
+    );
+    let products = records
+      .map((record) => normalizeDropshipProduct(record, region.currency))
+      .filter((product): product is SupplierProduct => product !== null);
 
+    if (needsLocalStock) {
+      products = await filterByLocalStock(products, stockRegion, region);
+    }
+
+    if (needsPriceFilter) {
+      products = filterByPriceRange(products, minPrice, maxPrice);
+    }
+
+    for (const product of products) {
+      if (seenIds.has(product.productId)) continue;
+      seenIds.add(product.productId);
+      collected.push(product);
+      if (collected.length >= pageSize) break;
+    }
+
+    const parsed = parseSearchPayload(payload, apiPage, TEXT_SEARCH_SCAN_PAGE_SIZE, region.currency);
+    apiHasMore = parsed.hasMore;
     if (!parsed.hasMore) break;
   }
 
-  return {
-    products: collected.slice(0, pageSize),
-    total: collected.length,
-    page,
-    pageSize,
-    hasMore: apiHasMore || collected.length > pageSize,
-  };
-}
-
-async function collectLocalStockFromTextSearch(
-  keywords: string,
-  region: ReturnType<typeof resolveRegion>,
-  stockRegion: SupplierStockRegion,
-  page: number,
-  pageSize: number,
-): Promise<DropshipSearchResult> {
-  const collected: SupplierProduct[] = [];
-  const startApiPage = (page - 1) * 4 + 1;
-  let apiHasMore = false;
-
-  for (let scan = 0; scan < LOCAL_STOCK_API_SCAN_LIMIT && collected.length < pageSize; scan++) {
-    const apiPage = startApiPage + scan;
-    const payload = await callDropshipApi("aliexpress.ds.text.search", {
-      key_word: keywords,
-      local: "en",
-      countryCode: region.countryCode,
-      currency: region.currency,
-      pageSize: String(pageSize),
-      pageIndex: String(apiPage),
-      sortType: "orders",
-    });
-
-    const parsed = parseSearchPayload(payload, apiPage, pageSize, region.currency);
-    const localMatches = await filterByLocalStock(parsed.products, stockRegion, region);
-    collected.push(...localMatches);
-    apiHasMore = parsed.hasMore;
-
-    if (!parsed.hasMore) break;
-  }
+  const products = await enrichProductMetrics(collected.slice(0, pageSize), region);
 
   return {
-    products: collected.slice(0, pageSize),
-    total: collected.length,
+    products,
+    total: products.length,
     page,
     pageSize,
     hasMore: apiHasMore || collected.length > pageSize,
@@ -748,44 +790,15 @@ export async function searchDropshipProducts(
   const pageSize = Math.min(50, Math.max(1, options.pageSize ?? 20));
   const region = resolveRegion(options.stockRegion);
 
-  const parsed = requiresLocalStockFilter(options.stockRegion)
-    ? await collectLocalStockFromTextSearch(
-        keywords,
-        region,
-        options.stockRegion,
-        page,
-        pageSize,
-      )
-    : await (async () => {
-        const payload = await callDropshipApi("aliexpress.ds.text.search", {
-          key_word: keywords,
-          local: "en",
-          countryCode: region.countryCode,
-          currency: region.currency,
-          pageSize: String(pageSize),
-          pageIndex: String(page),
-          sortType: "orders",
-        });
-
-        return parseSearchPayload(payload, page, pageSize, region.currency);
-      })();
-
-  const hasPriceFilter =
-    (options.minPrice != null && Number.isFinite(options.minPrice)) ||
-    (options.maxPrice != null && Number.isFinite(options.maxPrice));
-
-  if (hasPriceFilter) {
-    return collectTextSearchWithPriceFilter(
-      keywords,
-      region,
-      page,
-      pageSize,
-      options.minPrice,
-      options.maxPrice,
-    );
-  }
-
-  return parsed;
+  return collectRelevantTextSearchProducts(
+    keywords,
+    region,
+    options.stockRegion,
+    page,
+    pageSize,
+    options.minPrice,
+    options.maxPrice,
+  );
 }
 
 /**
