@@ -2,13 +2,15 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AddAliUrlModal } from "./AddAliUrlModal";
-import type { StoreImportListing } from "@/types/store-import";
+import type { StoreImportListing, StoreImportSuggestedMatch } from "@/types/store-import";
 
 interface ImportStoreModalProps {
   userId: string;
   onClose: () => void;
   onLinked: () => void;
 }
+
+const SUGGEST_BATCH_SIZE = 5;
 
 function formatPrice(price: number, currency: string): string {
   if (currency === "GBP") return `£${price.toFixed(2)}`;
@@ -31,8 +33,82 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
   const [error, setError] = useState<string | null>(null);
   const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({});
   const [addUrlListing, setAddUrlListing] = useState<StoreImportListing | null>(null);
+  const [addUrlInitial, setAddUrlInitial] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [showAllLinkedPopup, setShowAllLinkedPopup] = useState(false);
+  const [suggestions, setSuggestions] = useState<Record<string, StoreImportSuggestedMatch | null>>({});
+  const [suggestionUrls, setSuggestionUrls] = useState<Record<string, string>>({});
+  const [selectedToSave, setSelectedToSave] = useState<Record<string, boolean>>({});
+  const [findingMatches, setFindingMatches] = useState(false);
+  const [findingProgress, setFindingProgress] = useState("");
+  const [savingBatch, setSavingBatch] = useState(false);
+
+  const runAutoSuggest = useCallback(
+    async (rows: StoreImportListing[]) => {
+      const unlinkedIds = rows.filter((listing) => !listing.linked).map((listing) => listing.listingId);
+      if (unlinkedIds.length === 0) return;
+
+      setFindingMatches(true);
+      setFindingProgress(`Finding AliExpress matches (0/${unlinkedIds.length})…`);
+
+      const nextSuggestions: Record<string, StoreImportSuggestedMatch | null> = {};
+      const nextUrls: Record<string, string> = {};
+      const nextSelected: Record<string, boolean> = {};
+
+      try {
+        for (let index = 0; index < unlinkedIds.length; index += SUGGEST_BATCH_SIZE) {
+          const batch = unlinkedIds.slice(index, index + SUGGEST_BATCH_SIZE);
+          setFindingProgress(
+            `Finding AliExpress matches (${Math.min(index + batch.length, unlinkedIds.length)}/${unlinkedIds.length})…`,
+          );
+
+          const response = await fetch("/api/listings/import-store/suggest", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId, listingIds: batch }),
+          });
+          const data = (await response.json()) as {
+            error?: string;
+            suggestions?: Record<string, StoreImportSuggestedMatch | null>;
+          };
+
+          if (!response.ok) {
+            throw new Error(data.error ?? "Failed to find AliExpress matches.");
+          }
+
+          for (const listingId of batch) {
+            const match = data.suggestions?.[listingId] ?? null;
+            nextSuggestions[listingId] = match;
+            if (match) {
+              nextUrls[listingId] = match.aliexpressUrl;
+              nextSelected[listingId] = true;
+            }
+          }
+        }
+
+        setSuggestions(nextSuggestions);
+        setSuggestionUrls(nextUrls);
+        setSelectedToSave(nextSelected);
+
+        const foundCount = Object.values(nextSuggestions).filter(Boolean).length;
+        if (foundCount > 0) {
+          setNotice(
+            `Found ${foundCount} suggested AliExpress match${foundCount === 1 ? "" : "es"}. Review and save to enable auto-sync.`,
+          );
+        }
+      } catch (suggestError) {
+        setError(
+          suggestError instanceof Error
+            ? suggestError.message
+            : "Failed to find AliExpress matches.",
+        );
+      } finally {
+        setFindingMatches(false);
+        setFindingProgress("");
+      }
+    },
+    [userId],
+  );
 
   const loadStore = useCallback(async (): Promise<StoreImportListing[]> => {
     setLoading(true);
@@ -60,6 +136,7 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
         defaults[listing.listingId] = listing.variants[0]?.offerId ?? "";
       }
       setSelectedVariants(defaults);
+      void runAutoSuggest(rows);
       return rows;
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load your store.");
@@ -67,7 +144,7 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [runAutoSuggest, userId]);
 
   useEffect(() => {
     void loadStore();
@@ -75,6 +152,9 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
 
   const unlinkedCount = listings.filter((listing) => !listing.linked).length;
   const linkedCount = listings.length - unlinkedCount;
+  const selectedCount = listings.filter(
+    (listing) => !listing.linked && selectedToSave[listing.listingId] && suggestionUrls[listing.listingId]?.trim(),
+  ).length;
 
   const sortedListings = [...listings].sort((a, b) => {
     if (a.linked === b.linked) return a.title.localeCompare(b.title);
@@ -92,6 +172,65 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
     });
   }
 
+  async function handleSaveSelected() {
+    const links = listings
+      .filter((listing) => !listing.linked && selectedToSave[listing.listingId])
+      .map((listing) => ({
+        listingId: listing.listingId,
+        aliexpressUrl: suggestionUrls[listing.listingId]?.trim() ?? "",
+      }))
+      .filter((link) => link.aliexpressUrl);
+
+    if (links.length === 0) {
+      setError("Select at least one listing with an AliExpress URL to save.");
+      return;
+    }
+
+    setSavingBatch(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/listings/import-store/link-batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, links }),
+      });
+      const data = (await response.json()) as {
+        error?: string;
+        linked?: string[];
+        failed?: Array<{ listingId: string; error: string }>;
+      };
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Failed to save selected links.");
+      }
+
+      const linked = data.linked?.length ?? 0;
+      const failed = data.failed?.length ?? 0;
+
+      if (linked > 0) {
+        setNotice(
+          `${linked} listing${linked === 1 ? "" : "s"} linked for auto-sync${failed > 0 ? ` (${failed} could not be matched)` : ""}.`,
+        );
+        onLinked();
+      }
+
+      if (failed > 0 && linked === 0) {
+        setError(data.failed?.[0]?.error ?? "Could not link the selected listings.");
+      }
+
+      await loadStore();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Failed to save selected links.");
+    } finally {
+      setSavingBatch(false);
+    }
+  }
+
+  function openAddUrl(listing: StoreImportListing) {
+    setAddUrlInitial(suggestionUrls[listing.listingId] ?? "");
+    setAddUrlListing(listing);
+  }
+
   return (
     <>
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -101,27 +240,39 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
               <div>
                 <h2 className="text-xl font-bold text-[#111827]">Import your eBay store</h2>
                 <p className="mt-1 text-sm text-[#6B7280]">
-                  All active listings with price, image, and variants. Add AliExpress URLs to enable
-                  handling and auto updates.
+                  We find matching AliExpress URLs automatically. Review, tick the ones that look
+                  right, then save to enable auto-sync.
                 </p>
                 {!loading && listings.length > 0 ? (
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold">
                     <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-emerald-700">
-                      {linkedCount} URL added
+                      {linkedCount} linked
                     </span>
-                    <span className="rounded-full bg-red-100 px-2.5 py-1 text-red-700">
-                      {unlinkedCount} need URL
+                    <span className="rounded-full bg-amber-100 px-2.5 py-1 text-amber-700">
+                      {unlinkedCount} to review
                     </span>
                   </div>
                 ) : null}
               </div>
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-[#374151] hover:bg-gray-50"
-              >
-                Close
-              </button>
+              <div className="flex flex-wrap gap-2">
+                {selectedCount > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveSelected()}
+                    disabled={savingBatch || findingMatches}
+                    className="rounded-lg bg-brand px-4 py-2 text-xs font-semibold text-white hover:bg-brand/90 disabled:opacity-60"
+                  >
+                    {savingBatch ? "Saving…" : `Save ${selectedCount} selected`}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-[#374151] hover:bg-gray-50"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
 
@@ -138,6 +289,10 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
                   ✕
                 </button>
               </div>
+            ) : null}
+
+            {findingMatches && findingProgress ? (
+              <p className="mb-4 text-sm font-medium text-brand">{findingProgress}</p>
             ) : null}
 
             {loading ? (
@@ -162,16 +317,36 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
                     listing.variants.find((variant) => variant.offerId === selectedOfferId) ??
                     listing.variants[0];
                   const needsUrl = !listing.linked;
+                  const suggestion = suggestions[listing.listingId];
+                  const draftUrl = suggestionUrls[listing.listingId] ?? "";
 
                   return (
                     <article
                       key={listing.listingId}
                       className={`flex gap-4 rounded-xl border p-4 transition-shadow ${
                         needsUrl
-                          ? "border-red-200 bg-red-50/40 shadow-sm"
+                          ? "border-amber-200 bg-amber-50/30 shadow-sm"
                           : "border-emerald-200 bg-emerald-50/30"
                       }`}
                     >
+                      {needsUrl ? (
+                        <input
+                          type="checkbox"
+                          checked={Boolean(selectedToSave[listing.listingId] && draftUrl.trim())}
+                          disabled={!draftUrl.trim()}
+                          onChange={(event) =>
+                            setSelectedToSave((current) => ({
+                              ...current,
+                              [listing.listingId]: event.target.checked,
+                            }))
+                          }
+                          className="mt-1 h-4 w-4 shrink-0 accent-brand"
+                          aria-label={`Select ${listing.title} for auto-sync`}
+                        />
+                      ) : (
+                        <div className="w-4 shrink-0" />
+                      )}
+
                       <div className="h-24 w-24 shrink-0 overflow-hidden rounded-lg border border-white bg-white">
                         {listing.imageUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
@@ -200,11 +375,19 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
                           <span
                             className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
                               needsUrl
-                                ? "bg-red-100 text-red-700"
+                                ? suggestion
+                                  ? "bg-brand/10 text-brand"
+                                  : "bg-amber-100 text-amber-700"
                                 : "bg-emerald-100 text-emerald-700"
                             }`}
                           >
-                            {needsUrl ? "Needs URL" : "Linked"}
+                            {needsUrl
+                              ? suggestion
+                                ? `${suggestion.confidence}% match`
+                                : findingMatches
+                                  ? "Searching…"
+                                  : "No match"
+                              : "Linked"}
                           </span>
                         </div>
 
@@ -235,9 +418,46 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
                           </p>
                         ) : null}
 
+                        {needsUrl && suggestion ? (
+                          <div className="mt-3 rounded-lg border border-brand/20 bg-white p-3">
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-brand">
+                              Suggested AliExpress match
+                            </p>
+                            <div className="mt-2 flex gap-3">
+                              {suggestion.imageUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={suggestion.imageUrl.replace(/^http:\/\//, "https://")}
+                                  alt={suggestion.title}
+                                  className="h-14 w-14 shrink-0 rounded-md object-cover"
+                                />
+                              ) : null}
+                              <div className="min-w-0 flex-1">
+                                <p className="line-clamp-2 text-xs font-medium text-[#111827]">
+                                  {suggestion.title}
+                                </p>
+                                <p className="mt-1 text-xs text-[#6B7280]">
+                                  {formatPrice(suggestion.price, suggestion.currency)}
+                                </p>
+                              </div>
+                            </div>
+                            <input
+                              type="url"
+                              value={draftUrl}
+                              onChange={(event) =>
+                                setSuggestionUrls((current) => ({
+                                  ...current,
+                                  [listing.listingId]: event.target.value,
+                                }))
+                              }
+                              className="mt-2 w-full rounded-lg border border-gray-200 px-2.5 py-2 text-xs text-[#111827] outline-none focus:border-brand"
+                            />
+                          </div>
+                        ) : null}
+
                         {listing.linked && listing.aliexpressUrl ? (
                           <p className="mt-2 truncate text-xs text-emerald-700">
-                            AliExpress linked · handling active
+                            AliExpress linked · auto-sync active
                           </p>
                         ) : null}
 
@@ -245,10 +465,10 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
                           {needsUrl ? (
                             <button
                               type="button"
-                              onClick={() => setAddUrlListing(listing)}
-                              className="rounded-lg bg-brand px-3.5 py-2 text-xs font-semibold text-white hover:bg-brand/90"
+                              onClick={() => openAddUrl(listing)}
+                              className="rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-[#374151] hover:bg-gray-50"
                             >
-                              Add URL
+                              {suggestion ? "Edit URL" : "Add URL manually"}
                             </button>
                           ) : null}
                           <a
@@ -259,6 +479,16 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
                           >
                             View on eBay
                           </a>
+                          {draftUrl ? (
+                            <a
+                              href={draftUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-[#374151] hover:bg-gray-50"
+                            >
+                              View on AliExpress
+                            </a>
+                          ) : null}
                         </div>
                       </div>
                     </article>
@@ -274,6 +504,7 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
         <AddAliUrlModal
           listing={addUrlListing}
           userId={userId}
+          initialUrl={addUrlInitial}
           onClose={() => setAddUrlListing(null)}
           onLinked={handleUrlLinked}
         />

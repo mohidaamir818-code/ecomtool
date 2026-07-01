@@ -6,12 +6,19 @@ import type { StoreImportListing } from "@/types/store-import";
 interface AddAliUrlModalProps {
   listing: StoreImportListing;
   userId: string;
+  initialUrl?: string;
   onClose: () => void;
   onLinked: () => void;
 }
 
-export function AddAliUrlModal({ listing, userId, onClose, onLinked }: AddAliUrlModalProps) {
-  const [aliexpressUrl, setAliexpressUrl] = useState("");
+export function AddAliUrlModal({
+  listing,
+  userId,
+  initialUrl = "",
+  onClose,
+  onLinked,
+}: AddAliUrlModalProps) {
+  const [aliexpressUrl, setAliexpressUrl] = useState(initialUrl);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mismatch, setMismatch] = useState<string | null>(null);

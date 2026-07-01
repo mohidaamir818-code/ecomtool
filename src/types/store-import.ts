@@ -19,3 +19,13 @@ export interface StoreImportListing {
   listedProductId: string | null;
   aliexpressUrl: string | null;
 }
+
+/** System-suggested AliExpress match for review before linking. */
+export interface StoreImportSuggestedMatch {
+  aliexpressUrl: string;
+  title: string;
+  imageUrl: string | null;
+  price: number;
+  currency: string;
+  confidence: number;
+}
