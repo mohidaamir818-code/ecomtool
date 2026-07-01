@@ -88,6 +88,7 @@ async function callDropshipApi(
     timestamp: String(Date.now()),
     format: "json",
     simplify: "true",
+    v: "2.0",
     session: accessToken,
     ...businessParams,
   };
@@ -119,10 +120,10 @@ function parseDataUrl(input: string): { mediaType: string; data: string } | null
   return { mediaType: match[1].toLowerCase(), data: match[2] };
 }
 
-async function prepareImageBase64(input: {
+async function prepareImageBuffer(input: {
   imageDataUrl?: string;
   imageBase64?: string;
-}): Promise<string> {
+}): Promise<Buffer> {
   let buffer: Buffer;
 
   if (input.imageDataUrl?.trim()) {
@@ -167,7 +168,100 @@ async function prepareImageBase64(input: {
     throw new Error("Could not prepare the uploaded photo for search.");
   }
 
-  return output.toString("base64");
+  return output;
+}
+
+async function callDropshipImageSearch(
+  imageBuffer: Buffer,
+  businessParams: Record<string, string>,
+): Promise<Record<string, unknown>> {
+  const appKey = serverEnv.aliexpressAppKey();
+  const appSecret = serverEnv.aliexpressAppSecret();
+  if (!appKey || !appSecret) {
+    throw new Error(
+      "AliExpress Dropship API is not configured. Add ALIEXPRESS_APP_KEY and ALIEXPRESS_APP_SECRET.",
+    );
+  }
+
+  const accessToken = await getAliExpressAccessToken();
+  if (!accessToken) {
+    throw new Error(
+      "AliExpress is not connected. Connect your AliExpress account before using Supplier Finder.",
+    );
+  }
+
+  const params: Record<string, string> = {
+    app_key: appKey,
+    method: "aliexpress.ds.image.search",
+    sign_method: "sha256",
+    timestamp: String(Date.now()),
+    format: "json",
+    v: "2.0",
+    session: accessToken,
+    ...businessParams,
+  };
+  params.sign = signHmacSha256Params(params, appSecret);
+
+  const form = new FormData();
+  for (const [key, value] of Object.entries(params)) {
+    form.append(key, value);
+  }
+  form.append(
+    "image_file_bytes",
+    new Blob([new Uint8Array(imageBuffer)], { type: "image/jpeg" }),
+    "search.jpg",
+  );
+
+  const response = await fetch(DROPSHIP_ENDPOINT, {
+    method: "POST",
+    body: form,
+    cache: "no-store",
+  });
+
+  const payload = (await response.json()) as Record<string, unknown>;
+  if (payload.error_response) {
+    const errorResponse = payload.error_response as { msg?: string; sub_msg?: string };
+    throw new Error(
+      errorResponse.sub_msg || errorResponse.msg || "AliExpress image search failed.",
+    );
+  }
+
+  return payload;
+}
+
+function normalizeImageUrl(url: string | null): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  return trimmed.startsWith("//") ? `https:${trimmed}` : trimmed;
+}
+
+function extractSearchProducts(payload: Record<string, unknown>): Record<string, unknown>[] {
+  if (payload.data && typeof payload.data === "object") {
+    const data = payload.data as Record<string, unknown>;
+    if (Array.isArray(data.products)) {
+      return data.products as Record<string, unknown>[];
+    }
+  }
+
+  const imageRoot =
+    payload.aliexpress_ds_image_search_response ??
+    payload.aliexpress_ds_image_searchV2_response;
+  if (imageRoot && typeof imageRoot === "object") {
+    const data = (imageRoot as Record<string, unknown>).data as Record<string, unknown> | undefined;
+    const productsWrap = data?.products;
+    if (productsWrap && typeof productsWrap === "object") {
+      const wrap = productsWrap as Record<string, unknown>;
+      const dto =
+        wrap.traffic_image_product_d_t_o ??
+        wrap.traffic_image_product_dto ??
+        wrap.product;
+      if (Array.isArray(dto)) return dto as Record<string, unknown>[];
+      if (dto && typeof dto === "object") return [dto as Record<string, unknown>];
+    }
+  }
+
+  return collectProductRecords(payload);
 }
 
 function collectProductRecords(payload: unknown): Record<string, unknown>[] {
@@ -212,11 +306,14 @@ function firstImageUrl(raw: Record<string, unknown>): string | null {
   const direct =
     raw.product_main_image_url ??
     raw.item_main_image_url ??
+    raw.itemMainPic ??
     raw.image_url ??
     raw.main_image_url ??
     raw.product_image;
 
-  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  if (typeof direct === "string" && direct.trim()) {
+    return normalizeImageUrl(direct.trim());
+  }
 
   const smallImages = raw.product_small_image_urls as
     | { string?: string[] }
@@ -224,13 +321,15 @@ function firstImageUrl(raw: Record<string, unknown>): string | null {
     | string
     | undefined;
 
-  if (Array.isArray(smallImages) && smallImages[0]) return String(smallImages[0]);
+  if (Array.isArray(smallImages) && smallImages[0]) {
+    return normalizeImageUrl(String(smallImages[0]));
+  }
   if (typeof smallImages === "string" && smallImages.trim()) {
-    return smallImages.split(";")[0]?.trim() ?? null;
+    return normalizeImageUrl(smallImages.split(";")[0]?.trim() ?? null);
   }
   if (smallImages && typeof smallImages === "object" && !Array.isArray(smallImages)) {
     const nested = (smallImages as { string?: string[] }).string;
-    if (nested?.[0]) return nested[0];
+    if (nested?.[0]) return normalizeImageUrl(nested[0]);
   }
 
   return null;
@@ -267,18 +366,21 @@ function normalizeDropshipProduct(
           ? raw.currency
           : fallbackCurrency;
 
-  const productUrl =
+  const productUrl = normalizeImageUrl(
     typeof raw.product_detail_url === "string"
       ? raw.product_detail_url.trim()
       : typeof raw.detail_url === "string"
         ? raw.detail_url.trim()
-        : `https://www.aliexpress.com/item/${productId}.html`;
+        : typeof raw.itemUrl === "string"
+          ? raw.itemUrl.trim()
+          : `https://www.aliexpress.com/item/${productId}.html`,
+  );
 
   return {
     productId,
     title,
     imageUrl: firstImageUrl(raw),
-    productUrl,
+    productUrl: productUrl ?? `https://www.aliexpress.com/item/${productId}.html`,
     price,
     currency,
     originalPrice: parseNumber(raw.target_original_price ?? raw.original_price),
@@ -297,12 +399,16 @@ function parseSearchPayload(
   pageSize: number,
   currency: string,
 ): DropshipSearchResult {
-  const records = collectProductRecords(payload);
+  const records = extractSearchProducts(payload);
   const products = records
     .map((record) => normalizeDropshipProduct(record, currency))
     .filter((product): product is SupplierProduct => product !== null);
 
-  const totalFromPayload = findTotalCount(payload);
+  const totalFromPayload =
+    findTotalCount(payload) ??
+    (payload.data && typeof payload.data === "object"
+      ? parseNumber((payload.data as Record<string, unknown>).totalCount)
+      : null);
   const total = totalFromPayload ?? products.length;
   const hasMore = page * pageSize < total || products.length >= pageSize;
 
@@ -331,8 +437,8 @@ function findTotalCount(payload: unknown): number | null {
     const obj = node as Record<string, unknown>;
     for (const key of [
       "total_record_count",
-      "total_count",
       "totalCount",
+      "total_count",
       "total",
       "record_count",
     ]) {
@@ -388,53 +494,15 @@ export async function searchDropshipProductsByImage(
   const page = Math.max(1, options.page ?? 1);
   const pageSize = Math.min(50, Math.max(1, options.pageSize ?? 20));
   const region = resolveRegion(options.stockRegion);
-  const imageBase64 = await prepareImageBase64(options);
+  const imageBuffer = await prepareImageBuffer(options);
 
-  const attempts: Array<{ method: string; params: Record<string, string> }> = [
-    {
-      method: "aliexpress.ds.image.searchV2",
-      params: {
-        image_base64: imageBase64,
-        sort_type: "default",
-        ship_to: region.shipTo,
-        currency: region.currency,
-        locale: "en",
-        page_size: String(pageSize),
-        page_index: String(page),
-      },
-    },
-    {
-      method: "aliexpress.ds.image.searchV2",
-      params: {
-        image_base64: imageBase64,
-        sort_type: "default",
-        ship_to: region.shipTo,
-        currency: region.currency,
-        locale: "en",
-      },
-    },
-    {
-      method: "aliexpress.ds.image.search",
-      params: {
-        image_file_bytes: imageBase64,
-        shpt_to: region.shipTo,
-        target_currency: region.currency,
-        target_language: "EN",
-        product_cnt: String(Math.min(pageSize, 50)),
-        sort: "LAST_VOLUME_DESC",
-      },
-    },
-  ];
+  const payload = await callDropshipImageSearch(imageBuffer, {
+    target_language: "EN",
+    target_currency: region.currency,
+    product_cnt: String(Math.min(pageSize, 50)),
+    sort: "LAST_VOLUME_DESC",
+    shpt_to: region.shipTo,
+  });
 
-  for (const attempt of attempts) {
-    try {
-      const payload = await callDropshipApi(attempt.method, attempt.params);
-      const parsed = parseSearchPayload(payload, page, pageSize, region.currency);
-      if (parsed.products.length > 0) return parsed;
-    } catch {
-      // Try the next image-search variant.
-    }
-  }
-
-  return emptyResult(page, pageSize);
+  return parseSearchPayload(payload, page, pageSize, region.currency);
 }
