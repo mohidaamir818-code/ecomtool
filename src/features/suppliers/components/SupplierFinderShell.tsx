@@ -15,10 +15,26 @@ import type {
 } from "@/types/supplier-finder";
 
 const PAGE_SIZE = 20;
+const PHOTO_PAGE_SIZE = 50;
 
 function formatPrice(price: number, currency: string): string {
   const symbol = currency === "USD" ? "$" : currency === "GBP" ? "£" : `${currency} `;
   return `${symbol}${price.toFixed(2)}`;
+}
+
+function formatOrders(orders: number | null): string {
+  if (orders == null) return "—";
+  if (orders >= 10000) return `${Math.floor(orders / 1000)}k+`;
+  if (orders >= 1000) return `${(orders / 1000).toFixed(1).replace(/\.0$/, "")}k+`;
+  return orders.toLocaleString();
+}
+
+function formatRating(rating: string | null): string {
+  if (!rating?.trim()) return "—";
+  const value = rating.trim();
+  if (value.includes("%")) return value;
+  if (value.includes("★")) return value;
+  return `${value}%`;
 }
 
 function stockLabel(region: SupplierStockRegion): string {
@@ -82,7 +98,7 @@ export function SupplierFinderShell() {
             query: mode === "photo" ? undefined : query.trim(),
             stockRegion,
             page,
-            pageSize: PAGE_SIZE,
+            pageSize: mode === "photo" ? PHOTO_PAGE_SIZE : PAGE_SIZE,
             ...(mode === "photo" && photoDataUrl ? { imageDataUrl: photoDataUrl } : {}),
           }),
         });
@@ -456,11 +472,19 @@ function SupplierProductCard({ product }: { product: SupplierProduct }) {
             </span>
           ) : null}
         </div>
+        <div className="mt-3 grid grid-cols-2 gap-3 rounded-lg bg-[#F9FAFB] px-3 py-2.5 text-xs">
+          <div>
+            <p className="text-[#9CA3AF]">Orders</p>
+            <p className="mt-0.5 font-semibold text-[#111827]">{formatOrders(product.orders)}</p>
+          </div>
+          <div>
+            <p className="text-[#9CA3AF]">Seller rating</p>
+            <p className="mt-0.5 font-semibold text-[#111827]">{formatRating(product.rating)}</p>
+          </div>
+        </div>
         <div className="mt-2 flex flex-wrap gap-2 text-xs text-[#6B7280]">
-          {product.orders != null ? <span>{product.orders} orders</span> : null}
-          {product.rating ? <span>{product.rating} rating</span> : null}
-          {product.deliveryDays ? <span>{product.deliveryDays} days</span> : null}
-          {product.commissionRate ? <span>{product.commissionRate} commission</span> : null}
+          {product.deliveryDays ? <span>{product.deliveryDays} days delivery</span> : null}
+          {product.discount ? <span>{product.discount} off</span> : null}
         </div>
         <a
           href={aliUrl}

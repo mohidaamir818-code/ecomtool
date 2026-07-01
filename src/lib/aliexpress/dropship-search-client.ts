@@ -8,6 +8,7 @@ import type { SupplierProduct, SupplierStockRegion } from "@/types/supplier-find
 
 const DROPSHIP_ENDPOINT = "https://api-sg.aliexpress.com/sync";
 const MAX_IMAGE_BYTES = 95 * 1024;
+const IMAGE_SEARCH_MAX_PRODUCTS = 150;
 
 export interface DropshipSearchOptions {
   keywords: string;
@@ -46,6 +47,31 @@ function parseNumber(value: unknown): number | null {
   if (value == null) return null;
   const parsed = Number(String(value).replace(/[^0-9.]/g, ""));
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseVolume(value: unknown): number | null {
+  if (value == null) return null;
+  const raw = String(value).trim().toLowerCase();
+  if (!raw) return null;
+
+  const kMatch = raw.match(/^([\d,.]+)\s*k\+?$/);
+  if (kMatch) {
+    const parsed = Number(kMatch[1].replace(/,/g, ""));
+    return Number.isFinite(parsed) ? Math.round(parsed * 1000) : null;
+  }
+
+  return parseNumber(raw);
+}
+
+function normalizeRating(value: unknown): string | null {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (raw.includes("%")) return raw;
+  const parsed = parseNumber(raw);
+  if (parsed == null) return null;
+  if (parsed <= 5) return `${parsed.toFixed(1)}★`;
+  return `${parsed}%`;
 }
 
 function resolveRegion(stockRegion: SupplierStockRegion): {
@@ -385,8 +411,17 @@ function normalizeDropshipProduct(
     currency,
     originalPrice: parseNumber(raw.target_original_price ?? raw.original_price),
     commissionRate: null,
-    orders: parseNumber(raw.lastest_volume ?? raw.orders ?? raw.order_count),
-    rating: raw.evaluate_rate != null ? String(raw.evaluate_rate) : null,
+    orders: parseVolume(
+      raw.lastest_volume ??
+        raw.latest_volume ??
+        raw.sales_count ??
+        raw.orders ??
+        raw.order_count ??
+        raw.trade_count,
+    ),
+    rating: normalizeRating(
+      raw.evaluate_rate ?? raw.evaluateRate ?? raw.avg_evaluation_rating ?? raw.product_score,
+    ),
     discount: raw.discount != null ? String(raw.discount) : null,
     deliveryDays: raw.ship_to_days != null ? String(raw.ship_to_days) : null,
     shopUrl: typeof raw.shop_url === "string" ? raw.shop_url.trim() : null,
@@ -456,6 +491,67 @@ function emptyResult(page: number, pageSize: number): DropshipSearchResult {
   return { products: [], total: 0, page, pageSize, hasMore: false };
 }
 
+function extractProductGetResult(payload: Record<string, unknown>): Record<string, unknown> | null {
+  if (payload.result && typeof payload.result === "object") {
+    return payload.result as Record<string, unknown>;
+  }
+
+  const nested = payload.aliexpress_ds_product_get_response as Record<string, unknown> | undefined;
+  if (nested?.result && typeof nested.result === "object") {
+    return nested.result as Record<string, unknown>;
+  }
+
+  return null;
+}
+
+async function enrichProductMetrics(
+  products: SupplierProduct[],
+  region: ReturnType<typeof resolveRegion>,
+): Promise<SupplierProduct[]> {
+  const targets = products
+    .filter((product) => product.orders == null && !product.rating)
+    .slice(0, 20);
+  if (targets.length === 0) return products;
+
+  const patches = new Map<string, Pick<SupplierProduct, "orders" | "rating" | "shopUrl">>();
+
+  await Promise.all(
+    targets.map(async (product) => {
+      try {
+        const payload = await callDropshipApi("aliexpress.ds.product.get", {
+          product_id: product.productId,
+          ship_to_country: region.countryCode,
+          target_currency: region.currency,
+          target_language: "EN",
+        });
+
+        const result = extractProductGetResult(payload);
+        if (!result) return;
+
+        const base = result.ae_item_base_info_dto as Record<string, unknown> | undefined;
+        const store = result.ae_store_info as Record<string, unknown> | undefined;
+
+        patches.set(product.productId, {
+          orders: parseVolume(base?.sales_count ?? base?.lastest_volume) ?? product.orders,
+          rating:
+            normalizeRating(base?.avg_evaluation_rating ?? base?.evaluate_rate) ?? product.rating,
+          shopUrl:
+            typeof store?.store_url === "string" ? store.store_url.trim() : product.shopUrl,
+        });
+      } catch {
+        // Keep the image-search row when detail lookup fails.
+      }
+    }),
+  );
+
+  if (patches.size === 0) return products;
+
+  return products.map((product) => {
+    const patch = patches.get(product.productId);
+    return patch ? { ...product, ...patch } : product;
+  });
+}
+
 /**
  * Full-catalog keyword/title search via Dropship API (aliexpress.ds.text.search).
  */
@@ -496,13 +592,31 @@ export async function searchDropshipProductsByImage(
   const region = resolveRegion(options.stockRegion);
   const imageBuffer = await prepareImageBuffer(options);
 
+  // Request max products in one call (API has no page_index). Omit sort so results
+  // stay in visual-match order and include evaluate_rate / lastest_volume.
   const payload = await callDropshipImageSearch(imageBuffer, {
     target_language: "EN",
     target_currency: region.currency,
-    product_cnt: String(Math.min(pageSize, 50)),
-    sort: "LAST_VOLUME_DESC",
+    product_cnt: String(IMAGE_SEARCH_MAX_PRODUCTS),
     shpt_to: region.shipTo,
   });
 
-  return parseSearchPayload(payload, page, pageSize, region.currency);
+  const fullResult = parseSearchPayload(
+    payload,
+    1,
+    IMAGE_SEARCH_MAX_PRODUCTS,
+    region.currency,
+  );
+  const total = Math.max(fullResult.total, fullResult.products.length);
+  const start = (page - 1) * pageSize;
+  const sliced = fullResult.products.slice(start, start + pageSize);
+  const products = await enrichProductMetrics(sliced, region);
+
+  return {
+    products,
+    total,
+    page,
+    pageSize,
+    hasMore: start + pageSize < fullResult.products.length,
+  };
 }
