@@ -2,6 +2,7 @@ import "server-only";
 
 import crypto from "crypto";
 import sharp from "sharp";
+import { fetchAliExpressDeliveryRawText } from "@/lib/aliexpress/client";
 import { serverEnv } from "@/lib/env";
 import { getAliExpressAccessToken } from "@/lib/aliexpress/oauth";
 import type { SupplierProduct, SupplierStockRegion } from "@/types/supplier-finder";
@@ -9,42 +10,28 @@ import type { SupplierProduct, SupplierStockRegion } from "@/types/supplier-find
 const DROPSHIP_ENDPOINT = "https://api-sg.aliexpress.com/sync";
 const MAX_IMAGE_BYTES = 95 * 1024;
 const IMAGE_SEARCH_MAX_PRODUCTS = 150;
-const LOCAL_STOCK_MAX_DELIVERY_DAYS = 5;
 const TEXT_SEARCH_MAX_API_PAGES = 50;
 const TEXT_SEARCH_SCAN_PAGE_SIZE = 20;
 const TEXT_SEARCH_RELEVANCE_MIN_SCORE = 50;
 const TEXT_SEARCH_PARALLEL_PAGES = 5;
-const RANDOM_STOCK_BROWSE_KEYWORDS = [
-  "home decor",
-  "kitchen gadgets",
-  "phone accessories",
-  "women fashion",
-  "men shoes",
-  "beauty",
-  "tools",
-  "toys",
-  "sports",
-  "jewelry",
-  "electronics",
-  "garden",
-  "pet supplies",
-  "car accessories",
-  "office",
-  "baby products",
-  "watch",
-  "handbag",
-  "led lights",
-  "storage box",
-  "fitness",
-  "hair accessories",
-  "gaming",
-  "bluetooth",
-  "usb cable",
-  "organizer",
-  "gift",
-  "craft",
+const LOCAL_STOCK_FEED_MAX_SCAN_PAGES = 25;
+const LOCAL_STOCK_FEED_PAGE_SIZE = 50;
+
+/** Official AliExpress DS promo feeds curated for confirmed UK warehouse stock. */
+const UK_LOCAL_STOCK_FEEDS = [
+  "AEB_UK_AvasamSelectedItems_ShipFromUK_20241126",
+  "AEB_UK_LocalStock_PlatformOperation_20240926",
+  "AEB_UK Local Items",
+  "AEB_UK_SelectedItems",
 ];
-const RANDOM_STOCK_MAX_SEARCH_PAGES = 20;
+
+/** Official AliExpress DS promo feeds curated for confirmed USA warehouse stock. */
+const US_LOCAL_STOCK_FEEDS = [
+  "AEB_US_LocalStock_Choice_20240830",
+  "AEB_US_Local_PlatformOperatedItems",
+  "AEB_US_Local Items_Home&Furniture&Outdoor&Sport&Beauty",
+  "AEB_ShipFromUSWithin72H_20241125",
+];
 
 export interface DropshipSearchOptions {
   keywords: string;
@@ -226,75 +213,206 @@ function requiresLocalStockFilter(stockRegion: SupplierStockRegion): boolean {
   );
 }
 
-function isLocalStockDelivery(deliveryTime: number | null): boolean {
-  return deliveryTime != null && deliveryTime <= LOCAL_STOCK_MAX_DELIVERY_DAYS;
-}
-
-async function fetchProductLocalDetails(
-  productId: string,
-  region: ReturnType<typeof resolveRegion>,
-): Promise<{
-  deliveryTime: number | null;
-  price: number | null;
-  currency: string;
-} | null> {
-  try {
-    const payload = await callDropshipApi("aliexpress.ds.product.get", {
-      product_id: productId,
-      ship_to_country: region.countryCode,
-      target_currency: region.currency,
-      target_language: "EN",
-    });
-
-    const result = extractProductGetResult(payload);
-    if (!result) return null;
-
-    const base = result.ae_item_base_info_dto as Record<string, unknown> | undefined;
-    const logistics = result.logistics_info_dto as Record<string, unknown> | undefined;
-    const price =
-      parseNumber(base?.target_sale_price) ??
-      parseNumber(base?.targetSalePrice) ??
-      parseNumber(base?.sale_price) ??
-      parseNumber(base?.salePrice);
-
-    return {
-      deliveryTime: parseNumber(logistics?.delivery_time),
-      price,
-      currency: region.currency,
-    };
-  } catch {
-    return null;
+function localStockFeedsFor(stockRegion: SupplierStockRegion): string[] {
+  if (stockRegion === "us" || stockRegion === "us_random") {
+    return US_LOCAL_STOCK_FEEDS;
   }
+  if (stockRegion === "uk" || stockRegion === "uk_random") {
+    return UK_LOCAL_STOCK_FEEDS;
+  }
+  return [];
 }
 
+function localStockShipFromCountry(stockRegion: SupplierStockRegion): "GB" | "US" | null {
+  if (stockRegion === "us" || stockRegion === "us_random") return "US";
+  if (stockRegion === "uk" || stockRegion === "uk_random") return "GB";
+  return null;
+}
+
+function shipsFromCountryInRaw(raw: string, countryCode: "GB" | "US"): boolean {
+  if (countryCode === "GB") {
+    return (
+      /"shipFrom(?:Country)?"\s*:\s*"(?:GB|UK)"/i.test(raw) ||
+      /"sendGoodsCountry(?:Code)?"\s*:\s*"(?:GB|UK)"/i.test(raw) ||
+      /ships\s*from[^"']{0,48}(united\s*kingdom|\buk\b|great\s*britain)/i.test(raw)
+    );
+  }
+
+  return (
+    /"shipFrom(?:Country)?"\s*:\s*"US"/i.test(raw) ||
+    /"sendGoodsCountry(?:Code)?"\s*:\s*"US"/i.test(raw) ||
+    /ships\s*from[^"']{0,48}(united\s*states|\busa\b|u\.s\.)/i.test(raw)
+  );
+}
+
+function extractFeedProducts(payload: Record<string, unknown>): Record<string, unknown>[] {
+  const result = payload.result as Record<string, unknown> | undefined;
+  if (Array.isArray(result?.products)) {
+    return result.products as Record<string, unknown>[];
+  }
+  return [];
+}
+
+function feedPayloadHasMore(payload: Record<string, unknown>, recordCount: number): boolean {
+  const result = payload.result as Record<string, unknown> | undefined;
+  if (result?.is_finished === true || result?.is_finished === "true") return false;
+  return recordCount >= LOCAL_STOCK_FEED_PAGE_SIZE;
+}
+
+function normalizeFeedProduct(
+  raw: Record<string, unknown>,
+  fallbackCurrency: string,
+): SupplierProduct | null {
+  return normalizeDropshipProduct(
+    {
+      product_id: raw.product_id ?? raw.productId,
+      product_title: raw.product_title ?? raw.title,
+      product_main_image_url: raw.product_main_image_url ?? raw.item_main_image_url,
+      product_detail_url: raw.product_detail_url ?? raw.item_url,
+      target_sale_price: raw.target_sale_price ?? raw.targetSalePrice,
+      target_original_price: raw.original_price ?? raw.target_original_price,
+      sale_price_currency: raw.target_sale_price_currency,
+      lastest_volume: raw.lastest_volume ?? raw.latest_volume ?? raw.orders,
+      evaluate_rate: raw.evaluate_rate ?? raw.evaluateRate,
+      discount: raw.discount,
+      ship_to_days: raw.ship_to_days,
+      shop_url: raw.shop_url,
+    },
+    fallbackCurrency,
+  );
+}
+
+async function fetchLocalStockFeedPage(
+  feedName: string,
+  region: ReturnType<typeof resolveRegion>,
+  pageNo: number,
+): Promise<{ payload: Record<string, unknown>; records: Record<string, unknown>[] }> {
+  const payload = await callDropshipApi("aliexpress.ds.recommend.feed.get", {
+    feed_name: feedName,
+    country: region.countryCode,
+    page_size: String(LOCAL_STOCK_FEED_PAGE_SIZE),
+    page_no: String(pageNo),
+    target_currency: region.currency,
+    target_language: "EN",
+  });
+
+  return {
+    payload,
+    records: extractFeedProducts(payload),
+  };
+}
+
+async function collectLocalStockFeedProducts(options: {
+  stockRegion: SupplierStockRegion;
+  page: number;
+  pageSize: number;
+  keywords?: string;
+  minPrice?: number | null;
+  maxPrice?: number | null;
+  randomize?: boolean;
+}): Promise<DropshipSearchResult> {
+  const page = Math.max(1, options.page);
+  const pageSize = Math.min(50, Math.max(1, options.pageSize));
+  const region = resolveRegion(options.stockRegion);
+  const feeds = localStockFeedsFor(options.stockRegion);
+  if (feeds.length === 0) {
+    return emptyResult(page, pageSize);
+  }
+
+  const keywords = options.keywords?.trim().replace(/\s+/g, " ") ?? "";
+  const needsKeywordFilter = keywords.length >= 2;
+  const needsPriceFilter = hasActivePriceFilter(options.minPrice, options.maxPrice);
+  const collected: SupplierProduct[] = [];
+  const seenIds = new Set<string>();
+  let apiHasMore = false;
+
+  const feedsPerRequest = options.randomize ? Math.min(3, feeds.length) : 1;
+  const startFeedIndex = (page - 1) % feeds.length;
+  const feedPageBase = Math.floor((page - 1) / feeds.length) + 1;
+
+  for (let feedOffset = 0; feedOffset < feedsPerRequest && collected.length < pageSize; feedOffset++) {
+    const feedName = feeds[(startFeedIndex + feedOffset) % feeds.length];
+
+    for (
+      let scan = 0;
+      scan < LOCAL_STOCK_FEED_MAX_SCAN_PAGES && collected.length < pageSize;
+      scan++
+    ) {
+      const { payload, records } = await fetchLocalStockFeedPage(
+        feedName,
+        region,
+        feedPageBase + scan,
+      );
+      if (records.length === 0) break;
+
+      let products = records
+        .map((record) => normalizeFeedProduct(record, region.currency))
+        .filter((product): product is SupplierProduct => product !== null);
+
+      if (needsKeywordFilter) {
+        products = products.filter((product) => keywordMatchesTitle(product.title, keywords));
+      }
+
+      if (needsPriceFilter) {
+        products = filterByPriceRange(products, options.minPrice, options.maxPrice);
+      }
+
+      for (const product of products) {
+        if (seenIds.has(product.productId)) continue;
+        seenIds.add(product.productId);
+        collected.push(product);
+        if (collected.length >= pageSize) break;
+      }
+
+      apiHasMore = feedPayloadHasMore(payload, records.length);
+      if (!apiHasMore) break;
+    }
+  }
+
+  if (options.randomize) {
+    shuffleInPlace(collected, page * 2654435761 + collected.length);
+  }
+
+  const products = await enrichProductMetrics(collected.slice(0, pageSize), region);
+
+  return {
+    products,
+    total: products.length,
+    page,
+    pageSize,
+    hasMore: apiHasMore || collected.length > pageSize,
+  };
+}
+
+/** Photo-search fallback: confirm ship-from country on the live product page. */
 async function filterByLocalStock(
   products: SupplierProduct[],
   stockRegion: SupplierStockRegion,
-  region: ReturnType<typeof resolveRegion>,
 ): Promise<SupplierProduct[]> {
   if (!requiresLocalStockFilter(stockRegion) || products.length === 0) {
     return products;
   }
 
-  const concurrency = 8;
+  const countryCode = localStockShipFromCountry(stockRegion);
+  if (!countryCode) return products;
+
+  const concurrency = 4;
   const verified: SupplierProduct[] = [];
 
   for (let index = 0; index < products.length; index += concurrency) {
     const batch = products.slice(index, index + concurrency);
     const results = await Promise.all(
       batch.map(async (product) => {
-        const details = await fetchProductLocalDetails(product.productId, region);
-        if (!details || !isLocalStockDelivery(details.deliveryTime)) return null;
-
-        return {
-          ...product,
-          price: details.price ?? product.price,
-          currency: details.currency,
-          deliveryDays:
-            details.deliveryTime != null
-              ? String(details.deliveryTime)
-              : product.deliveryDays,
-        };
+        const url =
+          product.productUrl ??
+          `https://www.aliexpress.com/item/${product.productId}.html`;
+        try {
+          const raw = await fetchAliExpressDeliveryRawText(url);
+          if (!raw || !shipsFromCountryInRaw(raw, countryCode)) return null;
+          return product;
+        } catch {
+          return null;
+        }
       }),
     );
 
@@ -808,7 +926,6 @@ async function collectRelevantTextSearchProducts(
   const seenIds = new Set<string>();
   const startApiPage = (page - 1) * TEXT_SEARCH_MAX_API_PAGES + 1;
   let apiHasMore = false;
-  const needsLocalStock = requiresLocalStockFilter(stockRegion);
   const needsPriceFilter = hasActivePriceFilter(minPrice, maxPrice);
   const scoredCollected: Array<{ product: SupplierProduct; score: number }> = [];
 
@@ -861,22 +978,6 @@ async function collectRelevantTextSearchProducts(
         })
         .filter((entry): entry is { product: SupplierProduct; score: number } => entry !== null);
 
-      if (needsLocalStock) {
-        const localProducts = await filterByLocalStock(
-          products.map((entry) => entry.product),
-          stockRegion,
-          region,
-        );
-        const localIds = new Set(localProducts.map((product) => product.productId));
-        products = products
-          .filter((entry) => localIds.has(entry.product.productId))
-          .map((entry) => ({
-            ...entry,
-            product:
-              localProducts.find((p) => p.productId === entry.product.productId) ?? entry.product,
-          }));
-      }
-
       if (needsPriceFilter) {
         products = products.filter((entry) => {
           const { price } = entry.product;
@@ -925,14 +1026,8 @@ function shuffleInPlace<T>(items: T[], seed: number): void {
   }
 }
 
-function pickRandomBrowseKeyword(page: number, scanIndex: number): string {
-  const offset = (page - 1) * RANDOM_STOCK_MAX_SEARCH_PAGES + scanIndex;
-  return RANDOM_STOCK_BROWSE_KEYWORDS[offset % RANDOM_STOCK_BROWSE_KEYWORDS.length];
-}
-
 /**
- * Browse confirmed UK/USA local-stock products without a keyword — rotates broad
- * catalog searches and verifies delivery time via product.get.
+ * Browse confirmed UK/USA local-stock products from official AliExpress DS warehouse feeds.
  */
 export async function browseRandomLocalStock(
   options: Omit<DropshipSearchOptions, "keywords"> & {
@@ -941,62 +1036,15 @@ export async function browseRandomLocalStock(
 ): Promise<DropshipSearchResult> {
   const page = Math.max(1, options.page ?? 1);
   const pageSize = Math.min(50, Math.max(1, options.pageSize ?? 20));
-  const region = resolveRegion(options.stockRegion);
-  const needsPriceFilter = hasActivePriceFilter(options.minPrice, options.maxPrice);
-  const collected: SupplierProduct[] = [];
-  const seenIds = new Set<string>();
-  let apiHasMore = false;
-  const apiPageBase = 1 + (page - 1) * RANDOM_STOCK_MAX_SEARCH_PAGES;
 
-  for (let scan = 0; scan < RANDOM_STOCK_MAX_SEARCH_PAGES && collected.length < pageSize; scan++) {
-    const keyword = pickRandomBrowseKeyword(page, scan);
-    const apiPage = apiPageBase + scan;
-    const payload = await callDropshipApi("aliexpress.ds.text.search", {
-      key_word: keyword,
-      local: "en",
-      countryCode: region.countryCode,
-      currency: region.currency,
-      pageSize: String(TEXT_SEARCH_SCAN_PAGE_SIZE),
-      pageIndex: String(apiPage),
-      sortType: "orders",
-    });
-
-    const rawRecords = extractSearchProducts(payload);
-    if (rawRecords.length === 0) break;
-
-    const candidates = rawRecords
-      .map((record) => normalizeDropshipProduct(record, region.currency))
-      .filter((product): product is SupplierProduct => product !== null)
-      .filter((product) => {
-        if (seenIds.has(product.productId)) return false;
-        seenIds.add(product.productId);
-        return true;
-      });
-
-    let verified = await filterByLocalStock(candidates, options.stockRegion, region);
-    if (needsPriceFilter) {
-      verified = filterByPriceRange(verified, options.minPrice, options.maxPrice);
-    }
-
-    for (const product of verified) {
-      collected.push(product);
-      if (collected.length >= pageSize) break;
-    }
-
-    apiHasMore = rawRecords.length >= TEXT_SEARCH_SCAN_PAGE_SIZE;
-    if (rawRecords.length < TEXT_SEARCH_SCAN_PAGE_SIZE) break;
-  }
-
-  shuffleInPlace(collected, page * 2654435761 + collected.length);
-  const products = await enrichProductMetrics(collected.slice(0, pageSize), region);
-
-  return {
-    products,
-    total: products.length,
+  return collectLocalStockFeedProducts({
+    stockRegion: options.stockRegion,
     page,
     pageSize,
-    hasMore: apiHasMore || collected.length > pageSize,
-  };
+    minPrice: options.minPrice,
+    maxPrice: options.maxPrice,
+    randomize: true,
+  });
 }
 
 /**
@@ -1013,6 +1061,17 @@ export async function searchDropshipProducts(
   const page = Math.max(1, options.page ?? 1);
   const pageSize = Math.min(50, Math.max(1, options.pageSize ?? 20));
   const region = resolveRegion(options.stockRegion);
+
+  if (requiresLocalStockFilter(options.stockRegion)) {
+    return collectLocalStockFeedProducts({
+      stockRegion: options.stockRegion,
+      page,
+      pageSize,
+      keywords,
+      minPrice: options.minPrice,
+      maxPrice: options.maxPrice,
+    });
+  }
 
   return collectRelevantTextSearchProducts(
     keywords,
@@ -1053,7 +1112,7 @@ export async function searchDropshipProductsByImage(
     region.currency,
   );
   const stockFiltered = requiresLocalStockFilter(options.stockRegion)
-    ? await filterByLocalStock(fullResult.products, options.stockRegion, region)
+    ? await filterByLocalStock(fullResult.products, options.stockRegion)
     : fullResult.products;
   const filtered = filterByPriceRange(
     stockFiltered,
