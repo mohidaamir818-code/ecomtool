@@ -1,0 +1,430 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { DashboardLayout } from "@/features/dashboard/components/DashboardLayout";
+import {
+  PlatformQuotaWidget,
+  usePlatformQuota,
+} from "@/features/quota/components/PlatformQuotaWidget";
+import { QUOTA_EXCEEDED_MESSAGE } from "@/lib/quota/constants";
+import type {
+  SupplierProduct,
+  SupplierSearchMode,
+  SupplierSearchResponse,
+  SupplierStockRegion,
+} from "@/types/supplier-finder";
+
+const PAGE_SIZE = 20;
+
+function formatPrice(price: number, currency: string): string {
+  const symbol = currency === "USD" ? "$" : currency === "GBP" ? "£" : `${currency} `;
+  return `${symbol}${price.toFixed(2)}`;
+}
+
+function stockLabel(region: SupplierStockRegion): string {
+  if (region === "uk") return "UK stock (3-day delivery)";
+  if (region === "us") return "USA stock (3-day delivery)";
+  return "All suppliers";
+}
+
+export function SupplierFinderShell() {
+  const [userId, setUserId] = useState<string | null>(null);
+  const [mode, setMode] = useState<SupplierSearchMode>("keyword");
+  const [query, setQuery] = useState("");
+  const [stockRegion, setStockRegion] = useState<SupplierStockRegion>("any");
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<SupplierSearchResponse | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const aliQuota = usePlatformQuota(userId, "aliexpress");
+
+  useEffect(() => {
+    const id = sessionStorage.getItem("ecomtools_user_id");
+    if (id) setUserId(id);
+  }, []);
+
+  const runSearch = useCallback(
+    async (page: number, append: boolean) => {
+      if (!userId) {
+        setError("Please sign in again.");
+        return;
+      }
+
+      if (mode !== "photo" && query.trim().length < 2) {
+        setError(mode === "title" ? "Enter a product title to search." : "Enter a keyword to search.");
+        return;
+      }
+
+      if (mode === "photo" && !photoDataUrl) {
+        setError("Upload a product photo first.");
+        return;
+      }
+
+      if (append) {
+        setLoadingMore(true);
+      } else {
+        setSearching(true);
+        setError("");
+      }
+
+      try {
+        const response = await fetch("/api/suppliers/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId,
+            mode,
+            query: mode === "photo" ? undefined : query.trim(),
+            stockRegion,
+            page,
+            pageSize: PAGE_SIZE,
+            ...(mode === "photo" && photoDataUrl ? { imageDataUrl: photoDataUrl } : {}),
+          }),
+        });
+
+        const data = (await response.json()) as SupplierSearchResponse & { error?: string; message?: string };
+
+        if (response.status === 429) {
+          setError(data.message ?? QUOTA_EXCEEDED_MESSAGE);
+          void aliQuota.reload();
+          return;
+        }
+
+        if (!response.ok) {
+          setError(data.error ?? "Supplier search failed.");
+          return;
+        }
+
+        setResult((current) => {
+          if (append && current) {
+            return {
+              ...data,
+              products: [...current.products, ...data.products],
+            };
+          }
+          return data;
+        });
+
+        void aliQuota.reload();
+      } catch {
+        setError("Network error while searching suppliers.");
+      } finally {
+        setSearching(false);
+        setLoadingMore(false);
+      }
+    },
+    [aliQuota, mode, photoDataUrl, query, stockRegion, userId],
+  );
+
+  function handleSearch() {
+    void runSearch(1, false);
+  }
+
+  function handleLoadMore() {
+    if (!result?.hasMore || loadingMore) return;
+    void runSearch((result.page ?? 1) + 1, true);
+  }
+
+  function handlePhotoChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setError("Please upload an image file (JPG, PNG, or WebP).");
+      return;
+    }
+
+    if (file.size > 4 * 1024 * 1024) {
+      setError("Photo must be under 4 MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === "string" ? reader.result : null;
+      setPhotoDataUrl(dataUrl);
+      setPhotoPreview(dataUrl);
+      setError("");
+      setResult(null);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function clearPhoto() {
+    setPhotoDataUrl(null);
+    setPhotoPreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  return (
+    <DashboardLayout>
+      <div className="mx-auto max-w-6xl">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-wide text-brand">Suppliers Finder</p>
+            <h1 className="mt-2 text-2xl font-bold text-[#111827] lg:text-3xl">
+              Find AliExpress suppliers
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm text-[#6B7280]">
+              Search by keyword, product title, or photo. Filter for UK or USA local stock using the
+              AliExpress Affiliate API.
+            </p>
+          </div>
+          {userId ? (
+            <PlatformQuotaWidget userId={userId} platform="aliexpress" />
+          ) : null}
+        </div>
+
+        <div className="mt-6 rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                ["keyword", "Keyword"],
+                ["title", "Title"],
+                ["photo", "Photo"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => {
+                  setMode(value);
+                  setError("");
+                  setResult(null);
+                }}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                  mode === value
+                    ? "bg-brand text-white"
+                    : "border border-gray-200 text-[#374151] hover:bg-gray-50"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {mode === "photo" ? (
+            <div className="mt-4">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                className="hidden"
+                onChange={handlePhotoChange}
+              />
+              {photoPreview ? (
+                <div className="flex flex-wrap items-start gap-4">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={photoPreview}
+                    alt="Uploaded product"
+                    className="h-32 w-32 rounded-xl border border-gray-200 object-cover"
+                  />
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50"
+                    >
+                      Change photo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearPhoto}
+                      className="rounded-lg px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-200 px-6 py-10 text-center hover:border-brand hover:bg-brand/5"
+                >
+                  <span className="text-sm font-semibold text-[#111827]">Upload a product photo</span>
+                  <span className="mt-1 text-xs text-[#6B7280]">
+                    AI reads the image and finds similar AliExpress products
+                  </span>
+                </button>
+              )}
+            </div>
+          ) : (
+            <label className="mt-4 block">
+              <span className="text-sm font-medium text-[#111827]">
+                {mode === "title" ? "Product title" : "Keyword"}
+              </span>
+              <input
+                type="text"
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setError("");
+                  setResult(null);
+                }}
+                placeholder={
+                  mode === "title"
+                    ? "e.g. Wireless Bluetooth Earbuds with Charging Case"
+                    : "e.g. wireless earbuds"
+                }
+                className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm outline-none focus:border-brand"
+              />
+            </label>
+          )}
+
+          <div className="mt-4">
+            <span className="text-sm font-medium text-[#111827]">Stock filter</span>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {(
+                [
+                  ["any", "All"],
+                  ["uk", "UK stock"],
+                  ["us", "USA stock"],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setStockRegion(value)}
+                  className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                    stockRegion === value
+                      ? "border border-brand bg-brand/10 text-brand"
+                      : "border border-gray-200 text-[#374151] hover:bg-gray-50"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-[#6B7280]">
+              UK / USA stock uses 3-day local delivery filter from the Affiliate API.
+            </p>
+          </div>
+
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={handleSearch}
+              disabled={searching}
+              className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {searching ? "Searching…" : "Find suppliers"}
+            </button>
+            {searching ? (
+              <span className="text-xs text-[#6B7280]">Searching AliExpress Affiliate API…</span>
+            ) : null}
+          </div>
+
+          {error ? (
+            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          ) : null}
+        </div>
+
+        {result ? (
+          <div className="mt-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold text-[#111827]">
+                  {result.total > 0 ? `${result.total} matches found` : "No matches found"}
+                </h2>
+                <p className="mt-1 text-sm text-[#6B7280]">
+                  {result.mode === "photo" && result.derivedKeywords
+                    ? `From photo → “${result.derivedKeywords}” · ${stockLabel(result.stockRegion)}`
+                    : `“${result.query}” · ${stockLabel(result.stockRegion)}`}
+                </p>
+              </div>
+            </div>
+
+            {result.products.length > 0 ? (
+              <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {result.products.map((product) => (
+                  <SupplierProductCard key={product.productId} product={product} />
+                ))}
+              </div>
+            ) : (
+              <div className="mt-4 rounded-xl border border-gray-100 bg-white px-4 py-8 text-center text-sm text-[#6B7280]">
+                Try a different keyword, title, or photo — or switch the stock filter.
+              </div>
+            )}
+
+            {result.hasMore ? (
+              <div className="mt-6 flex justify-center">
+                <button
+                  type="button"
+                  onClick={handleLoadMore}
+                  disabled={loadingMore}
+                  className="rounded-xl border border-gray-200 px-5 py-2.5 text-sm font-semibold text-[#374151] hover:bg-gray-50 disabled:opacity-60"
+                >
+                  {loadingMore ? "Loading…" : "Load more"}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="mt-6 rounded-xl border border-dashed border-gray-200 bg-white px-4 py-10 text-center text-sm text-[#6B7280]">
+            Enter a keyword, title, or photo and click Find suppliers. Results will appear here.
+          </div>
+        )}
+      </div>
+    </DashboardLayout>
+  );
+}
+
+function SupplierProductCard({ product }: { product: SupplierProduct }) {
+  const aliUrl =
+    product.productUrl ??
+    `https://www.aliexpress.com/item/${product.productId}.html`;
+
+  return (
+    <article className="flex h-full flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
+      <div className="aspect-square bg-[#F9FAFB]">
+        {product.imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={product.imageUrl}
+            alt={product.title}
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center text-xs text-[#9CA3AF]">
+            No image
+          </div>
+        )}
+      </div>
+      <div className="flex flex-1 flex-col p-4">
+        <h3 className="line-clamp-2 text-sm font-semibold text-[#111827]">{product.title}</h3>
+        <div className="mt-3 flex items-baseline gap-2">
+          <span className="text-lg font-bold text-brand">
+            {formatPrice(product.price, product.currency)}
+          </span>
+          {product.originalPrice != null && product.originalPrice > product.price ? (
+            <span className="text-xs text-[#9CA3AF] line-through">
+              {formatPrice(product.originalPrice, product.currency)}
+            </span>
+          ) : null}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-2 text-xs text-[#6B7280]">
+          {product.orders != null ? <span>{product.orders} orders</span> : null}
+          {product.rating ? <span>{product.rating} rating</span> : null}
+          {product.deliveryDays ? <span>{product.deliveryDays} days</span> : null}
+          {product.commissionRate ? <span>{product.commissionRate} commission</span> : null}
+        </div>
+        <a
+          href={aliUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-4 inline-flex items-center justify-center rounded-lg bg-[#111827] px-4 py-2 text-sm font-semibold text-white hover:bg-black"
+        >
+          View on AliExpress
+        </a>
+      </div>
+    </article>
+  );
+}

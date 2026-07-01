@@ -25,6 +25,9 @@ export const serverEnv = {
     process.env.ALIEXPRESS_APP_SECRET ??
     process.env.ALIEXPRESS_APP__SECRET ??
     "",
+  /** Separate Affiliate app (Supplier Finder) — not the Dropship app above. */
+  aliexpressAffiliateAppKey: () => process.env.ALIEXPRESS_AFFILIATE_APP_KEY ?? "",
+  aliexpressAffiliateAppSecret: () => process.env.ALIEXPRESS_AFFILIATE_APP_SECRET ?? "",
   aliexpressAccessToken: () => cleanOptionalEnv(process.env.ALIEXPRESS_ACCESS_TOKEN),
   aliexpressRefreshToken: () => cleanOptionalEnv(process.env.ALIEXPRESS_REFRESH_TOKEN),
   aliexpressApiKey: () => process.env.ALIEXPRESS_API_KEY ?? "",
