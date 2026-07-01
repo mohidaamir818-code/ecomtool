@@ -4,10 +4,13 @@ import { reviseAmazefListedProduct } from "@/lib/amazef/revise-listed-product";
 import { reviseAmazefListedVariants } from "@/lib/amazef/revise-listing";
 import { reviseEbayListedProduct, reviseEbayListedVariant } from "@/lib/ebay/sell-inventory";
 import { sendEmail } from "@/lib/email/send-email";
+import { defaultSellerPreferences, type ListingPricingPreferences } from "@/types/listing-generator";
 import {
   addHandlingProduct,
   getHandlingProducts,
 } from "@/lib/handling/service";
+import { getSellerPreferences, sellerPreferencesToFeePrefs } from "@/lib/listings/seller-preferences";
+import { calculatePricingBreakdown } from "@/lib/listings/pricing";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type { HandlingProductVariant } from "@/types/handling";
 import type {
@@ -26,6 +29,15 @@ function formatMoney(amount: number, currency: string): string {
   if (currency === "USD") return `$${amount.toFixed(2)}`;
   if (currency === "EUR") return `€${amount.toFixed(2)}`;
   return `${currency} ${amount.toFixed(2)}`;
+}
+
+function minProfitFloorForAliCost(
+  aliPrice: number,
+  currency: string,
+  feePrefs: ListingPricingPreferences,
+): number {
+  const breakdown = calculatePricingBreakdown(aliPrice, { ...feePrefs, currency });
+  return Number(breakdown.recommendedPrice.toFixed(2));
 }
 
 async function getUserEmail(userId: string): Promise<string | null> {
@@ -406,6 +418,8 @@ export async function syncListedProductsForAliVariants(
   if (!listedVariants?.length) return;
 
   const productsById = new Map(products.map((row) => [String(row.id), row]));
+  const sellerPrefs = (await getSellerPreferences(userId)) ?? defaultSellerPreferences("GBP");
+  const baseFeePrefs = sellerPreferencesToFeePrefs(sellerPrefs);
 
   const email = await getUserEmail(userId);
   const emailLines: string[] = [];
@@ -431,7 +445,9 @@ export async function syncListedProductsForAliVariants(
 
     if (previousAli.price < currentAli.price) {
       const delta = currentAli.price - previousAli.price;
-      nextPrice = Number((listedPrice + delta).toFixed(2));
+      const raisedByDelta = Number((listedPrice + delta).toFixed(2));
+      const profitFloor = minProfitFloorForAliCost(currentAli.price, currency, baseFeePrefs);
+      nextPrice = Number(Math.max(raisedByDelta, profitFloor).toFixed(2));
       if (nextPrice > listedPrice) {
         priceChanged = true;
       }

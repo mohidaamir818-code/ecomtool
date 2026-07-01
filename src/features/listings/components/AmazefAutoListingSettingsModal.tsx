@@ -410,8 +410,7 @@ export function AmazefAutoListingSettingsModal({
             Your own price rules (e.g. .99 / .59 / .89 endings)
           </span>
           <p className="mt-1 text-xs text-[#6B7280]">
-            Write exactly how you want prices to end by range. e.g. “Agar £1 jaisa ho to .99, agar
-            £1.80 ya £1.90 ho to .59, baqi sab .89 par rakho.” AI samajh ke apply kar dega.
+            Describe how you want prices to end by price range. AI will apply your rules.
           </p>
           <textarea
             value={rulePrompt}
