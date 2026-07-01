@@ -15,6 +15,8 @@ export interface DropshipSearchOptions {
   stockRegion: SupplierStockRegion;
   page?: number;
   pageSize?: number;
+  minPrice?: number | null;
+  maxPrice?: number | null;
 }
 
 export interface DropshipImageSearchOptions {
@@ -23,6 +25,8 @@ export interface DropshipImageSearchOptions {
   stockRegion: SupplierStockRegion;
   page?: number;
   pageSize?: number;
+  minPrice?: number | null;
+  maxPrice?: number | null;
 }
 
 export interface DropshipSearchResult {
@@ -86,6 +90,23 @@ function resolveRegion(stockRegion: SupplierStockRegion): {
     return { shipTo: "GB", countryCode: "GB", currency: "GBP" };
   }
   return { shipTo: "GB", countryCode: "GB", currency: "GBP" };
+}
+
+function filterByPriceRange(
+  products: SupplierProduct[],
+  minPrice?: number | null,
+  maxPrice?: number | null,
+): SupplierProduct[] {
+  const hasMin = minPrice != null && Number.isFinite(minPrice);
+  const hasMax = maxPrice != null && Number.isFinite(maxPrice);
+  if (!hasMin && !hasMax) return products;
+
+  return products.filter((product) => {
+    if (!Number.isFinite(product.price)) return false;
+    if (hasMin && product.price < minPrice!) return false;
+    if (hasMax && product.price > maxPrice!) return false;
+    return true;
+  });
 }
 
 async function callDropshipApi(
@@ -577,7 +598,24 @@ export async function searchDropshipProducts(
     sortType: "orders",
   });
 
-  return parseSearchPayload(payload, page, pageSize, region.currency);
+  const parsed = parseSearchPayload(payload, page, pageSize, region.currency);
+  const hasPriceFilter =
+    (options.minPrice != null && Number.isFinite(options.minPrice)) ||
+    (options.maxPrice != null && Number.isFinite(options.maxPrice));
+
+  if (!hasPriceFilter) {
+    return parsed;
+  }
+
+  const filtered = filterByPriceRange(parsed.products, options.minPrice, options.maxPrice);
+
+  return {
+    products: filtered,
+    total: filtered.length,
+    page: parsed.page,
+    pageSize: parsed.pageSize,
+    hasMore: parsed.hasMore,
+  };
 }
 
 /**
@@ -607,9 +645,14 @@ export async function searchDropshipProductsByImage(
     IMAGE_SEARCH_MAX_PRODUCTS,
     region.currency,
   );
-  const total = Math.max(fullResult.total, fullResult.products.length);
+  const filtered = filterByPriceRange(
+    fullResult.products,
+    options.minPrice,
+    options.maxPrice,
+  );
+  const total = filtered.length;
   const start = (page - 1) * pageSize;
-  const sliced = fullResult.products.slice(start, start + pageSize);
+  const sliced = filtered.slice(start, start + pageSize);
   const products = await enrichProductMetrics(sliced, region);
 
   return {
@@ -617,6 +660,6 @@ export async function searchDropshipProductsByImage(
     total,
     page,
     pageSize,
-    hasMore: start + pageSize < fullResult.products.length,
+    hasMore: start + pageSize < filtered.length,
   };
 }

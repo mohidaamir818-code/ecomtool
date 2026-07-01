@@ -30,4 +30,7 @@ export interface SupplierSearchResponse {
   hasMore: boolean;
   /** When photo search was used, the AI-generated keywords from the image. */
   derivedKeywords?: string;
+  /** Applied price range filter (in search currency). */
+  minPrice?: number | null;
+  maxPrice?: number | null;
 }

@@ -43,11 +43,37 @@ function stockLabel(region: SupplierStockRegion): string {
   return "All suppliers";
 }
 
+function priceCurrency(region: SupplierStockRegion): string {
+  if (region === "us") return "USD";
+  return "GBP";
+}
+
+function priceSymbol(region: SupplierStockRegion): string {
+  if (region === "us") return "$";
+  return "£";
+}
+
+function formatPriceRangeLabel(
+  minPrice: number | null | undefined,
+  maxPrice: number | null | undefined,
+  region: SupplierStockRegion,
+): string | null {
+  const symbol = priceSymbol(region);
+  if (minPrice != null && maxPrice != null) {
+    return `${symbol}${minPrice.toFixed(2)} – ${symbol}${maxPrice.toFixed(2)}`;
+  }
+  if (minPrice != null) return `from ${symbol}${minPrice.toFixed(2)}`;
+  if (maxPrice != null) return `up to ${symbol}${maxPrice.toFixed(2)}`;
+  return null;
+}
+
 export function SupplierFinderShell() {
   const [userId, setUserId] = useState<string | null>(null);
   const [mode, setMode] = useState<SupplierSearchMode>("keyword");
   const [query, setQuery] = useState("");
   const [stockRegion, setStockRegion] = useState<SupplierStockRegion>("any");
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
@@ -81,6 +107,24 @@ export function SupplierFinderShell() {
         return;
       }
 
+      const parsedMin = minPrice.trim() ? Number(minPrice) : null;
+      const parsedMax = maxPrice.trim() ? Number(maxPrice) : null;
+
+      if (parsedMin != null && (!Number.isFinite(parsedMin) || parsedMin < 0)) {
+        setError("Enter a valid minimum price.");
+        return;
+      }
+
+      if (parsedMax != null && (!Number.isFinite(parsedMax) || parsedMax < 0)) {
+        setError("Enter a valid maximum price.");
+        return;
+      }
+
+      if (parsedMin != null && parsedMax != null && parsedMin > parsedMax) {
+        setError("Minimum price cannot be higher than maximum price.");
+        return;
+      }
+
       if (append) {
         setLoadingMore(true);
       } else {
@@ -99,6 +143,8 @@ export function SupplierFinderShell() {
             stockRegion,
             page,
             pageSize: mode === "photo" ? PHOTO_PAGE_SIZE : PAGE_SIZE,
+            ...(parsedMin != null ? { minPrice: parsedMin } : {}),
+            ...(parsedMax != null ? { maxPrice: parsedMax } : {}),
             ...(mode === "photo" && photoDataUrl ? { imageDataUrl: photoDataUrl } : {}),
           }),
         });
@@ -134,7 +180,7 @@ export function SupplierFinderShell() {
         setLoadingMore(false);
       }
     },
-    [aliQuota, mode, photoDataUrl, query, stockRegion, userId],
+    [aliQuota, maxPrice, minPrice, mode, photoDataUrl, query, stockRegion, userId],
   );
 
   function handleSearch() {
@@ -340,6 +386,57 @@ export function SupplierFinderShell() {
           )}
 
           <div className="mt-4">
+            <span className="text-sm font-medium text-[#111827]">Price range ({priceCurrency(stockRegion)})</span>
+            <div className="mt-2 grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="text-xs text-[#6B7280]">Min price</span>
+                <div className="relative mt-1">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#9CA3AF]">
+                    {priceSymbol(stockRegion)}
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={minPrice}
+                    onChange={(event) => {
+                      setMinPrice(event.target.value);
+                      setError("");
+                      setResult(null);
+                    }}
+                    placeholder="e.g. 10"
+                    className="w-full rounded-xl border border-gray-200 py-3 pl-8 pr-4 text-sm outline-none focus:border-brand"
+                  />
+                </div>
+              </label>
+              <label className="block">
+                <span className="text-xs text-[#6B7280]">Max price</span>
+                <div className="relative mt-1">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#9CA3AF]">
+                    {priceSymbol(stockRegion)}
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={maxPrice}
+                    onChange={(event) => {
+                      setMaxPrice(event.target.value);
+                      setError("");
+                      setResult(null);
+                    }}
+                    placeholder="e.g. 15"
+                    className="w-full rounded-xl border border-gray-200 py-3 pl-8 pr-4 text-sm outline-none focus:border-brand"
+                  />
+                </div>
+              </label>
+            </div>
+            <p className="mt-2 text-xs text-[#6B7280]">
+              Optional. Only products within your min–max price will be shown (e.g. {priceSymbol(stockRegion)}10 to {priceSymbol(stockRegion)}15).
+            </p>
+          </div>
+
+          <div className="mt-4">
             <span className="text-sm font-medium text-[#111827]">Stock filter</span>
             <div className="mt-2 flex flex-wrap gap-2">
               {(
@@ -394,12 +491,21 @@ export function SupplierFinderShell() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-bold text-[#111827]">
-                  {result.total > 0 ? `${result.total} matches found` : "No matches found"}
+                  {result.minPrice != null || result.maxPrice != null
+                    ? result.products.length > 0
+                      ? `${result.products.length} products in your price range`
+                      : "No products in your price range"
+                    : result.total > 0
+                      ? `${result.total} matches found`
+                      : "No matches found"}
                 </h2>
                 <p className="mt-1 text-sm text-[#6B7280]">
                   {result.mode === "photo" && result.derivedKeywords
                     ? `From photo → “${result.derivedKeywords}” · ${stockLabel(result.stockRegion)}`
                     : `“${result.query}” · ${stockLabel(result.stockRegion)}`}
+                  {formatPriceRangeLabel(result.minPrice, result.maxPrice, result.stockRegion)
+                    ? ` · ${formatPriceRangeLabel(result.minPrice, result.maxPrice, result.stockRegion)}`
+                    : ""}
                 </p>
               </div>
             </div>
@@ -412,7 +518,9 @@ export function SupplierFinderShell() {
               </div>
             ) : (
               <div className="mt-4 rounded-xl border border-gray-100 bg-white px-4 py-8 text-center text-sm text-[#6B7280]">
-                Try a different keyword, title, or photo — or switch the stock filter.
+                {result.minPrice != null || result.maxPrice != null
+                  ? "No products in this price range. Try a wider min/max, different keyword, or photo."
+                  : "Try a different keyword, title, or photo — or switch the stock filter."}
               </div>
             )}
 

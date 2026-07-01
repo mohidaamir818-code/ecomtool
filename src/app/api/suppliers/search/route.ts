@@ -21,6 +21,8 @@ interface SupplierSearchBody {
   pageSize?: number;
   imageBase64?: string;
   imageDataUrl?: string;
+  minPrice?: number | string | null;
+  maxPrice?: number | string | null;
 }
 
 function normalizeMode(value: unknown): SupplierSearchMode {
@@ -33,6 +35,13 @@ function normalizeStockRegion(value: unknown): SupplierStockRegion {
   return "any";
 }
 
+function normalizePrice(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.round(parsed * 100) / 100;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as SupplierSearchBody;
@@ -41,6 +50,15 @@ export async function POST(request: NextRequest) {
     const stockRegion = normalizeStockRegion(body.stockRegion);
     const page = Math.max(1, Number(body.page) || 1);
     const pageSize = Math.min(50, Math.max(1, Number(body.pageSize) || 20));
+    const minPrice = normalizePrice(body.minPrice);
+    const maxPrice = normalizePrice(body.maxPrice);
+
+    if (minPrice != null && maxPrice != null && minPrice > maxPrice) {
+      return NextResponse.json(
+        { error: "Minimum price cannot be higher than maximum price." },
+        { status: 400 },
+      );
+    }
 
     if (!userId) {
       return NextResponse.json({ error: "userId is required." }, { status: 400 });
@@ -69,6 +87,8 @@ export async function POST(request: NextRequest) {
         stockRegion,
         page,
         pageSize,
+        minPrice,
+        maxPrice,
       });
     } else {
       if (searchQuery.length < 2) {
@@ -88,6 +108,8 @@ export async function POST(request: NextRequest) {
         stockRegion,
         page,
         pageSize,
+        minPrice,
+        maxPrice,
       });
     }
 
@@ -101,6 +123,8 @@ export async function POST(request: NextRequest) {
       page: result.page,
       pageSize: result.pageSize,
       hasMore: result.hasMore,
+      minPrice,
+      maxPrice,
       ...(derivedKeywords ? { derivedKeywords } : {}),
     };
 
