@@ -40,16 +40,22 @@ function formatRating(rating: string | null): string {
 function stockLabel(region: SupplierStockRegion): string {
   if (region === "uk") return "UK stock (3-day delivery)";
   if (region === "us") return "USA stock (3-day delivery)";
+  if (region === "uk_random") return "Random UK stock (confirmed)";
+  if (region === "us_random") return "Random USA stock (confirmed)";
   return "All suppliers";
 }
 
+function isRandomStockBrowse(region: SupplierStockRegion): boolean {
+  return region === "uk_random" || region === "us_random";
+}
+
 function priceCurrency(region: SupplierStockRegion): string {
-  if (region === "us") return "USD";
+  if (region === "us" || region === "us_random") return "USD";
   return "GBP";
 }
 
 function priceSymbol(region: SupplierStockRegion): string {
-  if (region === "us") return "$";
+  if (region === "us" || region === "us_random") return "$";
   return "£";
 }
 
@@ -97,7 +103,7 @@ export function SupplierFinderShell() {
         return;
       }
 
-      if (mode !== "photo" && query.trim().length < 2) {
+      if (!isRandomStockBrowse(stockRegion) && mode !== "photo" && query.trim().length < 2) {
         setError(mode === "title" ? "Enter a product title to search." : "Enter a keyword to search.");
         return;
       }
@@ -444,6 +450,8 @@ export function SupplierFinderShell() {
                   ["any", "All"],
                   ["uk", "UK stock"],
                   ["us", "USA stock"],
+                  ["uk_random", "Random UK"],
+                  ["us_random", "Random USA"],
                 ] as const
               ).map(([value, label]) => (
                 <button
@@ -461,7 +469,8 @@ export function SupplierFinderShell() {
               ))}
             </div>
             <p className="mt-2 text-xs text-[#6B7280]">
-              UK / USA stock only shows suppliers that can deliver within 3 days to that region.
+              UK / USA stock filters search results with 3–5 day local delivery. Random UK / USA
+              browses confirmed local-stock products without a keyword.
             </p>
           </div>
 
@@ -472,10 +481,18 @@ export function SupplierFinderShell() {
               disabled={searching}
               className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {searching ? "Searching…" : "Find suppliers"}
+              {searching
+                ? "Searching…"
+                : isRandomStockBrowse(stockRegion)
+                  ? "Browse stock"
+                  : "Find suppliers"}
             </button>
             {searching ? (
-              <span className="text-xs text-[#6B7280]">Searching AliExpress…</span>
+              <span className="text-xs text-[#6B7280]">
+                {isRandomStockBrowse(stockRegion)
+                  ? "Finding confirmed local stock on AliExpress…"
+                  : "Searching AliExpress…"}
+              </span>
             ) : null}
           </div>
 
@@ -520,8 +537,11 @@ export function SupplierFinderShell() {
               <div className="mt-4 rounded-xl border border-gray-100 bg-white px-4 py-8 text-center text-sm text-[#6B7280]">
                 {result.minPrice != null || result.maxPrice != null
                   ? "No products in this price range. Try a wider min/max, different keyword, or photo."
-                  : result.stockRegion === "uk" || result.stockRegion === "us"
-                    ? "No suppliers with 3-day local stock found. Try All suppliers, a different search, or photo."
+                  : result.stockRegion === "uk" ||
+                      result.stockRegion === "us" ||
+                      result.stockRegion === "uk_random" ||
+                      result.stockRegion === "us_random"
+                    ? "No confirmed local-stock suppliers found. Try Random UK/USA, All suppliers, or a different search."
                     : "Try a different keyword, title, or photo — or switch the stock filter."}
               </div>
             )}
@@ -541,7 +561,9 @@ export function SupplierFinderShell() {
           </div>
         ) : (
           <div className="mt-6 rounded-xl border border-dashed border-gray-200 bg-white px-4 py-10 text-center text-sm text-[#6B7280]">
-            Enter a keyword, title, or photo and click Find suppliers. Results will appear here.
+            {isRandomStockBrowse(stockRegion)
+              ? "Select Random UK or Random USA and click Browse stock — no keyword needed."
+              : "Enter a keyword, title, or photo and click Find suppliers. Results will appear here."}
           </div>
         )}
       </div>

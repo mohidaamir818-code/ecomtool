@@ -1,6 +1,6 @@
 export type SupplierSearchMode = "keyword" | "title" | "photo";
 
-export type SupplierStockRegion = "any" | "uk" | "us";
+export type SupplierStockRegion = "any" | "uk" | "us" | "uk_random" | "us_random";
 
 export interface SupplierProduct {
   productId: string;

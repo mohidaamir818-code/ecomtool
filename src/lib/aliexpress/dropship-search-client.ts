@@ -14,6 +14,37 @@ const TEXT_SEARCH_MAX_API_PAGES = 50;
 const TEXT_SEARCH_SCAN_PAGE_SIZE = 20;
 const TEXT_SEARCH_RELEVANCE_MIN_SCORE = 50;
 const TEXT_SEARCH_PARALLEL_PAGES = 5;
+const RANDOM_STOCK_BROWSE_KEYWORDS = [
+  "home decor",
+  "kitchen gadgets",
+  "phone accessories",
+  "women fashion",
+  "men shoes",
+  "beauty",
+  "tools",
+  "toys",
+  "sports",
+  "jewelry",
+  "electronics",
+  "garden",
+  "pet supplies",
+  "car accessories",
+  "office",
+  "baby products",
+  "watch",
+  "handbag",
+  "led lights",
+  "storage box",
+  "fitness",
+  "hair accessories",
+  "gaming",
+  "bluetooth",
+  "usb cable",
+  "organizer",
+  "gift",
+  "craft",
+];
+const RANDOM_STOCK_MAX_SEARCH_PAGES = 20;
 
 export interface DropshipSearchOptions {
   keywords: string;
@@ -88,10 +119,10 @@ function resolveRegion(stockRegion: SupplierStockRegion): {
   countryCode: string;
   currency: string;
 } {
-  if (stockRegion === "us") {
+  if (stockRegion === "us" || stockRegion === "us_random") {
     return { shipTo: "US", countryCode: "US", currency: "USD" };
   }
-  if (stockRegion === "uk") {
+  if (stockRegion === "uk" || stockRegion === "uk_random") {
     return { shipTo: "GB", countryCode: "GB", currency: "GBP" };
   }
   return { shipTo: "GB", countryCode: "GB", currency: "GBP" };
@@ -187,7 +218,12 @@ function filterByPriceRange(
 }
 
 function requiresLocalStockFilter(stockRegion: SupplierStockRegion): boolean {
-  return stockRegion === "uk" || stockRegion === "us";
+  return (
+    stockRegion === "uk" ||
+    stockRegion === "us" ||
+    stockRegion === "uk_random" ||
+    stockRegion === "us_random"
+  );
 }
 
 function isLocalStockDelivery(deliveryTime: number | null): boolean {
@@ -877,6 +913,89 @@ async function collectRelevantTextSearchProducts(
     page,
     pageSize,
     hasMore: apiHasMore || scoredCollected.length > pageSize,
+  };
+}
+
+function shuffleInPlace<T>(items: T[], seed: number): void {
+  let state = seed >>> 0;
+  for (let index = items.length - 1; index > 0; index--) {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    const swapIndex = state % (index + 1);
+    [items[index], items[swapIndex]] = [items[swapIndex], items[index]];
+  }
+}
+
+function pickRandomBrowseKeyword(page: number, scanIndex: number): string {
+  const offset = (page - 1) * RANDOM_STOCK_MAX_SEARCH_PAGES + scanIndex;
+  return RANDOM_STOCK_BROWSE_KEYWORDS[offset % RANDOM_STOCK_BROWSE_KEYWORDS.length];
+}
+
+/**
+ * Browse confirmed UK/USA local-stock products without a keyword — rotates broad
+ * catalog searches and verifies delivery time via product.get.
+ */
+export async function browseRandomLocalStock(
+  options: Omit<DropshipSearchOptions, "keywords"> & {
+    stockRegion: "uk_random" | "us_random";
+  },
+): Promise<DropshipSearchResult> {
+  const page = Math.max(1, options.page ?? 1);
+  const pageSize = Math.min(50, Math.max(1, options.pageSize ?? 20));
+  const region = resolveRegion(options.stockRegion);
+  const needsPriceFilter = hasActivePriceFilter(options.minPrice, options.maxPrice);
+  const collected: SupplierProduct[] = [];
+  const seenIds = new Set<string>();
+  let apiHasMore = false;
+  const apiPageBase = 1 + (page - 1) * RANDOM_STOCK_MAX_SEARCH_PAGES;
+
+  for (let scan = 0; scan < RANDOM_STOCK_MAX_SEARCH_PAGES && collected.length < pageSize; scan++) {
+    const keyword = pickRandomBrowseKeyword(page, scan);
+    const apiPage = apiPageBase + scan;
+    const payload = await callDropshipApi("aliexpress.ds.text.search", {
+      key_word: keyword,
+      local: "en",
+      countryCode: region.countryCode,
+      currency: region.currency,
+      pageSize: String(TEXT_SEARCH_SCAN_PAGE_SIZE),
+      pageIndex: String(apiPage),
+      sortType: "orders",
+    });
+
+    const rawRecords = extractSearchProducts(payload);
+    if (rawRecords.length === 0) break;
+
+    const candidates = rawRecords
+      .map((record) => normalizeDropshipProduct(record, region.currency))
+      .filter((product): product is SupplierProduct => product !== null)
+      .filter((product) => {
+        if (seenIds.has(product.productId)) return false;
+        seenIds.add(product.productId);
+        return true;
+      });
+
+    let verified = await filterByLocalStock(candidates, options.stockRegion, region);
+    if (needsPriceFilter) {
+      verified = filterByPriceRange(verified, options.minPrice, options.maxPrice);
+    }
+
+    for (const product of verified) {
+      collected.push(product);
+      if (collected.length >= pageSize) break;
+    }
+
+    apiHasMore = rawRecords.length >= TEXT_SEARCH_SCAN_PAGE_SIZE;
+    if (rawRecords.length < TEXT_SEARCH_SCAN_PAGE_SIZE) break;
+  }
+
+  shuffleInPlace(collected, page * 2654435761 + collected.length);
+  const products = await enrichProductMetrics(collected.slice(0, pageSize), region);
+
+  return {
+    products,
+    total: products.length,
+    page,
+    pageSize,
+    hasMore: apiHasMore || collected.length > pageSize,
   };
 }
 

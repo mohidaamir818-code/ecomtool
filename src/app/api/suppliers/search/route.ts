@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  browseRandomLocalStock,
   searchDropshipProducts,
   searchDropshipProductsByImage,
 } from "@/lib/aliexpress/dropship-search-client";
@@ -31,7 +32,8 @@ function normalizeMode(value: unknown): SupplierSearchMode {
 }
 
 function normalizeStockRegion(value: unknown): SupplierStockRegion {
-  if (value === "uk" || value === "us") return value;
+  if (value === "uk" || value === "uk_random") return value;
+  if (value === "us" || value === "us_random") return value;
   return "any";
 }
 
@@ -84,6 +86,17 @@ export async function POST(request: NextRequest) {
       result = await searchDropshipProductsByImage({
         imageDataUrl: body.imageDataUrl,
         imageBase64: body.imageBase64,
+        stockRegion,
+        page,
+        pageSize,
+        minPrice,
+        maxPrice,
+      });
+    } else if (stockRegion === "uk_random" || stockRegion === "us_random") {
+      searchQuery =
+        stockRegion === "uk_random" ? "Random UK stock" : "Random USA stock";
+
+      result = await browseRandomLocalStock({
         stockRegion,
         page,
         pageSize,
