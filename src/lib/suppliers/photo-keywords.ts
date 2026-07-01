@@ -7,9 +7,20 @@ import { safeParseJSON } from "@/lib/gemini/safe-parse-json";
 const ANTHROPIC_MODEL = "claude-haiku-4-5";
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
-interface PhotoKeywordResult {
+export interface PhotoKeywordResult {
+  /** Short phrase sent to the Affiliate API (2–4 words). */
   keywords: string;
+  /** Human-readable product name shown in the UI. */
   title: string;
+  /** Extra search phrases to try when the primary query returns nothing. */
+  fallbackQueries: string[];
+}
+
+interface AiPhotoParseResult {
+  title?: string;
+  primarySearch?: string;
+  alternateSearches?: string[] | string;
+  keywords?: string;
 }
 
 function getClient(): Anthropic {
@@ -26,19 +37,62 @@ function parseDataUrl(input: string): { mediaType: string; data: string } | null
   return { mediaType: match[1].toLowerCase(), data: match[2] };
 }
 
-function buildAffiliateSearchQuery(title: string, keywords: string): string {
-  const normalizedTitle = title.replace(/[,;|]+/g, " ").replace(/\s+/g, " ").trim();
-  if (normalizedTitle.length >= 3) return normalizedTitle.slice(0, 80);
+function cleanPhrase(input: string): string {
+  return input.replace(/[,;|]+/g, " ").replace(/\s+/g, " ").trim();
+}
 
-  const terms = keywords
-    .split(/[,;|]+/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (terms.length > 0) {
-    return terms.slice(0, 5).join(" ").slice(0, 80);
+function buildSearchPlan(input: AiPhotoParseResult): PhotoKeywordResult {
+  const title = cleanPhrase(typeof input.title === "string" ? input.title : "");
+  const primarySearch = cleanPhrase(
+    typeof input.primarySearch === "string"
+      ? input.primarySearch
+      : typeof input.keywords === "string"
+        ? input.keywords.split(/[,;|]+/)[0] ?? input.keywords
+        : "",
+  );
+
+  const alternatesRaw = input.alternateSearches;
+  const alternates = Array.isArray(alternatesRaw)
+    ? alternatesRaw
+    : typeof alternatesRaw === "string"
+      ? alternatesRaw.split(/[,;|]+/)
+      : typeof input.keywords === "string"
+        ? input.keywords.split(/[,;|]+/)
+        : [];
+
+  const fallbackSet = new Set<string>();
+  for (const phrase of alternates) {
+    const cleaned = cleanPhrase(String(phrase));
+    if (cleaned.length >= 2) fallbackSet.add(cleaned);
   }
 
-  return keywords.replace(/[,;|]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+  const titleWords = title.split(/\s+/).filter(Boolean);
+  if (titleWords.length > 3) fallbackSet.add(titleWords.slice(0, 3).join(" "));
+  if (titleWords.length > 2) fallbackSet.add(titleWords.slice(-2).join(" "));
+
+  let keywords = primarySearch;
+  if (keywords.split(/\s+/).length > 4) {
+    keywords = keywords.split(/\s+/).slice(0, 4).join(" ");
+  }
+  if (keywords.length < 2 && title.length >= 2) {
+    keywords = titleWords.slice(0, 3).join(" ") || title.slice(0, 40);
+  }
+
+  fallbackSet.delete(keywords);
+  const fallbackQueries = [...fallbackSet]
+    .map((phrase) => (phrase.split(/\s+/).length > 4 ? phrase.split(/\s+/).slice(0, 4).join(" ") : phrase))
+    .filter((phrase) => phrase.length >= 2 && phrase !== keywords)
+    .slice(0, 5);
+
+  if (keywords.length < 2 && title.length < 2) {
+    throw new Error("Could not extract search keywords from this photo. Try another image.");
+  }
+
+  return {
+    keywords,
+    title: title || keywords,
+    fallbackQueries,
+  };
 }
 
 function detectMediaType(buffer: Buffer): "image/jpeg" | "image/png" | "image/webp" | "image/gif" {
@@ -49,8 +103,8 @@ function detectMediaType(buffer: Buffer): "image/jpeg" | "image/png" | "image/we
 }
 
 /**
- * Turn an uploaded product photo into AliExpress search keywords using vision AI.
- * Keeps this logic separate from the Dropship product-fetch client.
+ * Turn an uploaded product photo into short AliExpress Affiliate search terms.
+ * Uses a broad 2–4 word phrase (not the full marketing title) so the API returns matches.
  */
 export async function extractSupplierKeywordsFromPhoto(input: {
   imageBase64?: string;
@@ -87,7 +141,7 @@ export async function extractSupplierKeywordsFromPhoto(input: {
   const client = getClient();
   const message = await client.messages.create({
     model: ANTHROPIC_MODEL,
-    max_tokens: 400,
+    max_tokens: 500,
     messages: [
       {
         role: "user",
@@ -104,11 +158,16 @@ export async function extractSupplierKeywordsFromPhoto(input: {
             type: "text",
             text: `Look at this product photo. Return ONLY valid JSON:
 {
-  "title": "short product title in English, 3-8 words",
-  "keywords": "extra descriptive words for the product, comma-separated"
+  "title": "descriptive product name for display",
+  "primarySearch": "2-4 word AliExpress search phrase — generic product type only, e.g. whitening toothpaste",
+  "alternateSearches": ["broader phrase 1", "broader phrase 2", "category keyword"]
 }
 
-Focus on what the product IS (type, material, color, key features). No brand names unless clearly visible.`,
+Rules:
+- primarySearch must be SHORT (2-4 words) like what a buyer would type on AliExpress.
+- Do NOT copy the full marketing title into primarySearch.
+- alternateSearches should be broader/shorter fallbacks.
+- Focus on product TYPE (toothpaste, earbuds, phone case), material, and main feature.`,
           },
         ],
       },
@@ -125,18 +184,5 @@ Focus on what the product IS (type, material, color, key features). No brand nam
     throw new Error("Could not understand the uploaded photo.");
   }
 
-  const parsed = safeParseJSON<Partial<PhotoKeywordResult>>(text);
-  const keywords = typeof parsed.keywords === "string" ? parsed.keywords.trim() : "";
-  const title = typeof parsed.title === "string" ? parsed.title.trim() : "";
-
-  if (keywords.length < 2 && title.length < 2) {
-    throw new Error("Could not extract search keywords from this photo. Try another image.");
-  }
-
-  const searchQuery = buildAffiliateSearchQuery(title, keywords);
-
-  return {
-    keywords: searchQuery,
-    title: title || searchQuery,
-  };
+  return buildSearchPlan(safeParseJSON<AiPhotoParseResult>(text));
 }

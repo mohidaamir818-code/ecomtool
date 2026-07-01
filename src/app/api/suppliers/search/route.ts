@@ -56,7 +56,32 @@ export async function POST(request: NextRequest) {
         imageDataUrl: body.imageDataUrl,
       });
       searchQuery = extracted.keywords;
-      derivedKeywords = extracted.keywords;
+      derivedKeywords = extracted.title;
+
+      await consumeQuota(userId, "aliexpress", 1);
+
+      const result = await searchAffiliateProducts({
+        keywords: searchQuery,
+        fallbackKeywords: extracted.fallbackQueries,
+        stockRegion,
+        page,
+        pageSize,
+      });
+
+      const response: SupplierSearchResponse = {
+        success: true,
+        mode,
+        query: searchQuery,
+        stockRegion,
+        products: result.products,
+        total: result.total,
+        page: result.page,
+        pageSize: result.pageSize,
+        hasMore: result.hasMore,
+        derivedKeywords,
+      };
+
+      return NextResponse.json(response);
     } else if (searchQuery.length < 2) {
       return NextResponse.json(
         { error: mode === "title" ? "Title must be at least 2 characters." : "Keyword must be at least 2 characters." },
