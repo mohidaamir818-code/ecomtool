@@ -9,6 +9,8 @@ import type { SupplierProduct, SupplierStockRegion } from "@/types/supplier-find
 const DROPSHIP_ENDPOINT = "https://api-sg.aliexpress.com/sync";
 const MAX_IMAGE_BYTES = 95 * 1024;
 const IMAGE_SEARCH_MAX_PRODUCTS = 150;
+const LOCAL_STOCK_MAX_DELIVERY_DAYS = 3;
+const LOCAL_STOCK_API_SCAN_LIMIT = 8;
 
 export interface DropshipSearchOptions {
   keywords: string;
@@ -107,6 +109,69 @@ function filterByPriceRange(
     if (hasMax && product.price > maxPrice!) return false;
     return true;
   });
+}
+
+function requiresLocalStockFilter(stockRegion: SupplierStockRegion): boolean {
+  return stockRegion === "uk" || stockRegion === "us";
+}
+
+function isLocalStockDelivery(deliveryTime: number | null): boolean {
+  return deliveryTime != null && deliveryTime <= LOCAL_STOCK_MAX_DELIVERY_DAYS;
+}
+
+async function fetchProductDeliveryTime(
+  productId: string,
+  region: ReturnType<typeof resolveRegion>,
+): Promise<number | null> {
+  try {
+    const payload = await callDropshipApi("aliexpress.ds.product.get", {
+      product_id: productId,
+      ship_to_country: region.countryCode,
+      target_currency: region.currency,
+      target_language: "EN",
+    });
+
+    const result = extractProductGetResult(payload);
+    const logistics = result?.logistics_info_dto as Record<string, unknown> | undefined;
+    return parseNumber(logistics?.delivery_time);
+  } catch {
+    return null;
+  }
+}
+
+async function filterByLocalStock(
+  products: SupplierProduct[],
+  stockRegion: SupplierStockRegion,
+  region: ReturnType<typeof resolveRegion>,
+): Promise<SupplierProduct[]> {
+  if (!requiresLocalStockFilter(stockRegion) || products.length === 0) {
+    return products;
+  }
+
+  const concurrency = 8;
+  const verified: SupplierProduct[] = [];
+
+  for (let index = 0; index < products.length; index += concurrency) {
+    const batch = products.slice(index, index + concurrency);
+    const results = await Promise.all(
+      batch.map(async (product) => {
+        const deliveryTime = await fetchProductDeliveryTime(product.productId, region);
+        if (!isLocalStockDelivery(deliveryTime)) return null;
+
+        return {
+          ...product,
+          deliveryDays:
+            deliveryTime != null ? String(deliveryTime) : product.deliveryDays,
+        };
+      }),
+    );
+
+    for (const item of results) {
+      if (item) verified.push(item);
+    }
+  }
+
+  return verified;
 }
 
 async function callDropshipApi(
@@ -534,7 +599,7 @@ async function enrichProductMetrics(
     .slice(0, 20);
   if (targets.length === 0) return products;
 
-  const patches = new Map<string, Pick<SupplierProduct, "orders" | "rating" | "shopUrl">>();
+  const patches = new Map<string, Pick<SupplierProduct, "orders" | "rating" | "shopUrl" | "deliveryDays">>();
 
   await Promise.all(
     targets.map(async (product) => {
@@ -551,6 +616,8 @@ async function enrichProductMetrics(
 
         const base = result.ae_item_base_info_dto as Record<string, unknown> | undefined;
         const store = result.ae_store_info as Record<string, unknown> | undefined;
+        const logistics = result.logistics_info_dto as Record<string, unknown> | undefined;
+        const deliveryTime = parseNumber(logistics?.delivery_time);
 
         patches.set(product.productId, {
           orders: parseVolume(base?.sales_count ?? base?.lastest_volume) ?? product.orders,
@@ -558,6 +625,8 @@ async function enrichProductMetrics(
             normalizeRating(base?.avg_evaluation_rating ?? base?.evaluate_rate) ?? product.rating,
           shopUrl:
             typeof store?.store_url === "string" ? store.store_url.trim() : product.shopUrl,
+          deliveryDays:
+            deliveryTime != null ? String(deliveryTime) : product.deliveryDays,
         });
       } catch {
         // Keep the image-search row when detail lookup fails.
@@ -571,6 +640,46 @@ async function enrichProductMetrics(
     const patch = patches.get(product.productId);
     return patch ? { ...product, ...patch } : product;
   });
+}
+
+async function collectLocalStockFromTextSearch(
+  keywords: string,
+  region: ReturnType<typeof resolveRegion>,
+  stockRegion: SupplierStockRegion,
+  page: number,
+  pageSize: number,
+): Promise<DropshipSearchResult> {
+  const collected: SupplierProduct[] = [];
+  const startApiPage = (page - 1) * 4 + 1;
+  let apiHasMore = false;
+
+  for (let scan = 0; scan < LOCAL_STOCK_API_SCAN_LIMIT && collected.length < pageSize; scan++) {
+    const apiPage = startApiPage + scan;
+    const payload = await callDropshipApi("aliexpress.ds.text.search", {
+      key_word: keywords,
+      local: "en",
+      countryCode: region.countryCode,
+      currency: region.currency,
+      pageSize: String(pageSize),
+      pageIndex: String(apiPage),
+      sortType: "orders",
+    });
+
+    const parsed = parseSearchPayload(payload, apiPage, pageSize, region.currency);
+    const localMatches = await filterByLocalStock(parsed.products, stockRegion, region);
+    collected.push(...localMatches);
+    apiHasMore = parsed.hasMore;
+
+    if (!parsed.hasMore) break;
+  }
+
+  return {
+    products: collected.slice(0, pageSize),
+    total: collected.length,
+    page,
+    pageSize,
+    hasMore: apiHasMore || collected.length > pageSize,
+  };
 }
 
 /**
@@ -588,17 +697,28 @@ export async function searchDropshipProducts(
   const pageSize = Math.min(50, Math.max(1, options.pageSize ?? 20));
   const region = resolveRegion(options.stockRegion);
 
-  const payload = await callDropshipApi("aliexpress.ds.text.search", {
-    key_word: keywords,
-    local: "en",
-    countryCode: region.countryCode,
-    currency: region.currency,
-    pageSize: String(pageSize),
-    pageIndex: String(page),
-    sortType: "orders",
-  });
+  const parsed = requiresLocalStockFilter(options.stockRegion)
+    ? await collectLocalStockFromTextSearch(
+        keywords,
+        region,
+        options.stockRegion,
+        page,
+        pageSize,
+      )
+    : await (async () => {
+        const payload = await callDropshipApi("aliexpress.ds.text.search", {
+          key_word: keywords,
+          local: "en",
+          countryCode: region.countryCode,
+          currency: region.currency,
+          pageSize: String(pageSize),
+          pageIndex: String(page),
+          sortType: "orders",
+        });
 
-  const parsed = parseSearchPayload(payload, page, pageSize, region.currency);
+        return parseSearchPayload(payload, page, pageSize, region.currency);
+      })();
+
   const hasPriceFilter =
     (options.minPrice != null && Number.isFinite(options.minPrice)) ||
     (options.maxPrice != null && Number.isFinite(options.maxPrice));
@@ -645,8 +765,11 @@ export async function searchDropshipProductsByImage(
     IMAGE_SEARCH_MAX_PRODUCTS,
     region.currency,
   );
+  const stockFiltered = requiresLocalStockFilter(options.stockRegion)
+    ? await filterByLocalStock(fullResult.products, options.stockRegion, region)
+    : fullResult.products;
   const filtered = filterByPriceRange(
-    fullResult.products,
+    stockFiltered,
     options.minPrice,
     options.maxPrice,
   );

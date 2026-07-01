@@ -461,7 +461,7 @@ export function SupplierFinderShell() {
               ))}
             </div>
             <p className="mt-2 text-xs text-[#6B7280]">
-              UK / USA stock uses 3-day local delivery filter from the Affiliate API.
+              UK / USA stock only shows suppliers that can deliver within 3 days to that region.
             </p>
           </div>
 
@@ -520,7 +520,9 @@ export function SupplierFinderShell() {
               <div className="mt-4 rounded-xl border border-gray-100 bg-white px-4 py-8 text-center text-sm text-[#6B7280]">
                 {result.minPrice != null || result.maxPrice != null
                   ? "No products in this price range. Try a wider min/max, different keyword, or photo."
-                  : "Try a different keyword, title, or photo — or switch the stock filter."}
+                  : result.stockRegion === "uk" || result.stockRegion === "us"
+                    ? "No suppliers with 3-day local stock found. Try All suppliers, a different search, or photo."
+                    : "Try a different keyword, title, or photo — or switch the stock filter."}
               </div>
             )}
 
