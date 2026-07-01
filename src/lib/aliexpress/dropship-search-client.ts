@@ -10,8 +10,10 @@ const DROPSHIP_ENDPOINT = "https://api-sg.aliexpress.com/sync";
 const MAX_IMAGE_BYTES = 95 * 1024;
 const IMAGE_SEARCH_MAX_PRODUCTS = 150;
 const LOCAL_STOCK_MAX_DELIVERY_DAYS = 5;
-const TEXT_SEARCH_MAX_API_PAGES = 20;
-const TEXT_SEARCH_SCAN_PAGE_SIZE = 50;
+const TEXT_SEARCH_MAX_API_PAGES = 50;
+const TEXT_SEARCH_SCAN_PAGE_SIZE = 20;
+const TEXT_SEARCH_RELEVANCE_MIN_SCORE = 50;
+const TEXT_SEARCH_PARALLEL_PAGES = 5;
 
 export interface DropshipSearchOptions {
   keywords: string;
@@ -95,16 +97,61 @@ function resolveRegion(stockRegion: SupplierStockRegion): {
   return { shipTo: "GB", countryCode: "GB", currency: "GBP" };
 }
 
-function keywordMatchesTitle(title: string, keywords: string): boolean {
+function compactMatchText(text: string): string {
+  return text.toLowerCase().replace(/[\s\-_./]+/g, "");
+}
+
+function stemSearchTerm(term: string): string {
+  if (term.endsWith("s") && term.length > 3) return term.slice(0, -1);
+  return term;
+}
+
+function isAudioProductQuery(keywords: string): boolean {
+  const compact = compactMatchText(keywords);
+  return /airpods?|earbuds?|earphones?|headphones?|tws|wirelessbuds?/.test(compact);
+}
+
+function scoreTitleRelevance(title: string, keywords: string): number {
+  const haystack = title.toLowerCase();
+  const compactHaystack = compactMatchText(title);
+  const compactKeywords = compactMatchText(keywords);
   const terms = keywords
     .toLowerCase()
     .split(/\s+/)
     .map((term) => term.trim())
     .filter((term) => term.length >= 2);
-  if (terms.length === 0) return true;
 
-  const haystack = title.toLowerCase();
-  return terms.every((term) => haystack.includes(term));
+  if (compactKeywords.length >= 3 && compactHaystack.includes(compactKeywords)) {
+    return 100;
+  }
+
+  if (
+    terms.length > 0 &&
+    terms.every(
+      (term) => haystack.includes(term) || haystack.includes(stemSearchTerm(term)),
+    )
+  ) {
+    return 90;
+  }
+
+  if (isAudioProductQuery(keywords)) {
+    const audioTerms = ["airpod", "earphone", "earbud", "tws", "headphone", "ear pod"];
+    const hasAudio = audioTerms.some((term) => haystack.includes(term));
+    const hasWireless = haystack.includes("wireless") || haystack.includes("bluetooth");
+    if (hasAudio && hasWireless) return 75;
+    if (hasAudio) return 60;
+  }
+
+  if (terms.length === 1) {
+    const term = terms[0];
+    if (haystack.includes(term) || haystack.includes(stemSearchTerm(term))) return 55;
+  }
+
+  return 0;
+}
+
+function keywordMatchesTitle(title: string, keywords: string): boolean {
+  return scoreTitleRelevance(title, keywords) >= TEXT_SEARCH_RELEVANCE_MIN_SCORE;
 }
 
 function shouldKeepSearchRecord(raw: Record<string, unknown>, keywords: string): boolean {
@@ -597,8 +644,12 @@ function parseSearchPayload(
     (payload.data && typeof payload.data === "object"
       ? parseNumber((payload.data as Record<string, unknown>).totalCount)
       : null);
-  const total = totalFromPayload ?? products.length;
-  const hasMore = page * pageSize < total || products.length >= pageSize;
+  const total =
+    totalFromPayload != null && totalFromPayload > 0 ? totalFromPayload : products.length;
+  const hasMore =
+    totalFromPayload != null && totalFromPayload > 0
+      ? page * pageSize < totalFromPayload
+      : products.length >= pageSize;
 
   return {
     products,
@@ -718,60 +769,114 @@ async function collectRelevantTextSearchProducts(
   minPrice?: number | null,
   maxPrice?: number | null,
 ): Promise<DropshipSearchResult> {
-  const collected: SupplierProduct[] = [];
   const seenIds = new Set<string>();
   const startApiPage = (page - 1) * TEXT_SEARCH_MAX_API_PAGES + 1;
   let apiHasMore = false;
   const needsLocalStock = requiresLocalStockFilter(stockRegion);
   const needsPriceFilter = hasActivePriceFilter(minPrice, maxPrice);
+  const scoredCollected: Array<{ product: SupplierProduct; score: number }> = [];
 
-  for (let scan = 0; scan < TEXT_SEARCH_MAX_API_PAGES && collected.length < pageSize; scan++) {
-    const apiPage = startApiPage + scan;
-    const payload = await callDropshipApi("aliexpress.ds.text.search", {
-      key_word: keywords,
-      local: "en",
-      countryCode: region.countryCode,
-      currency: region.currency,
-      pageSize: String(TEXT_SEARCH_SCAN_PAGE_SIZE),
-      pageIndex: String(apiPage),
-      sortType: "default",
-    });
+  for (
+    let batchStart = 0;
+    batchStart < TEXT_SEARCH_MAX_API_PAGES && scoredCollected.length < pageSize;
+    batchStart += TEXT_SEARCH_PARALLEL_PAGES
+  ) {
+    const batchPages: number[] = [];
+    for (let offset = 0; offset < TEXT_SEARCH_PARALLEL_PAGES; offset++) {
+      const scanIndex = batchStart + offset;
+      if (scanIndex >= TEXT_SEARCH_MAX_API_PAGES) break;
+      batchPages.push(startApiPage + scanIndex);
+    }
 
-    const records = extractSearchProducts(payload).filter((record) =>
-      shouldKeepSearchRecord(record, keywords),
+    const payloads = await Promise.all(
+      batchPages.map((apiPage) =>
+        callDropshipApi("aliexpress.ds.text.search", {
+          key_word: keywords,
+          local: "en",
+          countryCode: region.countryCode,
+          currency: region.currency,
+          pageSize: String(TEXT_SEARCH_SCAN_PAGE_SIZE),
+          pageIndex: String(apiPage),
+          sortType: "orders",
+        }),
+      ),
     );
-    let products = records
-      .map((record) => normalizeDropshipProduct(record, region.currency))
-      .filter((product): product is SupplierProduct => product !== null);
 
-    if (needsLocalStock) {
-      products = await filterByLocalStock(products, stockRegion, region);
+    let reachedEnd = false;
+    for (const payload of payloads) {
+      const rawRecords = extractSearchProducts(payload);
+      if (rawRecords.length === 0) {
+        reachedEnd = true;
+        continue;
+      }
+      if (rawRecords.length < TEXT_SEARCH_SCAN_PAGE_SIZE) {
+        reachedEnd = true;
+      }
+
+      const records = rawRecords.filter((record) => shouldKeepSearchRecord(record, keywords));
+      let products = records
+        .map((record) => {
+          const title = String(
+            record.product_title ?? record.title ?? record.subject ?? record.product_name ?? "",
+          ).trim();
+          const product = normalizeDropshipProduct(record, region.currency);
+          if (!product) return null;
+          return { product, score: scoreTitleRelevance(title, keywords) };
+        })
+        .filter((entry): entry is { product: SupplierProduct; score: number } => entry !== null);
+
+      if (needsLocalStock) {
+        const localProducts = await filterByLocalStock(
+          products.map((entry) => entry.product),
+          stockRegion,
+          region,
+        );
+        const localIds = new Set(localProducts.map((product) => product.productId));
+        products = products
+          .filter((entry) => localIds.has(entry.product.productId))
+          .map((entry) => ({
+            ...entry,
+            product:
+              localProducts.find((p) => p.productId === entry.product.productId) ?? entry.product,
+          }));
+      }
+
+      if (needsPriceFilter) {
+        products = products.filter((entry) => {
+          const { price } = entry.product;
+          if (!Number.isFinite(price)) return false;
+          if (minPrice != null && Number.isFinite(minPrice) && price < minPrice) return false;
+          if (maxPrice != null && Number.isFinite(maxPrice) && price > maxPrice) return false;
+          return true;
+        });
+      }
+
+      for (const entry of products) {
+        if (seenIds.has(entry.product.productId)) continue;
+        seenIds.add(entry.product.productId);
+        scoredCollected.push(entry);
+        if (scoredCollected.length >= pageSize) break;
+      }
+
+      apiHasMore = rawRecords.length >= TEXT_SEARCH_SCAN_PAGE_SIZE;
+      if (scoredCollected.length >= pageSize) break;
     }
 
-    if (needsPriceFilter) {
-      products = filterByPriceRange(products, minPrice, maxPrice);
-    }
-
-    for (const product of products) {
-      if (seenIds.has(product.productId)) continue;
-      seenIds.add(product.productId);
-      collected.push(product);
-      if (collected.length >= pageSize) break;
-    }
-
-    const parsed = parseSearchPayload(payload, apiPage, TEXT_SEARCH_SCAN_PAGE_SIZE, region.currency);
-    apiHasMore = parsed.hasMore;
-    if (!parsed.hasMore) break;
+    if (scoredCollected.length >= pageSize || reachedEnd) break;
   }
 
-  const products = await enrichProductMetrics(collected.slice(0, pageSize), region);
+  scoredCollected.sort((a, b) => b.score - a.score);
+  const products = await enrichProductMetrics(
+    scoredCollected.slice(0, pageSize).map((entry) => entry.product),
+    region,
+  );
 
   return {
     products,
     total: products.length,
     page,
     pageSize,
-    hasMore: apiHasMore || collected.length > pageSize,
+    hasMore: apiHasMore || scoredCollected.length > pageSize,
   };
 }
 
