@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { searchAffiliateProducts } from "@/lib/aliexpress/affiliate-client";
-import { extractSupplierKeywordsFromPhoto } from "@/lib/suppliers/photo-keywords";
+import {
+  searchDropshipProducts,
+  searchDropshipProductsByImage,
+} from "@/lib/aliexpress/dropship-search-client";
 import { consumeQuota } from "@/lib/quota/service";
 import { quotaErrorResponse } from "@/lib/quota/api-helpers";
 import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
@@ -47,56 +49,47 @@ export async function POST(request: NextRequest) {
     const accessDenied = await requireActiveUser(userId);
     if (accessDenied) return accessDenied;
 
+    await consumeQuota(userId, "aliexpress", 1);
+
     let searchQuery = body.query?.trim() ?? "";
     let derivedKeywords: string | undefined;
+    let result;
 
     if (mode === "photo") {
-      const extracted = await extractSupplierKeywordsFromPhoto({
-        imageBase64: body.imageBase64,
+      if (!body.imageDataUrl?.trim() && !body.imageBase64?.trim()) {
+        return NextResponse.json({ error: "Please upload a product photo." }, { status: 400 });
+      }
+
+      searchQuery = "Photo search";
+      derivedKeywords = "Visual match from uploaded photo";
+
+      result = await searchDropshipProductsByImage({
         imageDataUrl: body.imageDataUrl,
-      });
-      searchQuery = extracted.keywords;
-      derivedKeywords = extracted.title;
-
-      await consumeQuota(userId, "aliexpress", 1);
-
-      const result = await searchAffiliateProducts({
-        keywords: searchQuery,
-        fallbackKeywords: extracted.fallbackQueries,
+        imageBase64: body.imageBase64,
         stockRegion,
         page,
         pageSize,
       });
+    } else {
+      if (searchQuery.length < 2) {
+        return NextResponse.json(
+          {
+            error:
+              mode === "title"
+                ? "Title must be at least 2 characters."
+                : "Keyword must be at least 2 characters.",
+          },
+          { status: 400 },
+        );
+      }
 
-      const response: SupplierSearchResponse = {
-        success: true,
-        mode,
-        query: searchQuery,
+      result = await searchDropshipProducts({
+        keywords: searchQuery,
         stockRegion,
-        products: result.products,
-        total: result.total,
-        page: result.page,
-        pageSize: result.pageSize,
-        hasMore: result.hasMore,
-        derivedKeywords,
-      };
-
-      return NextResponse.json(response);
-    } else if (searchQuery.length < 2) {
-      return NextResponse.json(
-        { error: mode === "title" ? "Title must be at least 2 characters." : "Keyword must be at least 2 characters." },
-        { status: 400 },
-      );
+        page,
+        pageSize,
+      });
     }
-
-    await consumeQuota(userId, "aliexpress", 1);
-
-    const result = await searchAffiliateProducts({
-      keywords: searchQuery,
-      stockRegion,
-      page,
-      pageSize,
-    });
 
     const response: SupplierSearchResponse = {
       success: true,

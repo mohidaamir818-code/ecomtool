@@ -192,8 +192,8 @@ export function SupplierFinderShell() {
               Find AliExpress suppliers
             </h1>
             <p className="mt-2 max-w-2xl text-sm text-[#6B7280]">
-              Search by keyword, product title, or photo. Filter for UK or USA local stock using the
-              AliExpress Affiliate API.
+              Search by keyword or title across the full AliExpress catalog. Upload a photo for
+              visual search — results match your image like AliExpress search-by-image.
             </p>
           </div>
           {userId ? (
@@ -295,7 +295,7 @@ export function SupplierFinderShell() {
                     {isDragging ? "Drop photo here" : "Upload or drag & drop a product photo"}
                   </span>
                   <span className="mt-1 text-xs text-[#6B7280]">
-                    AI reads the image and finds similar AliExpress products
+                    Visual search — finds products that look like your photo on AliExpress
                   </span>
                 </div>
               )}
@@ -362,7 +362,7 @@ export function SupplierFinderShell() {
               {searching ? "Searching…" : "Find suppliers"}
             </button>
             {searching ? (
-              <span className="text-xs text-[#6B7280]">Searching AliExpress Affiliate API…</span>
+              <span className="text-xs text-[#6B7280]">Searching AliExpress…</span>
             ) : null}
           </div>
 
