@@ -256,11 +256,11 @@ export function EbayAutoListingSettingsModal({
 
         <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50/60 p-4">
           <span className="text-sm font-semibold text-[#111827]">
-            Describe your rules (English or Urdu)
+            Describe your rules (English)
           </span>
           <p className="mt-1 text-xs text-[#6B7280]">
-            e.g. “Jis product pe £5 se zyada profit ho us pe 8% promotion lagao, price hamesha
-            .99 par rakho.” AI will fill the settings below for you.
+            e.g. "Apply 8% promotion when profit is above GBP 5, and keep prices ending in .99."
+            AI will fill the settings below for you.
           </p>
           <textarea
             value={aiPrompt}

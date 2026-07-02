@@ -14,12 +14,12 @@ export type ParsedRuleSettings = Record<string, unknown>;
 
 export interface RulesParseResult {
   understood: boolean;
-  /** Short plain-language summary of what was understood, in the seller's language. */
+  /** Short plain-language summary of what was understood, in English. */
   summary: string;
-  /** When not understood: a message (seller's language) asking them to rewrite. */
+  /** When not understood: a message in English asking them to rewrite. */
   clarification: string | null;
   /**
-   * Optional one-time follow-up question (seller's language) — e.g. asking for
+   * Optional one-time follow-up question in English — e.g. asking for
    * their fees when they configured pricing/profit but didn't mention any. The
    * parsed settings are still returned so the seller can answer or apply as-is.
    */
@@ -44,8 +44,8 @@ const EBAY_FIELDS = `
 - charmPricingEnabled (boolean) — end prices at a charm value (.99 by default)
 - charmRules (array) — OPTIONAL custom charm endings by price range. Each item is
   { "maxPrice": number|null, "ending": number(0-99) } meaning prices at or below maxPrice end at
-  ".ending" cents; maxPrice null = all higher prices. Example: the seller says "agar £1 jaisa ho to
-  .99, agar £1.80 ya £1.90 ho to .59, baqi .89" → set charmPricingEnabled true and charmRules
+  ".ending" cents; maxPrice null = all higher prices. Example: the seller says "use .99 below 1.50,
+  use .59 up to 1.99, then .89 for everything above" → set charmPricingEnabled true and charmRules
   [{"maxPrice":1.5,"ending":99},{"maxPrice":1.99,"ending":59},{"maxPrice":null,"ending":89}].
   The numbers the seller gives are EXAMPLES of ranges, never a single exact price only.
 - autoPromoteEnabled (boolean) — add listings to eBay Promoted Listings automatically
@@ -70,20 +70,20 @@ const AMAZEF_FIELDS = `
 - charmPricingEnabled (boolean) — end prices at a charm value (.99 by default)
 - charmRules (array) — OPTIONAL custom charm endings by price range. Each item is
   { "maxPrice": number|null, "ending": number(0-99) } meaning prices at or below maxPrice end at
-  ".ending" cents; maxPrice null = all higher prices. Example: the seller says "agar £1 jaisa ho to
-  .99, agar £1.80 ya £1.90 ho to .59, baqi .89" → set charmPricingEnabled true and charmRules
+  ".ending" cents; maxPrice null = all higher prices. Example: the seller says "use .99 below 1.50,
+  use .59 up to 1.99, then .89 for everything above" → set charmPricingEnabled true and charmRules
   [{"maxPrice":1.5,"ending":99},{"maxPrice":1.99,"ending":59},{"maxPrice":null,"ending":89}].
   The numbers the seller gives are EXAMPLES of ranges, never a single exact price only.
 - bogoEnabled (boolean) — apply a Buy One Get One (BOGO) promotion
 - bogoMinProfit (number) — only apply BOGO when per-item profit (money) is at least this
-- bogoRule (string) — a short summary of the seller's BOGO rule, written in their own words/language
+- bogoRule (string) — a short summary of the seller's BOGO rule in English
 - flashSaleEnabled (boolean) — add the listing to a flash sale
 - flashSaleKeepPrice (boolean) — set TRUE when the seller wants the REAL selling price to stay the
   SAME and only SHOW a higher "was" price / discount so buyers feel it is on sale (no real loss).
   Example: "price wahi rakho bas flash sale me upar discount dikhao" → flashSaleKeepPrice true.
 - flashSaleDiscountPercent (number) — the discount % to show or apply in the flash sale
 - flashSaleMinProfit (number) — only apply the flash sale when per-item profit (money) is at least this
-- flashSaleRule (string) — a short summary of the seller's flash-sale rule, in their own words/language
+- flashSaleRule (string) — a short summary of the seller's flash-sale rule in English
 - listVeroProducts (boolean)
 `;
 
@@ -95,7 +95,7 @@ function buildPrompt(
   const fields = platform === "amazef" ? AMAZEF_FIELDS : EBAY_FIELDS;
 
   return `You are a configuration assistant for an e-commerce auto-listing tool.
-A seller will describe, in plain English or Urdu (Roman or script), how they want their
+A seller will describe, in plain language, how they want their
 ${platform === "amazef" ? "Amazef" : "eBay"} auto-listing pricing and promotion rules to work.
 Convert their instruction into structured settings.
 
@@ -109,16 +109,15 @@ Rules:
 - Profit RANGES: if the seller gives a range like "profit 25 to 35%", "25 se 35%", or "25-35%",
   map it to minProfitPercent=25 and maxProfitPercent=35. A single value like "35%" means
   minProfitPercent=35 (and you may leave maxProfitPercent unless they imply an upper bound).
-- If the instruction is clear, set "understood": true and write a short "summary" describing
-  exactly what you will apply. IMPORTANT: write the summary in the SAME language and script the
-  seller used (English, Roman Urdu, or Urdu).
+- If the instruction is clear, set "understood": true and write a short "summary" in ENGLISH
+  describing exactly what you will apply.
 - FEES: if the seller configured profit/pricing/promotion but did NOT mention any fees
   (platformFeePercent or paymentFeePercent), AND the current settings still appear to use default
   fees, then keep "understood": true and still return the parsed settings, but set "question" to a
-  short message (in the seller's language) asking them to also tell their platform/payment fees so
+  short message in ENGLISH asking them to also tell their platform/payment fees so
   the profit stays accurate. If fees were given or already set, "question" must be null.
 - If the instruction is unclear, ambiguous, or you are not confident, set "understood": false,
-  leave "settings" empty, and write a "clarification" message (in the seller's language) asking
+  leave "settings" empty, and write a "clarification" message in ENGLISH asking
   them to rewrite more clearly with a concrete example.
 
 Current settings (for reference, only change what the seller asks):

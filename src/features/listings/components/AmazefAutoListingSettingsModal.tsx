@@ -318,11 +318,11 @@ export function AmazefAutoListingSettingsModal({
 
         <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50/60 p-4">
           <span className="text-sm font-semibold text-[#111827]">
-            Describe your rules (English or Urdu)
+            Describe your rules (English)
           </span>
           <p className="mt-1 text-xs text-[#6B7280]">
-            e.g. “Price hamesha market se 5% neeche aur .99 par rakho, min profit 20% se kam na
-            ho.” AI will fill the settings below for you.
+            e.g. "Keep price 5% below market and end prices with .99, with minimum profit of 20%."
+            AI will fill the settings below for you.
           </p>
           <textarea
             value={aiPrompt}
