@@ -47,6 +47,8 @@ export function EbayAutoListingSettingsModal({
   const [aiPending, setAiPending] = useState<{ summary: string; settings: Record<string, unknown> } | null>(
     null,
   );
+  const [aiApplied, setAiApplied] = useState<{ prompt: string; summary: string } | null>(null);
+  const [aiEditing, setAiEditing] = useState(true);
 
   // Second box: seller's own custom price-ending / pricing rules in plain words.
   const [rulePrompt, setRulePrompt] = useState("");
@@ -55,6 +57,8 @@ export function EbayAutoListingSettingsModal({
   const [rulePending, setRulePending] = useState<{ summary: string; settings: Record<string, unknown> } | null>(
     null,
   );
+  const [ruleApplied, setRuleApplied] = useState<{ prompt: string; summary: string } | null>(null);
+  const [ruleEditing, setRuleEditing] = useState(true);
 
   useEffect(() => {
     setForm(normalizeEbayAutoListingSettings(initialSettings));
@@ -97,6 +101,7 @@ export function EbayAutoListingSettingsModal({
 
   function handleRuleApply() {
     if (!rulePending) return;
+    const appliedPrompt = rulePrompt.trim();
     setForm((current) => normalizeEbayAutoListingSettings({ ...current, ...rulePending.settings }));
 
     if (onApplyPreferences && sellerPreferences) {
@@ -109,9 +114,10 @@ export function EbayAutoListingSettingsModal({
       }
     }
 
+    setRuleApplied({ prompt: appliedPrompt, summary: rulePending.summary });
+    setRuleEditing(false);
     setRulePending(null);
     setRuleClarify("");
-    setRulePrompt("");
     setError("");
   }
 
@@ -197,6 +203,7 @@ export function EbayAutoListingSettingsModal({
 
   function handleAiApply() {
     if (!aiPending) return;
+    const appliedPrompt = aiPrompt.trim();
     setForm((current) => normalizeEbayAutoListingSettings({ ...current, ...aiPending.settings }));
 
     // Detailed fee/price fields live in seller preferences — apply them there.
@@ -210,11 +217,12 @@ export function EbayAutoListingSettingsModal({
       }
     }
 
+    setAiApplied({ prompt: appliedPrompt, summary: aiPending.summary });
+    setAiEditing(false);
     setAiPending(null);
     setAiClarify("");
     setAiQuestion("");
     setAiFeeAnswer("");
-    setAiPrompt("");
     setError("");
   }
 
@@ -264,6 +272,7 @@ export function EbayAutoListingSettingsModal({
           </p>
           <textarea
             value={aiPrompt}
+            readOnly={!aiEditing}
             onChange={(event) => {
               setAiPrompt(event.target.value);
               setAiClarify("");
@@ -273,19 +282,45 @@ export function EbayAutoListingSettingsModal({
             }}
             rows={3}
             placeholder="Write your pricing and promotion rules here…"
-            className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+            className={`mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand ${
+              aiEditing ? "" : "cursor-not-allowed bg-gray-50 text-[#374151]"
+            }`}
           />
           <div className="mt-2 flex items-center gap-2">
             <button
               type="button"
               onClick={handleAiParse}
-              disabled={aiBusy || !aiPrompt.trim()}
+              disabled={aiBusy || !aiPrompt.trim() || !aiEditing}
               className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {aiBusy ? "Understanding…" : "Apply with AI"}
             </button>
+            {!aiEditing && aiApplied ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setAiEditing(true);
+                  setAiPrompt(aiApplied.prompt);
+                  setAiPending(null);
+                  setAiClarify("");
+                  setAiQuestion("");
+                  setAiFeeAnswer("");
+                }}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50"
+              >
+                Edit
+              </button>
+            ) : null}
             {aiBusy ? <span className="text-xs text-[#6B7280]">Reading your rules…</span> : null}
           </div>
+
+          {aiApplied && !aiEditing ? (
+            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-[#374151]">
+              <span className="block font-semibold text-[#111827]">Applied</span>
+              <span className="mt-1 block">{aiApplied.prompt}</span>
+              <span className="mt-1 block text-[#6B7280]">{aiApplied.summary}</span>
+            </div>
+          ) : null}
 
           {aiClarify ? (
             <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -352,6 +387,7 @@ export function EbayAutoListingSettingsModal({
           </p>
           <textarea
             value={rulePrompt}
+            readOnly={!ruleEditing}
             onChange={(event) => {
               setRulePrompt(event.target.value);
               setRuleClarify("");
@@ -359,19 +395,43 @@ export function EbayAutoListingSettingsModal({
             }}
             rows={3}
             placeholder="Write your price-ending rules here..."
-            className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+            className={`mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand ${
+              ruleEditing ? "" : "cursor-not-allowed bg-gray-50 text-[#374151]"
+            }`}
           />
           <div className="mt-2 flex items-center gap-2">
             <button
               type="button"
               onClick={handleRuleParse}
-              disabled={ruleBusy || !rulePrompt.trim()}
+              disabled={ruleBusy || !rulePrompt.trim() || !ruleEditing}
               className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {ruleBusy ? "Understanding…" : "Apply with AI"}
             </button>
+            {!ruleEditing && ruleApplied ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setRuleEditing(true);
+                  setRulePrompt(ruleApplied.prompt);
+                  setRulePending(null);
+                  setRuleClarify("");
+                }}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50"
+              >
+                Edit
+              </button>
+            ) : null}
             {ruleBusy ? <span className="text-xs text-[#6B7280]">Reading your rules…</span> : null}
           </div>
+
+          {ruleApplied && !ruleEditing ? (
+            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-[#374151]">
+              <span className="block font-semibold text-[#111827]">Applied</span>
+              <span className="mt-1 block">{ruleApplied.prompt}</span>
+              <span className="mt-1 block text-[#6B7280]">{ruleApplied.summary}</span>
+            </div>
+          ) : null}
 
           {ruleClarify ? (
             <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">

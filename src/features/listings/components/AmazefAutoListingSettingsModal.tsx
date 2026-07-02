@@ -48,6 +48,8 @@ export function AmazefAutoListingSettingsModal({
   const [aiPending, setAiPending] = useState<{ summary: string; settings: Record<string, unknown> } | null>(
     null,
   );
+  const [aiApplied, setAiApplied] = useState<{ prompt: string; summary: string } | null>(null);
+  const [aiEditing, setAiEditing] = useState(true);
 
   // Second box: seller's own custom price-ending / pricing rules in plain words.
   const [rulePrompt, setRulePrompt] = useState("");
@@ -56,6 +58,8 @@ export function AmazefAutoListingSettingsModal({
   const [rulePending, setRulePending] = useState<{ summary: string; settings: Record<string, unknown> } | null>(
     null,
   );
+  const [ruleApplied, setRuleApplied] = useState<{ prompt: string; summary: string } | null>(null);
+  const [ruleEditing, setRuleEditing] = useState(true);
 
   // BOGO (Buy One Get One) rules, described by the seller in plain words.
   const [bogoPrompt, setBogoPrompt] = useState("");
@@ -64,6 +68,8 @@ export function AmazefAutoListingSettingsModal({
   const [bogoPending, setBogoPending] = useState<{ summary: string; settings: Record<string, unknown> } | null>(
     null,
   );
+  const [bogoApplied, setBogoApplied] = useState<{ prompt: string; summary: string } | null>(null);
+  const [bogoEditing, setBogoEditing] = useState(true);
 
   // Flash sale rules, described by the seller in plain words.
   const [flashPrompt, setFlashPrompt] = useState("");
@@ -72,6 +78,8 @@ export function AmazefAutoListingSettingsModal({
   const [flashPending, setFlashPending] = useState<{ summary: string; settings: Record<string, unknown> } | null>(
     null,
   );
+  const [flashApplied, setFlashApplied] = useState<{ prompt: string; summary: string } | null>(null);
+  const [flashEditing, setFlashEditing] = useState(true);
 
   useEffect(() => {
     setForm(normalizeAutoListingSettings(initialSettings));
@@ -114,6 +122,7 @@ export function AmazefAutoListingSettingsModal({
 
   function handleRuleApply() {
     if (!rulePending) return;
+    const appliedPrompt = rulePrompt.trim();
     setForm((current) => normalizeAutoListingSettings({ ...current, ...rulePending.settings }));
 
     if (onApplyPreferences && sellerPreferences) {
@@ -126,9 +135,10 @@ export function AmazefAutoListingSettingsModal({
       }
     }
 
+    setRuleApplied({ prompt: appliedPrompt, summary: rulePending.summary });
+    setRuleEditing(false);
     setRulePending(null);
     setRuleClarify("");
-    setRulePrompt("");
     setError("");
   }
 
@@ -174,19 +184,23 @@ export function AmazefAutoListingSettingsModal({
 
   function handleBogoApply() {
     if (!bogoPending) return;
+    const appliedPrompt = bogoPrompt.trim();
     setForm((current) => normalizeAutoListingSettings({ ...current, ...bogoPending.settings }));
+    setBogoApplied({ prompt: appliedPrompt, summary: bogoPending.summary });
+    setBogoEditing(false);
     setBogoPending(null);
     setBogoClarify("");
-    setBogoPrompt("");
     setError("");
   }
 
   function handleFlashApply() {
     if (!flashPending) return;
+    const appliedPrompt = flashPrompt.trim();
     setForm((current) => normalizeAutoListingSettings({ ...current, ...flashPending.settings }));
+    setFlashApplied({ prompt: appliedPrompt, summary: flashPending.summary });
+    setFlashEditing(false);
     setFlashPending(null);
     setFlashClarify("");
-    setFlashPrompt("");
     setError("");
   }
 
@@ -272,6 +286,7 @@ export function AmazefAutoListingSettingsModal({
 
   function handleAiApply() {
     if (!aiPending) return;
+    const appliedPrompt = aiPrompt.trim();
     setForm((current) => normalizeAutoListingSettings({ ...current, ...aiPending.settings }));
 
     // Detailed fee/price fields live in seller preferences — apply them there.
@@ -285,11 +300,12 @@ export function AmazefAutoListingSettingsModal({
       }
     }
 
+    setAiApplied({ prompt: appliedPrompt, summary: aiPending.summary });
+    setAiEditing(false);
     setAiPending(null);
     setAiClarify("");
     setAiQuestion("");
     setAiFeeAnswer("");
-    setAiPrompt("");
     setError("");
   }
 
@@ -326,6 +342,7 @@ export function AmazefAutoListingSettingsModal({
           </p>
           <textarea
             value={aiPrompt}
+            readOnly={!aiEditing}
             onChange={(event) => {
               setAiPrompt(event.target.value);
               setAiClarify("");
@@ -335,19 +352,45 @@ export function AmazefAutoListingSettingsModal({
             }}
             rows={3}
             placeholder="Write your pricing rules here…"
-            className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+            className={`mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand ${
+              aiEditing ? "" : "cursor-not-allowed bg-gray-50 text-[#374151]"
+            }`}
           />
           <div className="mt-2 flex items-center gap-2">
             <button
               type="button"
               onClick={handleAiParse}
-              disabled={aiBusy || !aiPrompt.trim()}
+              disabled={aiBusy || !aiPrompt.trim() || !aiEditing}
               className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {aiBusy ? "Understanding…" : "Apply with AI"}
             </button>
+            {!aiEditing && aiApplied ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setAiEditing(true);
+                  setAiPrompt(aiApplied.prompt);
+                  setAiPending(null);
+                  setAiClarify("");
+                  setAiQuestion("");
+                  setAiFeeAnswer("");
+                }}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50"
+              >
+                Edit
+              </button>
+            ) : null}
             {aiBusy ? <span className="text-xs text-[#6B7280]">Reading your rules…</span> : null}
           </div>
+
+          {aiApplied && !aiEditing ? (
+            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-[#374151]">
+              <span className="block font-semibold text-[#111827]">Applied</span>
+              <span className="mt-1 block">{aiApplied.prompt}</span>
+              <span className="mt-1 block text-[#6B7280]">{aiApplied.summary}</span>
+            </div>
+          ) : null}
 
           {aiClarify ? (
             <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -414,6 +457,7 @@ export function AmazefAutoListingSettingsModal({
           </p>
           <textarea
             value={rulePrompt}
+            readOnly={!ruleEditing}
             onChange={(event) => {
               setRulePrompt(event.target.value);
               setRuleClarify("");
@@ -421,19 +465,43 @@ export function AmazefAutoListingSettingsModal({
             }}
             rows={3}
             placeholder="Write your price-ending rules here..."
-            className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+            className={`mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand ${
+              ruleEditing ? "" : "cursor-not-allowed bg-gray-50 text-[#374151]"
+            }`}
           />
           <div className="mt-2 flex items-center gap-2">
             <button
               type="button"
               onClick={handleRuleParse}
-              disabled={ruleBusy || !rulePrompt.trim()}
+              disabled={ruleBusy || !rulePrompt.trim() || !ruleEditing}
               className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {ruleBusy ? "Understanding…" : "Apply with AI"}
             </button>
+            {!ruleEditing && ruleApplied ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setRuleEditing(true);
+                  setRulePrompt(ruleApplied.prompt);
+                  setRulePending(null);
+                  setRuleClarify("");
+                }}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50"
+              >
+                Edit
+              </button>
+            ) : null}
             {ruleBusy ? <span className="text-xs text-[#6B7280]">Reading your rules…</span> : null}
           </div>
+
+          {ruleApplied && !ruleEditing ? (
+            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-[#374151]">
+              <span className="block font-semibold text-[#111827]">Applied</span>
+              <span className="mt-1 block">{ruleApplied.prompt}</span>
+              <span className="mt-1 block text-[#6B7280]">{ruleApplied.summary}</span>
+            </div>
+          ) : null}
 
           {ruleClarify ? (
             <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -475,6 +543,7 @@ export function AmazefAutoListingSettingsModal({
           </p>
           <textarea
             value={bogoPrompt}
+            readOnly={!bogoEditing}
             onChange={(event) => {
               setBogoPrompt(event.target.value);
               setBogoClarify("");
@@ -482,7 +551,9 @@ export function AmazefAutoListingSettingsModal({
             }}
             rows={3}
             placeholder="Write your BOGO rules here..."
-            className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+            className={`mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand ${
+              bogoEditing ? "" : "cursor-not-allowed bg-gray-50 text-[#374151]"
+            }`}
           />
           <div className="mt-2 flex items-center gap-2">
             <button
@@ -490,13 +561,35 @@ export function AmazefAutoListingSettingsModal({
               onClick={() =>
                 handlePromoParse(bogoPrompt, setBogoBusy, setBogoClarify, setBogoPending)
               }
-              disabled={bogoBusy || !bogoPrompt.trim()}
+              disabled={bogoBusy || !bogoPrompt.trim() || !bogoEditing}
               className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {bogoBusy ? "Understanding…" : "Apply with AI"}
             </button>
+            {!bogoEditing && bogoApplied ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setBogoEditing(true);
+                  setBogoPrompt(bogoApplied.prompt);
+                  setBogoPending(null);
+                  setBogoClarify("");
+                }}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50"
+              >
+                Edit
+              </button>
+            ) : null}
             {bogoBusy ? <span className="text-xs text-[#6B7280]">Reading your rules…</span> : null}
           </div>
+
+          {bogoApplied && !bogoEditing ? (
+            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-[#374151]">
+              <span className="block font-semibold text-[#111827]">Applied</span>
+              <span className="mt-1 block">{bogoApplied.prompt}</span>
+              <span className="mt-1 block text-[#6B7280]">{bogoApplied.summary}</span>
+            </div>
+          ) : null}
 
           {bogoClarify ? (
             <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -537,6 +630,7 @@ export function AmazefAutoListingSettingsModal({
           </p>
           <textarea
             value={flashPrompt}
+            readOnly={!flashEditing}
             onChange={(event) => {
               setFlashPrompt(event.target.value);
               setFlashClarify("");
@@ -544,7 +638,9 @@ export function AmazefAutoListingSettingsModal({
             }}
             rows={3}
             placeholder="Write your flash sale rules here..."
-            className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+            className={`mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand ${
+              flashEditing ? "" : "cursor-not-allowed bg-gray-50 text-[#374151]"
+            }`}
           />
           <div className="mt-2 flex items-center gap-2">
             <button
@@ -552,13 +648,35 @@ export function AmazefAutoListingSettingsModal({
               onClick={() =>
                 handlePromoParse(flashPrompt, setFlashBusy, setFlashClarify, setFlashPending)
               }
-              disabled={flashBusy || !flashPrompt.trim()}
+              disabled={flashBusy || !flashPrompt.trim() || !flashEditing}
               className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {flashBusy ? "Understanding…" : "Apply with AI"}
             </button>
+            {!flashEditing && flashApplied ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setFlashEditing(true);
+                  setFlashPrompt(flashApplied.prompt);
+                  setFlashPending(null);
+                  setFlashClarify("");
+                }}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50"
+              >
+                Edit
+              </button>
+            ) : null}
             {flashBusy ? <span className="text-xs text-[#6B7280]">Reading your rules…</span> : null}
           </div>
+
+          {flashApplied && !flashEditing ? (
+            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-[#374151]">
+              <span className="block font-semibold text-[#111827]">Applied</span>
+              <span className="mt-1 block">{flashApplied.prompt}</span>
+              <span className="mt-1 block text-[#6B7280]">{flashApplied.summary}</span>
+            </div>
+          ) : null}
 
           {flashClarify ? (
             <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
