@@ -20,7 +20,7 @@ import type {
   BulkListingJobStatus,
   BulkListingRowInput,
 } from "@/types/bulk-listing";
-import { isVeroAckRequiredError } from "@/lib/listings/vero-ack-error";
+import { isVeroAckRequiredError, serializeVeroHoldMessage } from "@/lib/listings/vero-ack-error";
 import type { ListingPlatform } from "@/types/listing-generator";
 
 const MAX_ROWS_PER_BATCH = 50;
@@ -310,9 +310,8 @@ export async function processNextBulkListingJob(input: {
     }
   } catch (error) {
     if (isVeroAckRequiredError(error)) {
-      // VeRO listing is allowed in settings but needs the seller's explicit OK.
       finalStatus = "vero_hold";
-      errorMessage = error.veroSummary;
+      errorMessage = serializeVeroHoldMessage(error.veroResult);
     } else if (error instanceof EbayAutoListNeedsFulfillmentPolicyError) {
       finalStatus = "failed";
       errorMessage =

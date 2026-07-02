@@ -154,11 +154,7 @@ export async function runEbayAutoListPipeline(
       );
     }
     if (!acknowledgeVero) {
-      const summary =
-        vero.summary?.trim() ||
-        vero.warnings?.join("\n") ||
-        "This product may be VeRO-protected. Review and approve to list.";
-      throw new VeroAckRequiredError(summary);
+      throw new VeroAckRequiredError(vero);
     }
   }
 

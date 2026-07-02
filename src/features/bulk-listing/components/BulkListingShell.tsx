@@ -18,6 +18,8 @@ import {
 } from "@/features/listings/lib/ebay-auto-listing";
 import type { BulkListingJob } from "@/types/bulk-listing";
 import type { ListingPlatform } from "@/types/listing-generator";
+import { listingPlatformLabel, localizeVeroText } from "@/features/listings/lib/vero-platform";
+import { parseVeroHoldMessage, VERO_HOLD_PREFIX } from "@/lib/listings/vero-ack-error";
 
 const PROCESS_DELAY_MS = 1500;
 const MAX_URLS = 50;
@@ -89,12 +91,6 @@ function jobDetailReason(job: BulkListingJob): string {
   if (job.status === "listed") {
     return job.listedTitle ? `Listed: ${job.listedTitle}` : "Listed successfully.";
   }
-  if (job.status === "vero_hold") {
-    return (
-      job.errorMessage ??
-      "This product may be VeRO-protected. Approve to list it, or skip to cancel."
-    );
-  }
   if (job.status === "failed") {
     return job.errorMessage ?? "Listing failed.";
   }
@@ -102,6 +98,99 @@ function jobDetailReason(job: BulkListingJob): string {
     return "Auto listing in progress…";
   }
   return "Waiting in queue…";
+}
+
+function VeroHoldDetails({
+  job,
+  userId,
+}: {
+  job: BulkListingJob;
+  userId: string;
+}) {
+  const [summary, setSummary] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const stored = parseVeroHoldMessage(job.errorMessage);
+    const hasStoredDetails =
+      stored != null &&
+      (stored.summary.trim().length > 0 || stored.warnings.length > 0) &&
+      job.errorMessage?.startsWith(VERO_HOLD_PREFIX);
+
+    if (hasStoredDetails && stored) {
+      setSummary(stored.summary);
+      setWarnings(stored.warnings);
+      setLoading(false);
+      return;
+    }
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/vero-check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, url: job.productUrl }),
+        });
+        const data = await response.json();
+        if (cancelled) return;
+
+        if (response.ok && data.vero) {
+          setSummary(String(data.vero.summary ?? ""));
+          setWarnings(Array.isArray(data.vero.warnings) ? data.vero.warnings : []);
+        } else if (stored?.summary.trim()) {
+          setSummary(stored.summary);
+          setWarnings(stored.warnings);
+        } else {
+          setSummary("This product may be VeRO-protected. Review and approve to list.");
+          setWarnings([]);
+        }
+      } catch {
+        if (!cancelled) {
+          if (stored?.summary.trim()) {
+            setSummary(stored.summary);
+            setWarnings(stored.warnings);
+          } else {
+            setSummary("This product may be VeRO-protected. Review and approve to list.");
+            setWarnings([]);
+          }
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [job.id, job.errorMessage, job.productUrl, userId]);
+
+  const platformName = listingPlatformLabel(job.platform);
+
+  if (loading) {
+    return <p className="text-sm text-red-700">Loading VeRO details…</p>;
+  }
+
+  const localizedSummary = localizeVeroText(summary ?? "", job.platform);
+
+  return (
+    <>
+      <p className="whitespace-pre-line text-sm font-semibold text-red-800">{localizedSummary}</p>
+      {warnings.length > 0 ? (
+        <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-red-700">
+          {warnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="mt-4 text-sm font-medium text-red-800">
+        Listing this may result in your {platformName} account being suspended or the listing being
+        removed by {platformName}.
+      </p>
+    </>
+  );
 }
 
 export function BulkListingShell() {
@@ -858,13 +947,17 @@ export function BulkListingShell() {
                 selectedJob.status === "failed"
                   ? "border-red-100 bg-red-50 text-red-700"
                   : selectedJob.status === "vero_hold"
-                    ? "border-purple-100 bg-purple-50 text-purple-800"
+                    ? "border-red-200 bg-red-50 text-red-800"
                     : selectedJob.status === "listed"
                       ? "border-emerald-100 bg-emerald-50 text-emerald-800"
                       : "border-gray-100 bg-gray-50 text-[#374151]"
               }`}
             >
-              <p className="whitespace-pre-wrap">{jobDetailReason(selectedJob)}</p>
+              {selectedJob.status === "vero_hold" && userId ? (
+                <VeroHoldDetails job={selectedJob} userId={userId} />
+              ) : (
+                <p className="whitespace-pre-wrap">{jobDetailReason(selectedJob)}</p>
+              )}
             </div>
 
             {selectedJob.status === "listed" && selectedJob.listingUrl ? (
