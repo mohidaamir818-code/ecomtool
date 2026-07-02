@@ -32,6 +32,13 @@ export function DashboardHeader({
 
       <div className="flex flex-wrap items-center gap-3">
         <Link
+          href="/dashboard/settings"
+          className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-[#374151] hover:bg-gray-50"
+        >
+          <DashboardIcon name="settings" className="h-4 w-4 text-[#6B7280]" />
+          Settings
+        </Link>
+        <Link
           href="/dashboard/help"
           className="flex items-center gap-1.5 text-sm font-medium text-[#6B7280] hover:text-[#111827]"
         >
