@@ -9,6 +9,7 @@ import { promoteListing } from "@/lib/ebay/promoted-listings";
 import { sendEmail } from "@/lib/email/send-email";
 import { generateEbayListing } from "@/lib/gemini/generate-listing";
 import { checkVeroSafety } from "@/lib/gemini/vero-check";
+import { VeroAckRequiredError } from "@/lib/listings/vero-ack-error";
 import { computeListingQualityScore } from "@/features/listings/lib/listing-quality";
 import { buildInitialDraft, getSelectedPhotos } from "@/features/listings/lib/draft-utils";
 import type { EbayAutoListingSettings } from "@/features/listings/lib/ebay-auto-listing";
@@ -153,7 +154,11 @@ export async function runEbayAutoListPipeline(
       );
     }
     if (!acknowledgeVero) {
-      throw new Error("VERO_ACK_REQUIRED");
+      const summary =
+        vero.summary?.trim() ||
+        vero.warnings?.join("\n") ||
+        "This product may be VeRO-protected. Review and approve to list.";
+      throw new VeroAckRequiredError(summary);
     }
   }
 

@@ -81,6 +81,29 @@ function isLikelyAliExpressUrl(url: string): boolean {
   return /aliexpress\./i.test(url) && /^https?:\/\//i.test(url);
 }
 
+function isAliOAuthFailure(message: string | null): boolean {
+  return Boolean(message && /reconnect AliExpress OAuth/i.test(message));
+}
+
+function jobDetailReason(job: BulkListingJob): string {
+  if (job.status === "listed") {
+    return job.listedTitle ? `Listed: ${job.listedTitle}` : "Listed successfully.";
+  }
+  if (job.status === "vero_hold") {
+    return (
+      job.errorMessage ??
+      "This product may be VeRO-protected. Approve to list it, or skip to cancel."
+    );
+  }
+  if (job.status === "failed") {
+    return job.errorMessage ?? "Listing failed.";
+  }
+  if (job.status === "listing") {
+    return "Auto listing in progress…";
+  }
+  return "Waiting in queue…";
+}
+
 export function BulkListingShell() {
   const [userId, setUserId] = useState<string | null>(null);
   const [platform, setPlatform] = useState<ListingPlatform>("ebay");
@@ -93,8 +116,9 @@ export function BulkListingShell() {
   const [notice, setNotice] = useState<string | null>(null);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [pendingList, setPendingList] = useState(false);
-  const [showVeroModal, setShowVeroModal] = useState(false);
-  const [veroResolving, setVeroResolving] = useState(false);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [jobResolving, setJobResolving] = useState(false);
+  const [aliConnecting, setAliConnecting] = useState(false);
   const [ebaySettings, setEbaySettings] = useState<EbayAutoListingSettings>(() =>
     normalizeEbayAutoListingSettings(null),
   );
@@ -103,6 +127,7 @@ export function BulkListingShell() {
   );
   const processingRef = useRef(false);
   const resumedRef = useRef(false);
+  const aliPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!userId) return;
@@ -172,13 +197,9 @@ export function BulkListingShell() {
     return base;
   }, [activeBatchJobs]);
 
-  const veroHoldJobs = useMemo(
-    () => activeBatchJobs.filter((job) => job.status === "vero_hold"),
-    [activeBatchJobs],
-  );
-  const hasQueued = useMemo(
-    () => activeBatchJobs.some((job) => job.status === "queued" || job.status === "listing"),
-    [activeBatchJobs],
+  const selectedJob = useMemo(
+    () => (selectedJobId ? activeBatchJobs.find((job) => job.id === selectedJobId) ?? null : null),
+    [selectedJobId, activeBatchJobs],
   );
 
   const runProcessor = useCallback(async () => {
@@ -343,37 +364,75 @@ export function BulkListingShell() {
     void handleListAll();
   }, [pendingList, platformEnabled, handleListAll]);
 
-  // Once everything else is listed, ask the seller about the parked VeRO products.
   useEffect(() => {
-    if (!processing && !hasQueued && veroHoldJobs.length > 0) {
-      setShowVeroModal(true);
-    }
-  }, [processing, hasQueued, veroHoldJobs.length]);
+    return () => {
+      if (aliPollRef.current) clearInterval(aliPollRef.current);
+    };
+  }, []);
 
-  async function resolveVero(approve: boolean) {
+  async function resolveJobVero(jobId: string, approve: boolean) {
     if (!userId) return;
-    setVeroResolving(true);
+    setJobResolving(true);
     setError(null);
     try {
       const response = await fetch("/api/bulk-listing/vero", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, approve }),
+        body: JSON.stringify({ userId, jobId, approve }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data?.error ?? "Failed to update VeRO products.");
+      if (!response.ok) throw new Error(data?.error ?? "Failed to update VeRO product.");
 
       setJobs(data.jobs ?? []);
-      setShowVeroModal(false);
       if (approve) {
-        setNotice("Listing the approved VeRO products…");
+        setNotice("Listing approved VeRO product…");
+        setSelectedJobId(null);
         await runProcessor();
+      } else {
+        setSelectedJobId(null);
       }
     } catch (veroError) {
-      setError(veroError instanceof Error ? veroError.message : "Failed to update VeRO products.");
+      setError(veroError instanceof Error ? veroError.message : "Failed to update VeRO product.");
     } finally {
-      setVeroResolving(false);
+      setJobResolving(false);
     }
+  }
+
+  async function connectAliExpressAndRetry(jobId: string) {
+    setAliConnecting(true);
+    setError(null);
+    window.open("/api/aliexpress/login", "aliexpress_oauth", "width=640,height=720");
+
+    if (aliPollRef.current) clearInterval(aliPollRef.current);
+
+    let attempts = 0;
+    aliPollRef.current = setInterval(() => {
+      void (async () => {
+        attempts += 1;
+        if (attempts > 90) {
+          if (aliPollRef.current) clearInterval(aliPollRef.current);
+          aliPollRef.current = null;
+          setAliConnecting(false);
+          setError("AliExpress connection timed out. Try again.");
+          return;
+        }
+
+        try {
+          const response = await fetch("/api/aliexpress/status");
+          const data = await response.json();
+          if (data.connected) {
+            if (aliPollRef.current) clearInterval(aliPollRef.current);
+            aliPollRef.current = null;
+            setAliConnecting(false);
+            setNotice("AliExpress connected. Retrying listing…");
+            setSelectedJobId(null);
+            await handleRetry(jobId);
+          }
+        } catch {
+          // Keep polling until connected or timeout.
+        }
+      })();
+    }, 2000);
   }
 
   function handleSaveSettings(next: EbayAutoListingSettings | AmazefAutoListingSettings) {
@@ -711,14 +770,16 @@ export function BulkListingShell() {
                             : "Auto"}
                       </td>
                       <td className="px-5 py-3">
-                        <span
-                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(job.status)}`}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedJobId(job.id)}
+                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition hover:opacity-80 ${statusClass(job.status)}`}
                         >
                           {job.status === "listing" ? (
                             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-sky-500" />
                           ) : null}
                           {formatStatus(job.status)}
-                        </span>
+                        </button>
                       </td>
                       <td className="px-5 py-3">
                         {job.status === "listed" && job.listingUrl ? (
@@ -730,30 +791,17 @@ export function BulkListingShell() {
                           >
                             {job.listedTitle ?? "View listing"}
                           </a>
-                        ) : job.status === "failed" ? (
-                          <p className="max-w-[260px] text-xs text-red-600">
-                            {job.errorMessage ?? "Failed"}
-                          </p>
-                        ) : job.status === "listing" ? (
-                          <p className="text-xs text-sky-600">Auto listing in progress…</p>
-                        ) : job.status === "vero_hold" ? (
-                          <p className="text-xs text-purple-600">Awaiting your VeRO approval</p>
                         ) : (
-                          <p className="text-xs text-[#9CA3AF]">Waiting…</p>
-                        )}
-                      </td>
-                      <td className="px-5 py-3">
-                        {job.status === "failed" ? (
                           <button
                             type="button"
-                            onClick={() => void handleRetry(job.id)}
-                            disabled={processing}
-                            className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/5 disabled:opacity-50"
+                            onClick={() => setSelectedJobId(job.id)}
+                            className="text-xs font-semibold text-brand hover:underline"
                           >
-                            Retry
+                            View details
                           </button>
-                        ) : null}
+                        )}
                       </td>
+                      <td className="px-5 py-3" />
                     </tr>
                   ))
                 )}
@@ -779,45 +827,125 @@ export function BulkListingShell() {
         )
       ) : null}
 
-      {showVeroModal && veroHoldJobs.length > 0 ? (
+      {selectedJob ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-6 shadow-xl">
-            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-purple-100 text-xl text-purple-600">
-              ⚠️
+          <div className="w-full max-w-lg rounded-2xl border border-gray-100 bg-white p-6 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <span
+                  className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(selectedJob.status)}`}
+                >
+                  {formatStatus(selectedJob.status)}
+                </span>
+                <h2 className="mt-3 text-lg font-bold text-[#111827]">Listing details</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedJobId(null)}
+                className="rounded-lg px-2 py-1 text-lg text-[#9CA3AF] hover:bg-gray-100 hover:text-[#374151]"
+                aria-label="Close"
+              >
+                ✕
+              </button>
             </div>
-            <h2 className="mt-4 text-lg font-bold text-[#111827]">
-              {veroHoldJobs.length} VeRO product{veroHoldJobs.length > 1 ? "s" : ""} need your OK
-            </h2>
-            <p className="mt-2 text-sm leading-relaxed text-[#6B7280]">
-              All your other products are listed. These items may be brand/VeRO-protected. Since
-              you allow VeRO listing in your settings, confirm to list them too — or skip them.
+
+            <p className="mt-3 break-all text-xs text-[#6B7280]" title={selectedJob.productUrl}>
+              {selectedJob.productUrl}
             </p>
 
-            <div className="mt-4 max-h-40 space-y-1.5 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 p-3">
-              {veroHoldJobs.map((job) => (
-                <p key={job.id} className="truncate text-xs text-[#6B7280]" title={job.productUrl}>
-                  {job.productUrl}
-                </p>
-              ))}
+            <div
+              className={`mt-4 rounded-xl border px-4 py-3 text-sm leading-relaxed ${
+                selectedJob.status === "failed"
+                  ? "border-red-100 bg-red-50 text-red-700"
+                  : selectedJob.status === "vero_hold"
+                    ? "border-purple-100 bg-purple-50 text-purple-800"
+                    : selectedJob.status === "listed"
+                      ? "border-emerald-100 bg-emerald-50 text-emerald-800"
+                      : "border-gray-100 bg-gray-50 text-[#374151]"
+              }`}
+            >
+              <p className="whitespace-pre-wrap">{jobDetailReason(selectedJob)}</p>
             </div>
 
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                type="button"
-                disabled={veroResolving}
-                onClick={() => void resolveVero(false)}
-                className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50 disabled:opacity-60"
+            {selectedJob.status === "listed" && selectedJob.listingUrl ? (
+              <a
+                href={selectedJob.listingUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-4 inline-flex text-sm font-semibold text-brand hover:underline"
               >
-                Skip these
-              </button>
-              <button
-                type="button"
-                disabled={veroResolving}
-                onClick={() => void resolveVero(true)}
-                className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand/90 disabled:opacity-60"
-              >
-                {veroResolving ? "Working…" : "List them anyway"}
-              </button>
+                Open listing →
+              </a>
+            ) : null}
+
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              {selectedJob.status === "vero_hold" ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={jobResolving}
+                    onClick={() => void resolveJobVero(selectedJob.id, false)}
+                    className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50 disabled:opacity-60"
+                  >
+                    Skip
+                  </button>
+                  <button
+                    type="button"
+                    disabled={jobResolving}
+                    onClick={() => void resolveJobVero(selectedJob.id, true)}
+                    className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand/90 disabled:opacity-60"
+                  >
+                    {jobResolving ? "Working…" : "Approve & list"}
+                  </button>
+                </>
+              ) : selectedJob.status === "failed" && isAliOAuthFailure(selectedJob.errorMessage) ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedJobId(null)}
+                    className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    disabled={aliConnecting || processing}
+                    onClick={() => void connectAliExpressAndRetry(selectedJob.id)}
+                    className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand/90 disabled:opacity-60"
+                  >
+                    {aliConnecting ? "Waiting for connection…" : "Connect AliExpress & retry"}
+                  </button>
+                </>
+              ) : selectedJob.status === "failed" ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedJobId(null)}
+                    className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    disabled={processing}
+                    onClick={() => {
+                      setSelectedJobId(null);
+                      void handleRetry(selectedJob.id);
+                    }}
+                    className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand/90 disabled:opacity-60"
+                  >
+                    Retry
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setSelectedJobId(null)}
+                  className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50"
+                >
+                  Close
+                </button>
+              )}
             </div>
           </div>
         </div>

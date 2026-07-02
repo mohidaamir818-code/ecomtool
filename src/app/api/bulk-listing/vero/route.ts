@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
-import { resolveVeroHolds } from "@/lib/bulk-listing/service";
+import { resolveVeroHold, resolveVeroHolds } from "@/lib/bulk-listing/service";
 import { triggerBulkListingWorker } from "@/lib/bulk-listing/trigger";
 import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
 
@@ -10,6 +10,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as {
       userId?: string;
+      jobId?: string;
       approve?: boolean;
     };
 
@@ -22,7 +23,10 @@ export async function POST(request: NextRequest) {
     if (accessDenied) return accessDenied;
 
     const approve = Boolean(body.approve);
-    const jobs = await resolveVeroHolds(userId, approve);
+    const jobId = body.jobId?.trim();
+    const jobs = jobId
+      ? await resolveVeroHold(userId, jobId, approve)
+      : await resolveVeroHolds(userId, approve);
 
     // Approved VeRO jobs go back to the queue — kick the worker to list them.
     if (approve) {

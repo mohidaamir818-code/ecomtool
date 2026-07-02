@@ -20,6 +20,7 @@ import type {
   BulkListingJobStatus,
   BulkListingRowInput,
 } from "@/types/bulk-listing";
+import { isVeroAckRequiredError } from "@/lib/listings/vero-ack-error";
 import type { ListingPlatform } from "@/types/listing-generator";
 
 const MAX_ROWS_PER_BATCH = 50;
@@ -308,11 +309,10 @@ export async function processNextBulkListingJob(input: {
       currency = result.currency;
     }
   } catch (error) {
-    if (error instanceof Error && error.message === "VERO_ACK_REQUIRED") {
+    if (isVeroAckRequiredError(error)) {
       // VeRO listing is allowed in settings but needs the seller's explicit OK.
-      // Park it and ask for permission at the end.
       finalStatus = "vero_hold";
-      errorMessage = null;
+      errorMessage = error.veroSummary;
     } else if (error instanceof EbayAutoListNeedsFulfillmentPolicyError) {
       finalStatus = "failed";
       errorMessage =
@@ -345,6 +345,38 @@ export async function processNextBulkListingJob(input: {
  * Resolves all parked VeRO products for a user: approve lists them (with the
  * seller's acknowledgement), decline marks them failed.
  */
+export async function resolveVeroHold(
+  userId: string,
+  jobId: string,
+  approve: boolean,
+): Promise<BulkListingJob[]> {
+  const supabase = getSupabaseAdmin();
+  const now = new Date().toISOString();
+
+  if (approve) {
+    await supabase
+      .from("bulk_listing_jobs")
+      .update({ status: "queued", vero_ack: true, error_message: null, updated_at: now })
+      .eq("user_id", userId)
+      .eq("id", jobId)
+      .eq("status", "vero_hold");
+  } else {
+    await supabase
+      .from("bulk_listing_jobs")
+      .update({
+        status: "failed",
+        error_message: "VeRO listing skipped by seller.",
+        finished_at: now,
+        updated_at: now,
+      })
+      .eq("user_id", userId)
+      .eq("id", jobId)
+      .eq("status", "vero_hold");
+  }
+
+  return getUserBulkListingJobs(userId);
+}
+
 export async function resolveVeroHolds(
   userId: string,
   approve: boolean,
