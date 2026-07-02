@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AddAliUrlModal } from "./AddAliUrlModal";
+import type { ListingPlatform } from "@/types/listing-generator";
 import type { StoreImportListing, StoreImportSuggestedMatch } from "@/types/store-import";
 
 interface ImportStoreModalProps {
   userId: string;
+  platform: ListingPlatform;
   onClose: () => void;
   onLinked: () => void;
 }
@@ -27,7 +29,7 @@ function displayPrice(listing: StoreImportListing): string {
   return `${formatPrice(min, listing.currency)} – ${formatPrice(max, listing.currency)}`;
 }
 
-export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModalProps) {
+export function ImportStoreModal({ userId, platform, onClose, onLinked }: ImportStoreModalProps) {
   const [listings, setListings] = useState<StoreImportListing[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +70,7 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
           const response = await fetch("/api/listings/import-store/suggest", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userId, listingIds: batch }),
+            body: JSON.stringify({ userId, platform, listingIds: batch }),
           });
           const data = (await response.json()) as {
             error?: string;
@@ -118,14 +120,16 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
         setFindingProgress("");
       }
     },
-    [userId],
+    [platform, userId],
   );
 
   const loadStore = useCallback(async (): Promise<StoreImportListing[]> => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/listings/import-store?userId=${encodeURIComponent(userId)}`);
+      const response = await fetch(
+        `/api/listings/import-store?userId=${encodeURIComponent(userId)}&platform=${encodeURIComponent(platform)}`,
+      );
       const raw = await response.text();
       let data: { error?: string; listings?: StoreImportListing[] } = {};
       try {
@@ -155,7 +159,7 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
     } finally {
       setLoading(false);
     }
-  }, [runAutoSuggest, userId]);
+  }, [platform, runAutoSuggest, userId]);
 
   useEffect(() => {
     void loadStore();
@@ -203,7 +207,7 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
       const response = await fetch("/api/listings/import-store/link-batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, links }),
+        body: JSON.stringify({ userId, platform, links }),
       });
       const data = (await response.json()) as {
         error?: string;
@@ -249,7 +253,9 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
           <div className="border-b border-gray-100 bg-gradient-to-r from-brand/10 via-violet-50 to-white px-6 py-5">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <h2 className="text-xl font-bold text-[#111827]">Import your eBay store</h2>
+                <h2 className="text-xl font-bold text-[#111827]">
+                  Import your {platform === "amazef" ? "Amazef" : "eBay"} store
+                </h2>
                 <p className="mt-1 text-sm text-[#6B7280]">
                   We find matching AliExpress URLs automatically. Review, tick the ones that look
                   right, then save to enable auto-sync.
@@ -307,16 +313,20 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
             ) : null}
 
             {loading ? (
-              <p className="text-sm text-[#6B7280]">Loading your eBay store…</p>
+              <p className="text-sm text-[#6B7280]">
+                Loading your {platform === "amazef" ? "Amazef" : "eBay"} store…
+              </p>
             ) : error ? (
               <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
                 {error}
               </div>
             ) : listings.length === 0 ? (
               <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-5 py-10 text-center">
-                <p className="text-sm font-medium text-[#374151]">No active eBay listings found</p>
+                <p className="text-sm font-medium text-[#374151]">
+                  No active {platform === "amazef" ? "Amazef" : "eBay"} listings found
+                </p>
                 <p className="mt-1 text-xs text-[#6B7280]">
-                  Publish listings on eBay first, then return here to link AliExpress URLs.
+                  Publish listings on {platform === "amazef" ? "Amazef" : "eBay"} first, then return here to link AliExpress URLs.
                 </p>
               </div>
             ) : (
@@ -488,7 +498,7 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
                             rel="noreferrer"
                             className="rounded-lg border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-[#374151] hover:bg-gray-50"
                           >
-                            View on eBay
+                            View on {platform === "amazef" ? "Amazef" : "eBay"}
                           </a>
                           {draftUrl ? (
                             <a
@@ -515,6 +525,7 @@ export function ImportStoreModal({ userId, onClose, onLinked }: ImportStoreModal
         <AddAliUrlModal
           listing={addUrlListing}
           userId={userId}
+          platform={platform}
           initialUrl={addUrlInitial}
           onClose={() => setAddUrlListing(null)}
           onLinked={handleUrlLinked}

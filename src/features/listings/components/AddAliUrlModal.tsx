@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import type { StoreImportListing } from "@/types/store-import";
+import type { ListingPlatform } from "@/types/listing-generator";
 
 interface AddAliUrlModalProps {
   listing: StoreImportListing;
   userId: string;
+  platform: ListingPlatform;
   initialUrl?: string;
   onClose: () => void;
   onLinked: () => void;
@@ -14,6 +16,7 @@ interface AddAliUrlModalProps {
 export function AddAliUrlModal({
   listing,
   userId,
+  platform,
   initialUrl = "",
   onClose,
   onLinked,
@@ -42,6 +45,7 @@ export function AddAliUrlModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId,
+          platform,
           listingId: listing.listingId,
           aliexpressUrl: aliexpressUrl.trim(),
         }),
@@ -87,8 +91,7 @@ export function AddAliUrlModal({
             />
           </label>
           <p className="text-xs text-[#6B7280]">
-            We will check that this AliExpress product matches your eBay listing before enabling
-            24h handling and auto price/stock updates.
+            We will check that this AliExpress product matches your {platform === "amazef" ? "Amazef" : "eBay"} listing before enabling 24h handling and auto price/stock updates.
           </p>
           {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p> : null}
         </div>

@@ -91,16 +91,14 @@ export function ListedProductsPanel({ userId, platform, refreshKey = 0 }: Listed
               Products listed through ecomtool. AliExpress changes auto-update price and stock.
             </p>
           </div>
-          {platform === "ebay" ? (
-            <button
-              type="button"
-              onClick={() => setShowImportStore(true)}
-              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-brand to-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-brand/20 transition hover:shadow-lg hover:shadow-brand/30"
-            >
-              <span aria-hidden>↓</span>
-              Import store
-            </button>
-          ) : null}
+          <button
+            type="button"
+            onClick={() => setShowImportStore(true)}
+            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-brand to-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-brand/20 transition hover:shadow-lg hover:shadow-brand/30"
+          >
+            <span aria-hidden>↓</span>
+            Import store
+          </button>
         </div>
 
         {loading && filteredProducts.length === 0 ? (
@@ -203,6 +201,7 @@ export function ListedProductsPanel({ userId, platform, refreshKey = 0 }: Listed
       {showImportStore ? (
         <ImportStoreModal
           userId={userId}
+          platform={platform}
           onClose={() => setShowImportStore(false)}
           onLinked={() => {
             void loadProducts();

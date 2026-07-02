@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { suggestImportStoreMatches } from "@/lib/listings/import-store-service";
 import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
+import type { ListingPlatform } from "@/types/listing-generator";
 
 export const maxDuration = 120;
 
@@ -10,6 +11,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as {
       userId?: string;
+      platform?: ListingPlatform;
       listingIds?: string[];
     };
 
@@ -17,6 +19,7 @@ export async function POST(request: NextRequest) {
     if (!userId) {
       return NextResponse.json({ error: "userId is required." }, { status: 400 });
     }
+    const platform = body.platform === "amazef" ? "amazef" : "ebay";
 
     const listingIds = Array.isArray(body.listingIds)
       ? body.listingIds.map((id) => String(id).trim()).filter(Boolean).slice(0, MAX_SUGGEST_BATCH)
@@ -29,7 +32,7 @@ export async function POST(request: NextRequest) {
     const accessDenied = await requireActiveUser(userId);
     if (accessDenied) return accessDenied;
 
-    const suggestions = await suggestImportStoreMatches(userId, listingIds);
+    const suggestions = await suggestImportStoreMatches(userId, platform, listingIds);
     return NextResponse.json({ success: true, suggestions });
   } catch (error: unknown) {
     const blocked = userBlockErrorResponse(error);
