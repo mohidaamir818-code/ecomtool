@@ -19,6 +19,76 @@ const PREFERENCE_KEYS = [
   "profitMarginPercent",
 ] as const;
 
+interface GuidedOption {
+  label: string;
+  value: string;
+}
+
+interface GuidedQuestion {
+  id: string;
+  question: string;
+  options: GuidedOption[];
+}
+
+const GUIDED_CHAT_QUESTIONS: GuidedQuestion[] = [
+  {
+    id: "goal",
+    question: "What should be optimized first?",
+    options: [
+      { label: "Fast sales", value: "fast_sales" },
+      { label: "Higher profit", value: "high_profit" },
+      { label: "Balanced", value: "balanced" },
+    ],
+  },
+  {
+    id: "min_profit",
+    question: "Select your minimum profit target.",
+    options: [
+      { label: "10%", value: "10" },
+      { label: "15%", value: "15" },
+      { label: "20%", value: "20" },
+      { label: "25%", value: "25" },
+    ],
+  },
+  {
+    id: "pricing_mode",
+    question: "How should price compare to market?",
+    options: [
+      { label: "Auto smart pricing", value: "auto" },
+      { label: "1% below market", value: "percent_1" },
+      { label: "3% below market", value: "percent_3" },
+      { label: "£0.50 below market", value: "amount_0_5" },
+    ],
+  },
+  {
+    id: "ending",
+    question: "Pick a price ending style.",
+    options: [
+      { label: "Always .99", value: "99" },
+      { label: ".95", value: "95" },
+      { label: "Range based (.99/.59/.89)", value: "ranges" },
+      { label: "No charm ending", value: "off" },
+    ],
+  },
+  {
+    id: "bogo",
+    question: "Should BOGO be enabled?",
+    options: [
+      { label: "Yes, when profit is high", value: "on" },
+      { label: "No BOGO", value: "off" },
+    ],
+  },
+  {
+    id: "flash_sale",
+    question: "How should flash sale work?",
+    options: [
+      { label: "Show discount only (keep real price)", value: "show_only" },
+      { label: "Apply real 20% discount", value: "real_20" },
+      { label: "Disable flash sale", value: "off" },
+    ],
+  },
+];
+
 interface AmazefAutoListingSettingsModalProps {
   initialSettings: AmazefAutoListingSettings;
   onSave: (settings: AmazefAutoListingSettings) => void;
@@ -50,6 +120,7 @@ export function AmazefAutoListingSettingsModal({
   );
   const [aiApplied, setAiApplied] = useState<{ prompt: string; summary: string } | null>(null);
   const [aiEditing, setAiEditing] = useState(true);
+  const [aiGuidedAnswers, setAiGuidedAnswers] = useState<Record<string, GuidedOption>>({});
 
   // Second box: seller's own custom price-ending / pricing rules in plain words.
   const [rulePrompt, setRulePrompt] = useState("");
@@ -84,6 +155,75 @@ export function AmazefAutoListingSettingsModal({
   useEffect(() => {
     setForm(normalizeAutoListingSettings(initialSettings));
   }, [initialSettings]);
+
+  function buildGuidedPrompt(answers: Record<string, GuidedOption>): string {
+    const goal = answers.goal?.value ?? "balanced";
+    const minProfit = Number(answers.min_profit?.value ?? "15");
+    const pricingMode = answers.pricing_mode?.value ?? "auto";
+    const ending = answers.ending?.value ?? "99";
+    const bogo = answers.bogo?.value ?? "off";
+    const flashSale = answers.flash_sale?.value ?? "off";
+
+    const lines: string[] = [];
+    lines.push(`Primary goal: ${goal.replace("_", " ")}.`);
+    lines.push(`Minimum profit must be at least ${minProfit}%.`);
+
+    if (pricingMode === "auto") {
+      lines.push("Enable smart pricing with automatic market undercut.");
+    } else if (pricingMode === "percent_1") {
+      lines.push("Enable smart pricing and keep price 1% below market average.");
+    } else if (pricingMode === "percent_3") {
+      lines.push("Enable smart pricing and keep price 3% below market average.");
+    } else {
+      lines.push("Enable smart pricing and keep price GBP 0.50 below market average.");
+    }
+
+    if (ending === "off") {
+      lines.push("Disable charm pricing.");
+    } else if (ending === "ranges") {
+      lines.push("Enable charm pricing with range endings: up to 1.50 -> .99, up to 1.99 -> .59, above that -> .89.");
+    } else {
+      lines.push(`Enable charm pricing with .${ending} ending.`);
+    }
+
+    if (bogo === "on") {
+      lines.push("Enable BOGO only when per-item profit is above GBP 4.");
+    } else {
+      lines.push("Disable BOGO.");
+    }
+
+    if (flashSale === "show_only") {
+      lines.push("Enable flash sale while keeping real price the same and only showing discount.");
+    } else if (flashSale === "real_20") {
+      lines.push("Enable flash sale with real 20% discount only when profit is above GBP 5.");
+    } else {
+      lines.push("Disable flash sale.");
+    }
+
+    return lines.join(" ");
+  }
+
+  function applyParsedSettings(parsed: { summary: string; settings: Record<string, unknown> }, sourcePrompt: string) {
+    setForm((current) => normalizeAutoListingSettings({ ...current, ...parsed.settings }));
+
+    if (onApplyPreferences && sellerPreferences) {
+      const prefPatch: Record<string, unknown> = {};
+      for (const key of PREFERENCE_KEYS) {
+        if (parsed.settings[key] != null) prefPatch[key] = Number(parsed.settings[key]);
+      }
+      if (Object.keys(prefPatch).length > 0) {
+        onApplyPreferences({ ...sellerPreferences, ...prefPatch } as SellerPreferences);
+      }
+    }
+
+    setAiApplied({ prompt: sourcePrompt, summary: parsed.summary });
+    setAiEditing(false);
+    setAiPending(null);
+    setAiClarify("");
+    setAiQuestion("");
+    setAiFeeAnswer("");
+    setError("");
+  }
 
   async function handleRuleParse() {
     const instruction = rulePrompt.trim();
@@ -204,8 +344,8 @@ export function AmazefAutoListingSettingsModal({
     setError("");
   }
 
-  async function handleAiParse() {
-    const instruction = aiPrompt.trim();
+  async function handleAiParse(instructionOverride?: string) {
+    const instruction = (instructionOverride ?? aiPrompt).trim();
     if (!instruction) return;
     setAiBusy(true);
     setAiClarify("");
@@ -231,8 +371,13 @@ export function AmazefAutoListingSettingsModal({
         settings: Record<string, unknown>;
       };
       if (result.understood) {
-        setAiPending({ summary: result.summary, settings: result.settings });
-        if (result.question) setAiQuestion(result.question);
+        const parsed = { summary: result.summary, settings: result.settings };
+        if (result.question) {
+          setAiPending(parsed);
+          setAiQuestion(result.question);
+        } else {
+          applyParsedSettings(parsed, instruction);
+        }
       } else {
         setAiClarify(result.clarification ?? "Please rewrite your rules more clearly.");
       }
@@ -286,27 +431,7 @@ export function AmazefAutoListingSettingsModal({
 
   function handleAiApply() {
     if (!aiPending) return;
-    const appliedPrompt = aiPrompt.trim();
-    setForm((current) => normalizeAutoListingSettings({ ...current, ...aiPending.settings }));
-
-    // Detailed fee/price fields live in seller preferences — apply them there.
-    if (onApplyPreferences && sellerPreferences) {
-      const prefPatch: Record<string, unknown> = {};
-      for (const key of PREFERENCE_KEYS) {
-        if (aiPending.settings[key] != null) prefPatch[key] = Number(aiPending.settings[key]);
-      }
-      if (Object.keys(prefPatch).length > 0) {
-        onApplyPreferences({ ...sellerPreferences, ...prefPatch } as SellerPreferences);
-      }
-    }
-
-    setAiApplied({ prompt: appliedPrompt, summary: aiPending.summary });
-    setAiEditing(false);
-    setAiPending(null);
-    setAiClarify("");
-    setAiQuestion("");
-    setAiFeeAnswer("");
-    setError("");
+    applyParsedSettings(aiPending, aiPrompt.trim());
   }
 
   function updateField<K extends keyof AmazefAutoListingSettings>(key: K, value: AmazefAutoListingSettings[K]) {
@@ -340,30 +465,58 @@ export function AmazefAutoListingSettingsModal({
             e.g. "Keep price 5% below market and end prices with .99, with minimum profit of 20%."
             AI will fill the settings below for you.
           </p>
+          <div className="mt-2 space-y-3 rounded-lg border border-gray-200 bg-white p-3">
+            {GUIDED_CHAT_QUESTIONS.map((item) => {
+              const picked = aiGuidedAnswers[item.id];
+              return (
+                <div key={item.id} className="rounded-md bg-gray-50 p-2">
+                  <p className="text-xs font-medium text-[#111827]">{item.question}</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {item.options.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        disabled={!aiEditing}
+                        onClick={() => {
+                          setAiGuidedAnswers((current) => ({ ...current, [item.id]: option }));
+                          setAiClarify("");
+                          setAiQuestion("");
+                          setAiFeeAnswer("");
+                          setAiPending(null);
+                        }}
+                        className={`rounded-full border px-3 py-1 text-xs font-semibold ${
+                          picked?.value === option.value
+                            ? "border-brand bg-brand text-white"
+                            : "border-gray-200 bg-white text-[#374151] hover:bg-gray-100"
+                        } disabled:cursor-not-allowed disabled:opacity-60`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
           <textarea
             value={aiPrompt}
-            readOnly={!aiEditing}
-            onChange={(event) => {
-              setAiPrompt(event.target.value);
-              setAiClarify("");
-              setAiQuestion("");
-              setAiFeeAnswer("");
-              setAiPending(null);
-            }}
+            readOnly
             rows={3}
-            placeholder="Write your pricing rules here…"
-            className={`mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand ${
-              aiEditing ? "" : "cursor-not-allowed bg-gray-50 text-[#374151]"
-            }`}
+            placeholder="Generated instruction preview..."
+            className="mt-2 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-[#374151] outline-none"
           />
           <div className="mt-2 flex items-center gap-2">
             <button
               type="button"
-              onClick={handleAiParse}
-              disabled={aiBusy || !aiPrompt.trim() || !aiEditing}
+              onClick={() => {
+                const instruction = buildGuidedPrompt(aiGuidedAnswers);
+                setAiPrompt(instruction);
+                void handleAiParse(instruction);
+              }}
+              disabled={aiBusy || !aiEditing || Object.keys(aiGuidedAnswers).length < GUIDED_CHAT_QUESTIONS.length}
               className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {aiBusy ? "Understanding…" : "Apply with AI"}
+              {aiBusy ? "Understanding…" : "Build & Apply"}
             </button>
             {!aiEditing && aiApplied ? (
               <button
@@ -371,6 +524,7 @@ export function AmazefAutoListingSettingsModal({
                 onClick={() => {
                   setAiEditing(true);
                   setAiPrompt(aiApplied.prompt);
+                  setAiGuidedAnswers({});
                   setAiPending(null);
                   setAiClarify("");
                   setAiQuestion("");
