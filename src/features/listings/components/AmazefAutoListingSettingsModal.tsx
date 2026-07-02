@@ -420,7 +420,7 @@ export function AmazefAutoListingSettingsModal({
               setRulePending(null);
             }}
             rows={3}
-            placeholder="Apni price-ending rules yahan likhein…"
+            placeholder="Write your price-ending rules here..."
             className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
           />
           <div className="mt-2 flex items-center gap-2">
@@ -470,8 +470,8 @@ export function AmazefAutoListingSettingsModal({
             Buy One Get One (BOGO) rules
           </span>
           <p className="mt-1 text-xs text-[#6B7280]">
-            Apne words me likhein kab BOGO lagani hai. e.g. “Jis product par profit £4 se zyada ho
-            us par Buy One Get One Free laga do.” AI samajh ke apply kar dega — kuch bhi likhein.
+            Describe when BOGO should apply. e.g. "Apply Buy One Get One Free when profit is above
+            GBP 4." AI will understand and apply your rule.
           </p>
           <textarea
             value={bogoPrompt}
@@ -481,7 +481,7 @@ export function AmazefAutoListingSettingsModal({
               setBogoPending(null);
             }}
             rows={3}
-            placeholder="Apni BOGO rules yahan likhein…"
+            placeholder="Write your BOGO rules here..."
             className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
           />
           <div className="mt-2 flex items-center gap-2">
@@ -531,9 +531,9 @@ export function AmazefAutoListingSettingsModal({
         <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50/60 p-4">
           <span className="text-sm font-semibold text-[#111827]">Flash sale rules</span>
           <p className="mt-1 text-xs text-[#6B7280]">
-            Apne words me likhein flash sale kaise chahiye. e.g. “Price wahi rakho, bas flash sale
-            me upar discount dikhao taake buyer ko lage sale hai.” Ya “20% off flash sale par lagao
-            jab profit £5 se zyada ho.” AI samajh ke apply kar dega.
+            Describe how you want flash sale to work. e.g. "Keep the real price the same, but show
+            a higher discount during flash sale." Or "Apply 20% flash-sale discount when profit is
+            above GBP 5." AI will understand and apply your rule.
           </p>
           <textarea
             value={flashPrompt}
@@ -543,7 +543,7 @@ export function AmazefAutoListingSettingsModal({
               setFlashPending(null);
             }}
             rows={3}
-            placeholder="Apni flash sale rules yahan likhein…"
+            placeholder="Write your flash sale rules here..."
             className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
           />
           <div className="mt-2 flex items-center gap-2">

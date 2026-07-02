@@ -358,7 +358,7 @@ export function EbayAutoListingSettingsModal({
               setRulePending(null);
             }}
             rows={3}
-            placeholder="Apni price-ending rules yahan likhein…"
+            placeholder="Write your price-ending rules here..."
             className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
           />
           <div className="mt-2 flex items-center gap-2">
