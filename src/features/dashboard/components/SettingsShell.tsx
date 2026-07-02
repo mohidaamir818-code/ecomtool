@@ -10,12 +10,12 @@ export function SettingsShell() {
             <div>
               <h1 className="text-2xl font-bold text-[#111827]">Settings</h1>
               <p className="mt-1 text-sm text-[#6B7280]">
-                Configure cache, sync behavior, and usage controls from one place.
+                Manage your account, security, and daily request limits.
               </p>
             </div>
             <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
               <span className="h-2 w-2 rounded-full bg-emerald-500" />
-              Professional Mode
+              Account Settings
             </span>
           </div>
         </header>
@@ -23,97 +23,65 @@ export function SettingsShell() {
         <section className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
           <div className="mb-5 flex items-center gap-2">
             <DashboardIcon name="settings" className="h-5 w-5 text-brand" />
-            <h2 className="text-lg font-semibold text-[#111827]">Smart Cache & Sync Control</h2>
+            <h2 className="text-lg font-semibold text-[#111827]">Profile & Security</h2>
           </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <label className="rounded-xl border border-gray-100 bg-gray-50/70 p-4">
               <span className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">
-                Cache Window
+                Email Address
               </span>
-              <select
-                defaultValue="24"
+              <input
+                type="email"
+                defaultValue="seller@example.com"
                 className="mt-2 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-[#111827] outline-none focus:border-brand"
-              >
-                <option value="12">12 hours</option>
-                <option value="24">24 hours (recommended)</option>
-                <option value="48">48 hours</option>
-              </select>
+              />
               <p className="mt-2 text-xs text-[#6B7280]">
-                Reuse cached AliExpress product data within selected duration.
+                Update your account email for login and notifications.
               </p>
             </label>
 
             <label className="rounded-xl border border-gray-100 bg-gray-50/70 p-4">
               <span className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">
-                Auto Sync Frequency
+                Password
               </span>
-              <select
-                defaultValue="24"
+              <input
+                type="password"
+                defaultValue="********"
                 className="mt-2 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-[#111827] outline-none focus:border-brand"
-              >
-                <option value="6">Every 6 hours</option>
-                <option value="12">Every 12 hours</option>
-                <option value="24">Every 24 hours (recommended)</option>
-              </select>
+              />
               <p className="mt-2 text-xs text-[#6B7280]">
-                One supplier call can update all linked sellers of same product.
+                Change your password regularly to keep account secure.
               </p>
             </label>
 
-            <label className="rounded-xl border border-gray-100 bg-gray-50/70 p-4">
+            <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-4 md:col-span-2">
               <span className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">
-                Overflow Strategy
+                Daily Requests
               </span>
-              <select
-                defaultValue="official-first"
-                className="mt-2 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-[#111827] outline-none focus:border-brand"
-              >
-                <option value="official-first">Official API first</option>
-                <option value="cache-first">Cache first</option>
-                <option value="fallback-scrape">Fallback scrape on limit</option>
-              </select>
-              <p className="mt-2 text-xs text-[#6B7280]">
-                Control how the system behaves near request limits.
-              </p>
-            </label>
-
-            <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-4">
-              <span className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">
-                Alerts
-              </span>
-              <div className="mt-2 space-y-2 text-sm text-[#374151]">
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" defaultChecked className="h-4 w-4 accent-brand" />
-                  Stock out alerts
-                </label>
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" defaultChecked className="h-4 w-4 accent-brand" />
-                  Price jump alerts
-                </label>
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" defaultChecked className="h-4 w-4 accent-brand" />
-                  Daily usage digest
-                </label>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-gray-200">
+                <div className="h-full w-[38%] rounded-full bg-brand" />
               </div>
+              <p className="mt-2 text-sm font-medium text-[#111827]">1,900 / 5,000 used today</p>
+              <p className="mt-1 text-xs text-[#6B7280]">
+                Daily request usage resets automatically every 24 hours.
+              </p>
             </div>
           </div>
 
-          <div className="mt-5 rounded-xl border border-brand/20 bg-brand-light/30 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-[#111827]">API Usage Guard</p>
-                <p className="mt-1 text-xs text-[#6B7280]">
-                  Requests today: <span className="font-semibold text-[#111827]">1,240 / 5,000</span>
-                </p>
-              </div>
-              <button
-                type="button"
-                className="rounded-lg border border-brand/30 bg-white px-4 py-2 text-sm font-semibold text-brand hover:bg-brand/5"
-              >
-                Force Refresh Selected
-              </button>
-            </div>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <button
+              type="button"
+              className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark"
+            >
+              Save Changes
+            </button>
+            <button
+              type="button"
+              className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50"
+            >
+              Change Password
+            </button>
           </div>
         </section>
       </div>
