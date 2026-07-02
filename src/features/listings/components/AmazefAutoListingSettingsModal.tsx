@@ -457,410 +457,9 @@ export function AmazefAutoListingSettingsModal({
           Set your rules once. AI will apply them automatically for every URL you submit.
         </p>
 
-        <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50/60 p-4">
-          <span className="text-sm font-semibold text-[#111827]">
-            Describe your rules (English)
-          </span>
-          <p className="mt-1 text-xs text-[#6B7280]">
-            e.g. "Keep price 5% below market and end prices with .99, with minimum profit of 20%."
-            AI will fill the settings below for you.
-          </p>
-          <div className="mt-2 space-y-3 rounded-lg border border-gray-200 bg-white p-3">
-            {GUIDED_CHAT_QUESTIONS.map((item) => {
-              const picked = aiGuidedAnswers[item.id];
-              return (
-                <div key={item.id} className="rounded-md bg-gray-50 p-2">
-                  <p className="text-xs font-medium text-[#111827]">{item.question}</p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {item.options.map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        disabled={!aiEditing}
-                        onClick={() => {
-                          setAiGuidedAnswers((current) => ({ ...current, [item.id]: option }));
-                          setAiClarify("");
-                          setAiQuestion("");
-                          setAiFeeAnswer("");
-                          setAiPending(null);
-                        }}
-                        className={`rounded-full border px-3 py-1 text-xs font-semibold ${
-                          picked?.value === option.value
-                            ? "border-brand bg-brand text-white"
-                            : "border-gray-200 bg-white text-[#374151] hover:bg-gray-100"
-                        } disabled:cursor-not-allowed disabled:opacity-60`}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <textarea
-            value={aiPrompt}
-            readOnly
-            rows={3}
-            placeholder="Generated instruction preview..."
-            className="mt-2 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-[#374151] outline-none"
-          />
-          <div className="mt-2 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                const instruction = buildGuidedPrompt(aiGuidedAnswers);
-                setAiPrompt(instruction);
-                void handleAiParse(instruction);
-              }}
-              disabled={aiBusy || !aiEditing || Object.keys(aiGuidedAnswers).length < GUIDED_CHAT_QUESTIONS.length}
-              className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {aiBusy ? "Understanding…" : "Build & Apply"}
-            </button>
-            {!aiEditing && aiApplied ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setAiEditing(true);
-                  setAiPrompt(aiApplied.prompt);
-                  setAiGuidedAnswers({});
-                  setAiPending(null);
-                  setAiClarify("");
-                  setAiQuestion("");
-                  setAiFeeAnswer("");
-                }}
-                className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50"
-              >
-                Edit
-              </button>
-            ) : null}
-            {aiBusy ? <span className="text-xs text-[#6B7280]">Reading your rules…</span> : null}
-          </div>
-
-          {aiApplied && !aiEditing ? (
-            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-[#374151]">
-              <span className="block font-semibold text-[#111827]">Applied</span>
-              <span className="mt-1 block">{aiApplied.prompt}</span>
-              <span className="mt-1 block text-[#6B7280]">{aiApplied.summary}</span>
-            </div>
-          ) : null}
-
-          {aiClarify ? (
-            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              {aiClarify}
-            </div>
-          ) : null}
-
-          {aiPending ? (
-            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm">
-              <span className="block font-medium text-[#111827]">Here’s what I understood:</span>
-              <span className="mt-1 block text-[#374151]">{aiPending.summary}</span>
-
-              {aiQuestion ? (
-                <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
-                  <span className="block text-sm font-medium text-[#111827]">{aiQuestion}</span>
-                  <input
-                    type="text"
-                    value={aiFeeAnswer}
-                    onChange={(event) => setAiFeeAnswer(event.target.value)}
-                    placeholder="e.g. Amazef fee 15%, payment fee 2.9%"
-                    className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleAiFeeAnswer}
-                    disabled={aiBusy || !aiFeeAnswer.trim()}
-                    className="mt-2 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
-                  >
-                    {aiBusy ? "Updating…" : "Add fees & update"}
-                  </button>
-                </div>
-              ) : null}
-
-              <div className="mt-2 flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleAiApply}
-                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
-                >
-                  Yes, apply
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAiPending(null);
-                    setAiQuestion("");
-                    setAiFeeAnswer("");
-                  }}
-                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-[#374151] hover:bg-gray-50"
-                >
-                  No, I’ll rewrite
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50/60 p-4">
-          <span className="text-sm font-semibold text-[#111827]">
-            Your own price rules (e.g. .99 / .59 / .89 endings)
-          </span>
-          <p className="mt-1 text-xs text-[#6B7280]">
-            Describe how you want prices to end by price range. AI will apply your rules.
-          </p>
-          <textarea
-            value={rulePrompt}
-            readOnly={!ruleEditing}
-            onChange={(event) => {
-              setRulePrompt(event.target.value);
-              setRuleClarify("");
-              setRulePending(null);
-            }}
-            rows={3}
-            placeholder="Write your price-ending rules here..."
-            className={`mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand ${
-              ruleEditing ? "" : "cursor-not-allowed bg-gray-50 text-[#374151]"
-            }`}
-          />
-          <div className="mt-2 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleRuleParse}
-              disabled={ruleBusy || !rulePrompt.trim() || !ruleEditing}
-              className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {ruleBusy ? "Understanding…" : "Apply with AI"}
-            </button>
-            {!ruleEditing && ruleApplied ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setRuleEditing(true);
-                  setRulePrompt(ruleApplied.prompt);
-                  setRulePending(null);
-                  setRuleClarify("");
-                }}
-                className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50"
-              >
-                Edit
-              </button>
-            ) : null}
-            {ruleBusy ? <span className="text-xs text-[#6B7280]">Reading your rules…</span> : null}
-          </div>
-
-          {ruleApplied && !ruleEditing ? (
-            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-[#374151]">
-              <span className="block font-semibold text-[#111827]">Applied</span>
-              <span className="mt-1 block">{ruleApplied.prompt}</span>
-              <span className="mt-1 block text-[#6B7280]">{ruleApplied.summary}</span>
-            </div>
-          ) : null}
-
-          {ruleClarify ? (
-            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              {ruleClarify}
-            </div>
-          ) : null}
-
-          {rulePending ? (
-            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm">
-              <span className="block font-medium text-[#111827]">Here’s what I understood:</span>
-              <span className="mt-1 block text-[#374151]">{rulePending.summary}</span>
-              <div className="mt-2 flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleRuleApply}
-                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
-                >
-                  Yes, apply
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRulePending(null)}
-                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-[#374151] hover:bg-gray-50"
-                >
-                  No, I’ll rewrite
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="mt-3 rounded-xl border border-orange-200 bg-orange-50/60 p-4">
-          <span className="text-sm font-semibold text-[#111827]">
-            Buy One Get One (BOGO) rules
-          </span>
-          <p className="mt-1 text-xs text-[#6B7280]">
-            Describe when BOGO should apply. e.g. "Apply Buy One Get One Free when profit is above
-            GBP 4." AI will understand and apply your rule.
-          </p>
-          <textarea
-            value={bogoPrompt}
-            readOnly={!bogoEditing}
-            onChange={(event) => {
-              setBogoPrompt(event.target.value);
-              setBogoClarify("");
-              setBogoPending(null);
-            }}
-            rows={3}
-            placeholder="Write your BOGO rules here..."
-            className={`mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand ${
-              bogoEditing ? "" : "cursor-not-allowed bg-gray-50 text-[#374151]"
-            }`}
-          />
-          <div className="mt-2 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() =>
-                handlePromoParse(bogoPrompt, setBogoBusy, setBogoClarify, setBogoPending)
-              }
-              disabled={bogoBusy || !bogoPrompt.trim() || !bogoEditing}
-              className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {bogoBusy ? "Understanding…" : "Apply with AI"}
-            </button>
-            {!bogoEditing && bogoApplied ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setBogoEditing(true);
-                  setBogoPrompt(bogoApplied.prompt);
-                  setBogoPending(null);
-                  setBogoClarify("");
-                }}
-                className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50"
-              >
-                Edit
-              </button>
-            ) : null}
-            {bogoBusy ? <span className="text-xs text-[#6B7280]">Reading your rules…</span> : null}
-          </div>
-
-          {bogoApplied && !bogoEditing ? (
-            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-[#374151]">
-              <span className="block font-semibold text-[#111827]">Applied</span>
-              <span className="mt-1 block">{bogoApplied.prompt}</span>
-              <span className="mt-1 block text-[#6B7280]">{bogoApplied.summary}</span>
-            </div>
-          ) : null}
-
-          {bogoClarify ? (
-            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              {bogoClarify}
-            </div>
-          ) : null}
-
-          {bogoPending ? (
-            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm">
-              <span className="block font-medium text-[#111827]">Here’s what I understood:</span>
-              <span className="mt-1 block text-[#374151]">{bogoPending.summary}</span>
-              <div className="mt-2 flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleBogoApply}
-                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
-                >
-                  Yes, apply
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBogoPending(null)}
-                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-[#374151] hover:bg-gray-50"
-                >
-                  No, I’ll rewrite
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50/60 p-4">
-          <span className="text-sm font-semibold text-[#111827]">Flash sale rules</span>
-          <p className="mt-1 text-xs text-[#6B7280]">
-            Describe how you want flash sale to work. e.g. "Keep the real price the same, but show
-            a higher discount during flash sale." Or "Apply 20% flash-sale discount when profit is
-            above GBP 5." AI will understand and apply your rule.
-          </p>
-          <textarea
-            value={flashPrompt}
-            readOnly={!flashEditing}
-            onChange={(event) => {
-              setFlashPrompt(event.target.value);
-              setFlashClarify("");
-              setFlashPending(null);
-            }}
-            rows={3}
-            placeholder="Write your flash sale rules here..."
-            className={`mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand ${
-              flashEditing ? "" : "cursor-not-allowed bg-gray-50 text-[#374151]"
-            }`}
-          />
-          <div className="mt-2 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() =>
-                handlePromoParse(flashPrompt, setFlashBusy, setFlashClarify, setFlashPending)
-              }
-              disabled={flashBusy || !flashPrompt.trim() || !flashEditing}
-              className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {flashBusy ? "Understanding…" : "Apply with AI"}
-            </button>
-            {!flashEditing && flashApplied ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setFlashEditing(true);
-                  setFlashPrompt(flashApplied.prompt);
-                  setFlashPending(null);
-                  setFlashClarify("");
-                }}
-                className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50"
-              >
-                Edit
-              </button>
-            ) : null}
-            {flashBusy ? <span className="text-xs text-[#6B7280]">Reading your rules…</span> : null}
-          </div>
-
-          {flashApplied && !flashEditing ? (
-            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-[#374151]">
-              <span className="block font-semibold text-[#111827]">Applied</span>
-              <span className="mt-1 block">{flashApplied.prompt}</span>
-              <span className="mt-1 block text-[#6B7280]">{flashApplied.summary}</span>
-            </div>
-          ) : null}
-
-          {flashClarify ? (
-            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              {flashClarify}
-            </div>
-          ) : null}
-
-          {flashPending ? (
-            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm">
-              <span className="block font-medium text-[#111827]">Here’s what I understood:</span>
-              <span className="mt-1 block text-[#374151]">{flashPending.summary}</span>
-              <div className="mt-2 flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleFlashApply}
-                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
-                >
-                  Yes, apply
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFlashPending(null)}
-                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-[#374151] hover:bg-gray-50"
-                >
-                  No, I’ll rewrite
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </div>
+        <p className="mt-4 rounded-lg border border-sky-100 bg-sky-50 px-4 py-3 text-xs text-[#475569]">
+          Configure your Amazef listing behavior manually below.
+        </p>
 
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <label className="block text-sm sm:col-span-2">
@@ -920,6 +519,97 @@ export function AmazefAutoListingSettingsModal({
               className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
             />
           </label>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-orange-200 bg-orange-50/60 p-4">
+          <label className="flex items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
+              checked={form.bogoEnabled}
+              onChange={(event) => updateField("bogoEnabled", event.target.checked)}
+            />
+            <span>
+              <span className="font-medium text-[#111827]">Enable BOGO</span>
+              <span className="mt-1 block text-xs text-[#6B7280]">
+                Optional. Turn on only if you want Buy One Get One on eligible items.
+              </span>
+            </span>
+          </label>
+          {form.bogoEnabled ? (
+            <label className="mt-3 block text-sm">
+              <span className="font-medium text-[#111827]">Apply BOGO when profit % is at least</span>
+              <input
+                type="number"
+                min={0}
+                max={95}
+                step={1}
+                value={form.bogoMinProfit}
+                onChange={(event) => updateField("bogoMinProfit", Number(event.target.value))}
+                className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+              />
+            </label>
+          ) : null}
+        </div>
+
+        <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50/60 p-4">
+          <label className="flex items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
+              checked={form.flashSaleEnabled}
+              onChange={(event) => updateField("flashSaleEnabled", event.target.checked)}
+            />
+            <span>
+              <span className="font-medium text-[#111827]">Enable flash sale</span>
+              <span className="mt-1 block text-xs text-[#6B7280]">
+                Optional. Keep this off if you do not want flash sale.
+              </span>
+            </span>
+          </label>
+          {form.flashSaleEnabled ? (
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="block text-sm">
+                <span className="font-medium text-[#111827]">Flash-sale discount %</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={90}
+                  step={1}
+                  value={form.flashSaleDiscountPercent}
+                  onChange={(event) =>
+                    updateField("flashSaleDiscountPercent", Number(event.target.value))
+                  }
+                  className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                />
+              </label>
+              <label className="block text-sm">
+                <span className="font-medium text-[#111827]">Apply when profit % is at least</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={95}
+                  step={1}
+                  value={form.flashSaleMinProfit}
+                  onChange={(event) => updateField("flashSaleMinProfit", Number(event.target.value))}
+                  className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                />
+              </label>
+              <label className="block text-sm sm:col-span-2">
+                <span className="font-medium text-[#111827]">Flash-sale mode</span>
+                <select
+                  value={form.flashSaleKeepPrice ? "keep" : "real"}
+                  onChange={(event) =>
+                    updateField("flashSaleKeepPrice", event.target.value === "keep")
+                  }
+                  className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                >
+                  <option value="keep">Keep real price, show discount only</option>
+                  <option value="real">Apply real discounted price</option>
+                </select>
+              </label>
+            </div>
+          ) : null}
         </div>
 
         <div className="mt-6 rounded-lg border border-emerald-100 bg-emerald-50/60 px-4 py-3">
