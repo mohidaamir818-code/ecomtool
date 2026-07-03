@@ -499,17 +499,35 @@ function enforceEbayDescriptionLimit(html: string): string {
     return html;
   }
 
-  const imageBlockMatch = html.match(/\s*<div[^>]*>\s*(?:<img\b[^>]*>\s*)+<\/div>\s*$/i);
+  const imageBlockMatch = html.match(/\s*<div[^>]*>\s*((?:<img\b[^>]*>\s*)+)<\/div>\s*$/i);
   if (imageBlockMatch) {
-    const imageBlock = imageBlockMatch[0];
-    const room = EBAY_DESCRIPTION_MAX_LENGTH - imageBlock.length - 3; // 3 for the ellipsis
+    const fullImageBlock = imageBlockMatch[0];
+    const imageTags = [...imageBlockMatch[1].matchAll(/<img\b[^>]*>/gi)].map((match) => match[0]);
+    const divOpen = fullImageBlock.match(/^(\s*<div[^>]*>\s*)/i)?.[1] ?? '<div style="margin-top:20px">\n';
+    const divClose = "\n</div>";
+    const textPart = html.slice(0, html.length - fullImageBlock.length);
+
+    const room = EBAY_DESCRIPTION_MAX_LENGTH - fullImageBlock.length - 3;
     if (room > 0) {
-      let textPart = html.slice(0, html.length - imageBlock.length).slice(0, room);
-      const lastTagClose = textPart.lastIndexOf(">");
+      let trimmedText = textPart.slice(0, room);
+      const lastTagClose = trimmedText.lastIndexOf(">");
       if (lastTagClose > 0) {
-        textPart = textPart.slice(0, lastTagClose + 1);
+        trimmedText = trimmedText.slice(0, lastTagClose + 1);
       }
-      return `${textPart}...${imageBlock}`;
+      return `${trimmedText}...${fullImageBlock}`;
+    }
+
+    const fallbackText = "<p>See product images below.</p>";
+    let budget = EBAY_DESCRIPTION_MAX_LENGTH - fallbackText.length - divOpen.length - divClose.length;
+    const keptImages: string[] = [];
+    for (const tag of imageTags) {
+      const nextLength = keptImages.join("\n").length + (keptImages.length > 0 ? 1 : 0) + tag.length;
+      if (nextLength > budget) break;
+      keptImages.push(tag);
+    }
+
+    if (keptImages.length > 0) {
+      return `${fallbackText}${divOpen}${keptImages.join("\n")}${divClose}`;
     }
   }
 

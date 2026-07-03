@@ -159,6 +159,11 @@ export function proxyImageUrl(originalUrl: string, appOrigin = ""): string {
   return `${appOrigin.replace(/\/$/, "")}${path}`;
 }
 
+function descriptionImageSrc(url: string, appOrigin: string): string {
+  if (/^https:\/\//i.test(url.trim())) return url.trim();
+  return proxyImageUrl(url, appOrigin);
+}
+
 export function getSelectedDescriptionPhotos(
   descriptionPhotos: ListingPhotoDraft[] | undefined,
 ): string[] {
@@ -178,7 +183,7 @@ export function buildDescriptionHtmlWithImages(
   const imagesHtml = urls
     .map(
       (url) =>
-        `<img src="${proxyImageUrl(url, appOrigin)}" alt="" style="max-width:100%;margin-bottom:10px;display:block" />`,
+        `<img src="${descriptionImageSrc(url, appOrigin)}" alt="" style="max-width:100%;margin-bottom:10px;display:block" />`,
     )
     .join("\n");
 

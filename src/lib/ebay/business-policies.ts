@@ -21,6 +21,54 @@ interface RawPolicyRecord {
   returnPolicyId?: string;
   name?: string;
   description?: string;
+  handlingTime?: { value?: number; unit?: string };
+  shippingOptions?: Array<{
+    optionType?: string;
+    shippingServices?: Array<{
+      shippingCarrierCode?: string;
+      shippingServiceCode?: string;
+      freeShipping?: boolean;
+      minEstimatedDeliveryTime?: { value?: number; unit?: string };
+      maxEstimatedDeliveryTime?: { value?: number; unit?: string };
+    }>;
+  }>;
+}
+
+function buildFulfillmentPolicyDescription(raw: RawPolicyRecord): string | undefined {
+  const parts: string[] = [];
+  if (raw.description?.trim()) parts.push(raw.description.trim());
+
+  const handling = raw.handlingTime;
+  if (handling?.value != null && Number.isFinite(handling.value)) {
+    const unit = (handling.unit ?? "DAY").toLowerCase();
+    parts.push(`handling ${handling.value} ${unit}`);
+  }
+
+  for (const option of raw.shippingOptions ?? []) {
+    for (const service of option.shippingServices ?? []) {
+      const serviceParts: string[] = [];
+      if (service.shippingCarrierCode) serviceParts.push(service.shippingCarrierCode);
+      if (service.shippingServiceCode) {
+        serviceParts.push(service.shippingServiceCode.replace(/_/g, " "));
+      }
+
+      const minDel = service.minEstimatedDeliveryTime;
+      const maxDel = service.maxEstimatedDeliveryTime;
+      if (minDel?.value != null && maxDel?.value != null) {
+        const unit = (maxDel.unit ?? "DAY").toLowerCase();
+        serviceParts.push(`${minDel.value}-${maxDel.value} ${unit}`);
+      } else if (maxDel?.value != null) {
+        const unit = (maxDel.unit ?? "DAY").toLowerCase();
+        serviceParts.push(`${maxDel.value} ${unit}`);
+      }
+
+      if (service.freeShipping) serviceParts.push("free shipping");
+      if (serviceParts.length > 0) parts.push(serviceParts.join(" "));
+    }
+  }
+
+  const combined = parts.join(" | ").trim();
+  return combined.length > 0 ? combined : undefined;
 }
 
 interface PolicyCacheEntry {
@@ -77,10 +125,13 @@ function mapPolicyOption(type: PolicyType, raw: RawPolicyRecord): EbayPolicyOpti
 
   if (!policyId || !raw.name) return null;
 
+  const description =
+    type === "fulfillment_policy" ? buildFulfillmentPolicyDescription(raw) : raw.description?.trim();
+
   return {
     policyId,
     name: raw.name,
-    ...(raw.description ? { description: raw.description } : {}),
+    ...(description ? { description } : {}),
   };
 }
 

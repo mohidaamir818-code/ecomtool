@@ -275,6 +275,7 @@ export async function runEbayAutoListPipeline(
     fulfillmentPolicy = selectFulfillmentPolicyForAliExpress(
       policies.fulfillment,
       aliExpressShipping?.maxDays ?? null,
+      aliExpressShipping?.minDays ?? null,
     );
 
     if (!fulfillmentPolicy && aliExpressShipping) {
