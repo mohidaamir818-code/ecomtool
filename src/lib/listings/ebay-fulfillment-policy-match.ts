@@ -79,6 +79,42 @@ function parseCalendarDateRange(
     },
     {
       regex: new RegExp(
+        `\\b(\\d{1,2})\\s*(?:to|-|–|~)\\s*(\\d{1,2})\\s+(${MONTH_PATTERN})\\b`,
+        "i",
+      ),
+      resolve: (match) => {
+        const dayA = Number(match[1]);
+        const dayB = Number(match[2]);
+        const month = parseMonthName(match[3]);
+        if (month == null) return null;
+        const startDate = resolveDeliveryDate(month, dayA, referenceDate);
+        const endDate = resolveDeliveryDate(month, dayB, referenceDate);
+        return {
+          minDays: daysUntil(referenceDate, startDate),
+          maxDays: daysUntil(referenceDate, endDate),
+        };
+      },
+    },
+    {
+      regex: new RegExp(
+        `\\b(\\d{1,2})-(\\d{1,2})\\s+(${MONTH_PATTERN})\\b`,
+        "i",
+      ),
+      resolve: (match) => {
+        const dayA = Number(match[1]);
+        const dayB = Number(match[2]);
+        const month = parseMonthName(match[3]);
+        if (month == null) return null;
+        const startDate = resolveDeliveryDate(month, dayA, referenceDate);
+        const endDate = resolveDeliveryDate(month, dayB, referenceDate);
+        return {
+          minDays: daysUntil(referenceDate, startDate),
+          maxDays: daysUntil(referenceDate, endDate),
+        };
+      },
+    },
+    {
+      regex: new RegExp(
         `\\b(\\d{1,2})\\s+(${MONTH_PATTERN})\\s*(?:-|–|~|to)\\s*(\\d{1,2})\\s+(${MONTH_PATTERN})\\b`,
         "i",
       ),
@@ -165,30 +201,64 @@ export function parseDeliveryDaysFromText(
   text: string,
   referenceDate = new Date(),
 ): ParsedDeliveryDays | null {
-  return parseExplicitDayCount(text) ?? parseCalendarDateRange(text, referenceDate);
+  return parseCalendarDateRange(text, referenceDate) ?? parseExplicitDayCount(text);
 }
 
-function policyDeliveryText(policy: EbayPolicyOption): string {
-  return `${policy.name} ${policy.description ?? ""}`.replace(/\s+/g, " ").trim();
+type ParsedPolicy = {
+  policy: EbayPolicyOption;
+  days: ParsedDeliveryDays;
+  fromPolicyName: boolean;
+};
+
+function parsePolicyDeliveryDays(
+  policy: EbayPolicyOption,
+  referenceDate = new Date(),
+): ParsedPolicy | null {
+  const name = policy.name.replace(/\s+/g, " ").trim();
+  const description = (policy.description ?? "").replace(/\s+/g, " ").trim();
+
+  const nameCalendar = parseCalendarDateRange(name, referenceDate);
+  if (nameCalendar) {
+    return { policy, days: nameCalendar, fromPolicyName: true };
+  }
+
+  const nameDays = parseExplicitDayCount(name);
+  if (nameDays) {
+    return { policy, days: nameDays, fromPolicyName: true };
+  }
+
+  const descCalendar = parseCalendarDateRange(description, referenceDate);
+  if (descCalendar) {
+    return { policy, days: descCalendar, fromPolicyName: false };
+  }
+
+  const descDays = parseExplicitDayCount(description);
+  if (descDays) {
+    return { policy, days: descDays, fromPolicyName: false };
+  }
+
+  return null;
 }
 
 function scorePolicyMatch(
   policyDays: ParsedDeliveryDays,
   aliMin: number,
   aliMax: number,
+  fromPolicyName: boolean,
 ): number {
-  const bufferMax = aliMax + 2;
-  const underAliMax = policyDays.maxDays < aliMax ? (aliMax - policyDays.maxDays) * 25 : 0;
-  const overBuffer = policyDays.maxDays > bufferMax ? (policyDays.maxDays - bufferMax) * 4 : 0;
-  const minGap = Math.abs(policyDays.minDays - aliMin);
-  const maxGap = Math.abs(policyDays.maxDays - bufferMax);
-  return underAliMax + overBuffer + minGap + maxGap;
+  const idealMax = aliMax + 2;
+  const underAliMax = policyDays.maxDays < aliMax ? (aliMax - policyDays.maxDays) * 30 : 0;
+  const overIdeal = policyDays.maxDays > idealMax ? (policyDays.maxDays - idealMax) * 8 : 0;
+  const minGap = Math.abs(policyDays.minDays - aliMin) * 0.5;
+  const maxGap = Math.abs(policyDays.maxDays - idealMax);
+  const nameBonus = fromPolicyName ? 0 : 50;
+  return underAliMax + overIdeal + minGap + maxGap + nameBonus;
 }
 
 /**
  * Pick the fulfillment policy whose delivery window best matches AliExpress.
- * Reads policy name + description (handling time, shipping services, etc.) and
- * prefers a policy within ~1–2 days above the AliExpress max delivery time.
+ * Policy names like "8 to 15 Jul" are preferred over carrier transit snippets
+ * like "3-5 day" buried in the policy description.
  */
 export function selectFulfillmentPolicyForAliExpress(
   policies: EbayPolicyOption[],
@@ -201,22 +271,24 @@ export function selectFulfillmentPolicyForAliExpress(
   const aliMax = aliExpressMaxDays ?? aliExpressMinDays;
   if (aliMin == null || aliMax == null) return policies[0];
 
+  const referenceDate = new Date();
   const parsed = policies
-    .map((policy) => {
-      const days = parseDeliveryDaysFromText(policyDeliveryText(policy));
-      if (!days) return null;
-      return { policy, days };
-    })
-    .filter((entry): entry is { policy: EbayPolicyOption; days: ParsedDeliveryDays } => entry !== null);
+    .map((policy) => parsePolicyDeliveryDays(policy, referenceDate))
+    .filter((entry): entry is ParsedPolicy => entry !== null);
 
   if (parsed.length === 0) return null;
 
   const ranked = parsed
     .map((entry) => ({
       ...entry,
-      score: scorePolicyMatch(entry.days, aliMin, aliMax),
+      score: scorePolicyMatch(entry.days, aliMin, aliMax, entry.fromPolicyName),
     }))
-    .sort((a, b) => a.score - b.score || a.days.maxDays - b.days.maxDays);
+    .sort(
+      (a, b) =>
+        a.score - b.score ||
+        a.days.maxDays - b.days.maxDays ||
+        a.days.minDays - b.days.minDays,
+    );
 
   return ranked[0]?.policy ?? null;
 }
