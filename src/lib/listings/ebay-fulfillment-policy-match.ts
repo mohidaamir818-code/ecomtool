@@ -287,29 +287,42 @@ function extractPolicyDeliveryWindow(
   return null;
 }
 
-function scorePolicyEnd(policyMaxDays: number, aliMax: number): number {
-  const targetLow = aliMax + ALI_END_BUFFER_MIN_DAYS;
-  const targetHigh = aliMax + ALI_END_BUFFER_MAX_DAYS;
+function scorePolicyWindow(
+  policyDays: ParsedDeliveryDays,
+  aliMin: number,
+  aliMax: number,
+): number {
+  const startLow = aliMin;
+  const startHigh = aliMin + ALI_END_BUFFER_MAX_DAYS;
+  const endLow = aliMax + ALI_END_BUFFER_MIN_DAYS;
+  const endHigh = aliMax + ALI_END_BUFFER_MAX_DAYS;
 
-  if (policyMaxDays >= targetLow && policyMaxDays <= targetHigh) {
-    return policyMaxDays - targetLow;
+  let score = 0;
+
+  if (policyDays.minDays >= startLow && policyDays.minDays <= startHigh) {
+    score += policyDays.minDays - startLow;
+  } else if (policyDays.minDays < startLow) {
+    score += (startLow - policyDays.minDays) * 15 + 50;
+  } else {
+    score += (policyDays.minDays - startHigh) * 10 + 20;
   }
 
-  if (policyMaxDays < aliMax) {
-    return (aliMax - policyMaxDays) * 8 + 40;
+  if (policyDays.maxDays >= endLow && policyDays.maxDays <= endHigh) {
+    score += policyDays.maxDays - endLow;
+  } else if (policyDays.maxDays < aliMax) {
+    score += (aliMax - policyDays.maxDays) * 10 + 30;
+  } else if (policyDays.maxDays > endHigh) {
+    score += (policyDays.maxDays - endHigh) * 12 + 20;
+  } else {
+    score += endLow - policyDays.maxDays + 10;
   }
 
-  if (policyMaxDays > targetHigh) {
-    return (policyMaxDays - targetHigh) * 12 + 20;
-  }
-
-  // Between aliMax and targetLow: acceptable but prefer +1/+2 buffer.
-  return targetLow - policyMaxDays + 10;
+  return score;
 }
 
 /**
  * Pick the fulfillment policy using only its internal delivery calculation.
- * Target end = AliExpress max + 1 to 2 days (not more).
+ * Start ≈ Ali start (+0–2 days). End ≈ Ali end (+1–2 days).
  */
 export function selectFulfillmentPolicyForAliExpress(
   policies: EbayPolicyOption[],
@@ -318,8 +331,9 @@ export function selectFulfillmentPolicyForAliExpress(
 ): EbayPolicyOption | null {
   if (policies.length === 0) return null;
 
+  const aliMin = aliExpressMinDays ?? aliExpressMaxDays;
   const aliMax = aliExpressMaxDays ?? aliExpressMinDays;
-  if (aliMax == null) return policies[0];
+  if (aliMin == null || aliMax == null) return policies[0];
 
   const referenceDate = new Date();
   const ranked: Array<{ policy: EbayPolicyOption; days: ParsedDeliveryDays; score: number }> = [];
@@ -330,7 +344,7 @@ export function selectFulfillmentPolicyForAliExpress(
     ranked.push({
       policy,
       days,
-      score: scorePolicyEnd(days.maxDays, aliMax),
+      score: scorePolicyWindow(days, aliMin, aliMax),
     });
   }
 
@@ -339,8 +353,8 @@ export function selectFulfillmentPolicyForAliExpress(
   ranked.sort(
     (a, b) =>
       a.score - b.score ||
-      a.days.maxDays - b.days.maxDays ||
-      a.days.minDays - b.days.minDays,
+      Math.abs(a.days.minDays - aliMin) - Math.abs(b.days.minDays - aliMin) ||
+      Math.abs(a.days.maxDays - aliMax) - Math.abs(b.days.maxDays - aliMax),
   );
 
   return ranked[0].policy;
