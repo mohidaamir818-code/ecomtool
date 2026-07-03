@@ -17,7 +17,7 @@ import { normalizeEbayAutoListingSettings } from "@/features/listings/lib/ebay-a
 import { mergeInternalSkusIntoDraft } from "@/lib/listings/internal-sku";
 import { ensureInternalSkus } from "@/lib/listings/internal-sku-service";
 import { fetchAliExpressShippingDays } from "@/lib/listings/aliexpress-shipping-days";
-import { selectFulfillmentPolicyForAliExpress } from "@/lib/listings/ebay-fulfillment-policy-match";
+import { selectFulfillmentPolicyWithAi } from "@/lib/listings/select-fulfillment-policy-ai";
 import { saveListedProduct } from "@/lib/listings/listed-products-service";
 import { fetchListingProductSource } from "@/lib/listings/product-source";
 import {
@@ -272,11 +272,12 @@ export async function runEbayAutoListPipeline(
       throw new Error("Selected shipping policy was not found on your eBay account.");
     }
   } else {
-    fulfillmentPolicy = selectFulfillmentPolicyForAliExpress(
-      policies.fulfillment,
-      aliExpressShipping?.maxDays ?? null,
-      aliExpressShipping?.minDays ?? null,
-    );
+    fulfillmentPolicy = await selectFulfillmentPolicyWithAi({
+      aliExpressLabel: aliExpressShipping?.label ?? draft.product.shippingDaysLabel ?? null,
+      aliExpressMinDays: aliExpressShipping?.minDays ?? null,
+      aliExpressMaxDays: aliExpressShipping?.maxDays ?? null,
+      policies: policies.fulfillment,
+    });
 
     if (!fulfillmentPolicy && aliExpressShipping) {
       throw new EbayAutoListNeedsFulfillmentPolicyError(
