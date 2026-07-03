@@ -23,6 +23,9 @@ const MONTH_INDEX: Record<string, number> = {
 const MONTH_PATTERN =
   "Jan(?:\\.?(?:uary)?)?|Feb(?:\\.?(?:ruary)?)?|Mar(?:\\.?(?:ch)?)?|Apr(?:\\.?(?:il)?)?|May\\.?|Jun(?:\\.?(?:e)?)?|Jul(?:\\.?(?:y)?)?|Aug(?:\\.?(?:ust)?)?|Sep(?:\\.?(?:t(?:ember)?)?)?|Oct(?:\\.?(?:ober)?)?|Nov(?:\\.?(?:ember)?)?|Dec(?:\\.?(?:ember)?)?";
 
+const ALI_END_BUFFER_MIN_DAYS = 1;
+const ALI_END_BUFFER_MAX_DAYS = 2;
+
 function parseMonthName(value: string): number | null {
   const key = value.trim().slice(0, 3).toLowerCase();
   return MONTH_INDEX[key] ?? null;
@@ -256,43 +259,57 @@ export function parseDeliveryDaysFromText(
   return parseExplicitDayCount(text) ?? parseHandlingPlusShippingDays(text);
 }
 
-function extractPolicyDeliveryWindows(
+/** Policy name is ignored — only internal handling/shipping/calendar details. */
+function extractPolicyDeliveryWindow(
   policy: EbayPolicyOption,
   referenceDate: Date,
-): ParsedDeliveryDays[] {
-  const name = policy.name.replace(/\s+/g, " ").trim();
+): ParsedDeliveryDays | null {
   const description = (policy.description ?? "").replace(/\s+/g, " ").trim();
-  const windows: ParsedDeliveryDays[] = [];
-
-  const nameCalendars = parseAllCalendarDateRanges(name, referenceDate);
-  if (nameCalendars.length > 0) {
-    return nameCalendars;
-  }
-
-  const nameDays = parseExplicitDayCount(name);
-  if (nameDays) windows.push(nameDays);
-
-  const descCalendars = parseAllCalendarDateRanges(description, referenceDate);
-  windows.push(...descCalendars);
+  if (!description) return null;
 
   const handlingShipping = parseHandlingPlusShippingDays(description);
-  if (handlingShipping) windows.push(handlingShipping);
+  const calendars = parseAllCalendarDateRanges(description, referenceDate);
 
-  const descDays = parseExplicitDayCount(description);
-  if (descDays) windows.push(descDays);
+  if (handlingShipping && calendars.length > 0) {
+    const calendarMax = Math.max(...calendars.map((entry) => entry.maxDays));
+    if (calendarMax > handlingShipping.maxDays) {
+      const bestCalendar = calendars.sort((a, b) => a.maxDays - b.maxDays)[0];
+      return bestCalendar;
+    }
+    return handlingShipping;
+  }
 
-  const seen = new Set<string>();
-  return windows.filter((window) => {
-    const key = `${window.minDays}-${window.maxDays}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  if (handlingShipping) return handlingShipping;
+  if (calendars.length > 0) {
+    return calendars.sort((a, b) => a.maxDays - b.maxDays)[0];
+  }
+
+  return null;
+}
+
+function scorePolicyEnd(policyMaxDays: number, aliMax: number): number {
+  const targetLow = aliMax + ALI_END_BUFFER_MIN_DAYS;
+  const targetHigh = aliMax + ALI_END_BUFFER_MAX_DAYS;
+
+  if (policyMaxDays >= targetLow && policyMaxDays <= targetHigh) {
+    return policyMaxDays - targetLow;
+  }
+
+  if (policyMaxDays < aliMax) {
+    return (aliMax - policyMaxDays) * 8 + 40;
+  }
+
+  if (policyMaxDays > targetHigh) {
+    return (policyMaxDays - targetHigh) * 12 + 20;
+  }
+
+  // Between aliMax and targetLow: acceptable but prefer +1/+2 buffer.
+  return targetLow - policyMaxDays + 10;
 }
 
 /**
- * Pick the fulfillment policy whose delivery end is on or after AliExpress,
- * choosing the tightest fit (smallest end date / max days still >= Ali max).
+ * Pick the fulfillment policy using only its internal delivery calculation.
+ * Target end = AliExpress max + 1 to 2 days (not more).
  */
 export function selectFulfillmentPolicyForAliExpress(
   policies: EbayPolicyOption[],
@@ -301,42 +318,30 @@ export function selectFulfillmentPolicyForAliExpress(
 ): EbayPolicyOption | null {
   if (policies.length === 0) return null;
 
-  const aliMin = aliExpressMinDays ?? aliExpressMaxDays;
   const aliMax = aliExpressMaxDays ?? aliExpressMinDays;
-  if (aliMin == null || aliMax == null) return policies[0];
+  if (aliMax == null) return policies[0];
 
   const referenceDate = new Date();
-  const qualifying: Array<{ policy: EbayPolicyOption; days: ParsedDeliveryDays }> = [];
-  const allParsed: Array<{ policy: EbayPolicyOption; days: ParsedDeliveryDays }> = [];
+  const ranked: Array<{ policy: EbayPolicyOption; days: ParsedDeliveryDays; score: number }> = [];
 
   for (const policy of policies) {
-    const windows = extractPolicyDeliveryWindows(policy, referenceDate);
-    for (const days of windows) {
-      allParsed.push({ policy, days });
-      if (days.maxDays >= aliMax) {
-        qualifying.push({ policy, days });
-      }
-    }
+    const days = extractPolicyDeliveryWindow(policy, referenceDate);
+    if (!days) continue;
+    ranked.push({
+      policy,
+      days,
+      score: scorePolicyEnd(days.maxDays, aliMax),
+    });
   }
 
-  if (qualifying.length > 0) {
-    qualifying.sort(
-      (a, b) =>
-        a.days.maxDays - b.days.maxDays ||
-        a.days.minDays - b.days.minDays ||
-        a.policy.name.localeCompare(b.policy.name),
-    );
-    return qualifying[0].policy;
-  }
+  if (ranked.length === 0) return null;
 
-  if (allParsed.length > 0) {
-    allParsed.sort(
-      (a, b) =>
-        b.days.maxDays - a.days.maxDays ||
-        b.days.minDays - a.days.minDays,
-    );
-    return allParsed[0].policy;
-  }
+  ranked.sort(
+    (a, b) =>
+      a.score - b.score ||
+      a.days.maxDays - b.days.maxDays ||
+      a.days.minDays - b.days.minDays,
+  );
 
-  return null;
+  return ranked[0].policy;
 }
