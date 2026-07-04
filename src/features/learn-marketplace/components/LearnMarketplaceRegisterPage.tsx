@@ -1,7 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
+
+const PRACTICE_EMAIL_KEY = "learn_marketplace_practice_email";
 
 type AccountType = "private" | "business";
 
@@ -32,6 +35,7 @@ function MarketplaceLogo() {
 }
 
 export function LearnMarketplaceRegisterPage() {
+  const router = useRouter();
   const [accountType, setAccountType] = useState<AccountType>("business");
   const [showPassword, setShowPassword] = useState(false);
 
@@ -106,6 +110,14 @@ export function LearnMarketplaceRegisterPage() {
             className="mt-6 space-y-4"
             onSubmit={(event) => {
               event.preventDefault();
+              const formData = new FormData(event.currentTarget);
+              const email = String(formData.get("email") ?? "").trim();
+              if (email) {
+                sessionStorage.setItem(PRACTICE_EMAIL_KEY, email);
+              } else {
+                sessionStorage.removeItem(PRACTICE_EMAIL_KEY);
+              }
+              router.push("/dashboard/learn-ebay/register/verify");
             }}
           >
             {accountType === "business" ? (
@@ -131,6 +143,7 @@ export function LearnMarketplaceRegisterPage() {
 
             <input
               type="email"
+              name="email"
               placeholder={accountType === "business" ? "Business email" : "Email"}
               className="w-full rounded-xl bg-[#f7f7f7] px-4 py-3.5 text-sm outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
             />
