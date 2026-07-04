@@ -10,22 +10,85 @@ const liveStreams = [
 ];
 
 const topDeals = [
-  { label: "Up to 50% off garden furniture", emoji: "🪑" },
-  { label: "Shop football season", emoji: "⚽" },
-  { label: "Live shopping", emoji: "📺" },
-  { label: "Shop local, sell local", emoji: "📦" },
-  { label: "Authenticity Guarantee", emoji: "👟" },
-  { label: "Shop deals", emoji: "🎮" },
-  { label: "Sell for free", emoji: "👕" },
+  {
+    label: "Up to 50% off garden furniture",
+    image:
+      "https://images.unsplash.com/photo-1592078615290-033ee584951f?auto=format&fit=crop&w=320&h=320&q=80",
+  },
+  {
+    label: "Shop football season",
+    image:
+      "https://images.unsplash.com/photo-1511512578047-dfb367046420?auto=format&fit=crop&w=320&h=320&q=80",
+  },
+  {
+    label: "Live shopping",
+    liveBadge: true,
+  },
+  {
+    label: "Shop local, sell local",
+    image:
+      "https://images.unsplash.com/photo-1586023492125-27b2c045efd7?auto=format&fit=crop&w=320&h=320&q=80",
+  },
+  {
+    label: "Authenticity Guarantee",
+    image:
+      "https://images.unsplash.com/photo-1549298916-b41d501d3772?auto=format&fit=crop&w=320&h=320&q=80",
+  },
+  {
+    label: "Shop deals",
+    image:
+      "https://images.unsplash.com/photo-1578303512597-81e6ccdfdb31?auto=format&fit=crop&w=320&h=320&q=80",
+  },
+  {
+    label: "Sell for free",
+    image:
+      "https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=320&h=320&q=80",
+  },
 ];
 
 const featuredDeals = [
-  { title: "Premium appliance bundle with free postage", price: "£209.00", badge: "20% off coupon available", tone: "bg-slate-200" },
-  { title: "Household cleaning liquid pack", price: "£43.49", badge: null, tone: "bg-sky-100" },
-  { title: "Men's tailored trousers", price: "£29.99", badge: null, tone: "bg-gray-200" },
-  { title: "Portable power station", price: "£189.00", badge: "10% off coupon available", tone: "bg-zinc-300" },
-  { title: "Athletic shorts collection", price: "£18.50", badge: null, tone: "bg-stone-200" },
-  { title: "Running shoes - multiple sizes", price: "£54.00", badge: null, tone: "bg-neutral-300" },
+  {
+    title: "Roborock Qrevo S5V Robot Vacuum and Mop, FlexiArm Edge Mopping",
+    price: "£289.00",
+    badge: "20% off coupon available",
+    image:
+      "https://images.unsplash.com/photo-1558317374-074cb98f546a?auto=format&fit=crop&w=480&h=480&q=80",
+  },
+  {
+    title: "Evergreen 4-in-1 Complete 4-in-1 Lawn Feed Weed and Moss - 400 m2",
+    price: "£47.49",
+    badge: null,
+    image:
+      "https://images.unsplash.com/photo-1416879595882-3373a0480b5b?auto=format&fit=crop&w=480&h=480&q=80",
+  },
+  {
+    title: "Mens Cargo Combat Work Trouser Multi Pocket Stretch Workwear",
+    price: "£14.99",
+    badge: null,
+    image:
+      "https://images.unsplash.com/photo-1473966968600-fa801b279a20?auto=format&fit=crop&w=480&h=480&q=80",
+  },
+  {
+    title: "135Ah 12V Deep Cycle Leisure Battery for Motorhome Caravan",
+    price: "£74.95",
+    badge: "10% off coupon available",
+    image:
+      "https://images.unsplash.com/photo-1591486787845-2b9b2597a985?auto=format&fit=crop&w=480&h=480&q=80",
+  },
+  {
+    title: "Lacoste Men's Cargo Shorts - Black",
+    price: "£25.99",
+    badge: null,
+    image:
+      "https://images.unsplash.com/photo-1591195853828-11db59a44f6b?auto=format&fit=crop&w=480&h=480&q=80",
+  },
+  {
+    title: "Mountain Warehouse Path Waterproof Mens Walking Shoes",
+    price: "£25.99",
+    badge: null,
+    image:
+      "https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=480&h=480&q=80",
+  },
 ];
 
 const navCategories = [
@@ -172,15 +235,32 @@ export function LearnMarketplacePage() {
         </section>
 
         <section>
-          <h2 className="mb-5 text-2xl font-bold">This week&apos;s top deals</h2>
-          <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7">
+          <h2 className="mb-4 text-[1.75rem] font-bold tracking-tight">This week&apos;s top deals</h2>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7">
             {topDeals.map((deal) => (
-              <div key={deal.label} className="text-center">
-                <div className="mx-auto mb-3 flex h-28 w-28 items-center justify-center rounded-full bg-white text-4xl shadow-sm">
-                  {deal.emoji}
+              <button
+                key={deal.label}
+                type="button"
+                className="group text-left"
+              >
+                <div className="mb-2 aspect-square overflow-hidden rounded-xl bg-[#ececec] p-2">
+                  {"liveBadge" in deal && deal.liveBadge ? (
+                    <div className="flex h-full w-full flex-col items-center justify-center rounded-lg bg-[#3ea44c] text-white">
+                      <span className="text-3xl">📡</span>
+                      <span className="mt-1 text-sm font-bold tracking-wide">LIVE</span>
+                    </div>
+                  ) : (
+                    <img
+                      src={deal.image}
+                      alt=""
+                      className="h-full w-full rounded-lg object-contain transition group-hover:scale-[1.02]"
+                    />
+                  )}
                 </div>
-                <p className="text-sm font-medium leading-snug text-[#191919]">{deal.label}</p>
-              </div>
+                <p className="text-sm leading-snug text-[#191919] group-hover:underline">
+                  {deal.label}
+                </p>
+              </button>
             ))}
           </div>
         </section>
@@ -190,22 +270,31 @@ export function LearnMarketplacePage() {
           <h2 className="text-2xl font-bold">Featured Deals</h2>
           <p className="mb-5 text-sm text-[#555]">All with free postage</p>
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             {featuredDeals.map((deal) => (
-              <div key={deal.title} className="overflow-hidden rounded-xl bg-white shadow-sm">
-                <div className={`relative h-44 ${deal.tone}`}>
-                  <button type="button" className="absolute right-3 top-3 rounded-full bg-white/90 p-2 text-sm">
+              <div key={deal.title} className="overflow-hidden rounded-lg bg-white">
+                <div className="relative aspect-square bg-white p-2">
+                  <img
+                    src={deal.image}
+                    alt=""
+                    className="h-full w-full object-contain"
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-white text-base text-[#555] shadow-sm"
+                    aria-label="Save item"
+                  >
                     ♡
                   </button>
                   {deal.badge ? (
-                    <span className="absolute bottom-0 left-0 right-0 bg-[#3665f3] px-2 py-1 text-center text-[11px] font-semibold text-white">
+                    <span className="absolute bottom-0 left-0 right-0 bg-[#3665f3] px-2 py-1.5 text-center text-[11px] font-semibold leading-tight text-white">
                       {deal.badge}
                     </span>
                   ) : null}
                 </div>
-                <div className="space-y-1 px-3 py-3">
-                  <p className="line-clamp-2 text-sm">{deal.title}</p>
-                  <p className="text-lg font-bold">{deal.price}</p>
+                <div className="space-y-1 px-2 pb-3 pt-2">
+                  <p className="line-clamp-2 text-sm leading-snug text-[#191919]">{deal.title}</p>
+                  <p className="text-base font-bold text-[#191919]">{deal.price}</p>
                 </div>
               </div>
             ))}
