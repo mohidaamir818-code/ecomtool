@@ -38,6 +38,8 @@ export function LearnMarketplaceRegisterPage() {
   const router = useRouter();
   const [accountType, setAccountType] = useState<AccountType>("business");
   const [showPassword, setShowPassword] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState("");
 
   return (
     <div className="flex min-h-full flex-col bg-white text-[#191919]">
@@ -108,16 +110,46 @@ export function LearnMarketplaceRegisterPage() {
 
           <form
             className="mt-6 space-y-4"
-            onSubmit={(event) => {
+            onSubmit={async (event) => {
               event.preventDefault();
+              setFormError("");
+
               const formData = new FormData(event.currentTarget);
-              const email = String(formData.get("email") ?? "").trim();
-              if (email) {
-                sessionStorage.setItem(PRACTICE_EMAIL_KEY, email);
-              } else {
-                sessionStorage.removeItem(PRACTICE_EMAIL_KEY);
+              const email = String(formData.get("email") ?? "").trim().toLowerCase();
+              const userId = sessionStorage.getItem("ecomtools_user_id");
+
+              if (!userId) {
+                setFormError("Please sign in to ecomtool before continuing.");
+                return;
               }
-              router.push("/dashboard/learn-ebay/register/verify");
+
+              if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                setFormError("Please enter a valid email address.");
+                return;
+              }
+
+              setIsSubmitting(true);
+
+              try {
+                const response = await fetch("/api/learn-marketplace/practice/send-otp", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ userId, email }),
+                });
+                const data = (await response.json()) as { error?: string };
+
+                if (!response.ok) {
+                  setFormError(data.error ?? "Failed to send verification code.");
+                  return;
+                }
+
+                sessionStorage.setItem(PRACTICE_EMAIL_KEY, email);
+                router.push("/dashboard/learn-ebay/register/verify");
+              } catch {
+                setFormError("Network error. Please try again.");
+              } finally {
+                setIsSubmitting(false);
+              }
             }}
           >
             {accountType === "business" ? (
@@ -230,11 +262,22 @@ export function LearnMarketplaceRegisterPage() {
               .
             </p>
 
+            {formError ? (
+              <p className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+                {formError}
+              </p>
+            ) : null}
+
             <button
               type="submit"
-              className="w-full rounded-full bg-[#767676] px-6 py-3.5 text-sm font-semibold text-white transition hover:bg-[#5c5c5c]"
+              disabled={isSubmitting}
+              className="w-full rounded-full bg-[#767676] px-6 py-3.5 text-sm font-semibold text-white transition hover:bg-[#5c5c5c] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {accountType === "business" ? "Create business account" : "Create account"}
+              {isSubmitting
+                ? "Sending code..."
+                : accountType === "business"
+                  ? "Create business account"
+                  : "Create account"}
             </button>
           </form>
 
