@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 function PracticeProductImage({
@@ -144,7 +145,16 @@ export function LearnMarketplacePage() {
       <div className="border-b border-gray-200 bg-white">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-3 px-4 py-2 text-xs text-[#555]">
           <div className="flex flex-wrap gap-4">
-            <span>Hello. Sign in or register</span>
+            <span>
+              Hello.{" "}
+              <Link href="/dashboard/learn-ebay" className="hover:underline">
+                Sign in
+              </Link>{" "}
+              or{" "}
+              <Link href="/dashboard/learn-ebay/register" className="hover:underline">
+                register
+              </Link>
+            </span>
             <span>Daily Deals</span>
             <span>Fashion</span>
             <span>Help & Contact</span>
