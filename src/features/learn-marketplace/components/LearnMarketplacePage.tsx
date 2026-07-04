@@ -147,7 +147,7 @@ export function LearnMarketplacePage() {
           <div className="flex flex-wrap gap-4">
             <span>
               Hello.{" "}
-              <Link href="/dashboard/learn-ebay" className="hover:underline">
+              <Link href="/dashboard/learn-ebay/sign-in" className="hover:underline">
                 Sign in
               </Link>{" "}
               or{" "}
