@@ -116,6 +116,7 @@ export function LearnMarketplaceVerifyEmailPage() {
           </button>
           <button
             type="button"
+            onClick={() => router.push("/dashboard/learn-ebay/register/phone")}
             className="flex-1 rounded-full bg-[#767676] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#5c5c5c]"
           >
             Verify
