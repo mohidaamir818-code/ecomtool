@@ -1,5 +1,35 @@
 "use client";
 
+import { useState } from "react";
+
+function PracticeProductImage({
+  src,
+  fallbackSeed,
+  alt,
+  className,
+}: {
+  src: string;
+  fallbackSeed: string;
+  alt: string;
+  className?: string;
+}) {
+  const fallback = `https://picsum.photos/seed/${fallbackSeed}/480/480`;
+  const [url, setUrl] = useState(src);
+
+  return (
+    <img
+      src={url}
+      alt={alt}
+      referrerPolicy="no-referrer"
+      loading="lazy"
+      onError={() => {
+        if (url !== fallback) setUrl(fallback);
+      }}
+      className={className}
+    />
+  );
+}
+
 const liveStreams = [
   { time: "Jul 4 3:00 AM", title: "Cardryx Collectibles", subtitle: "Pokémon Singles", host: "Pokémon - Rip & Ship", tone: "from-violet-900 to-purple-700" },
   { time: "Jul 4 5:00 AM", title: "Grab Your Bargains", subtitle: "Live deals", host: "General - Bargains", tone: "from-rose-900 to-pink-700" },
@@ -12,13 +42,13 @@ const liveStreams = [
 const topDeals = [
   {
     label: "Up to 50% off garden furniture",
-    image:
-      "https://images.unsplash.com/photo-1592078615290-033ee584951f?auto=format&fit=crop&w=320&h=320&q=80",
+    image: "https://picsum.photos/id/582/320/320",
+    seed: "garden-furniture",
   },
   {
     label: "Shop football season",
-    image:
-      "https://images.unsplash.com/photo-1511512578047-dfb367046420?auto=format&fit=crop&w=320&h=320&q=80",
+    image: "https://picsum.photos/id/367/320/320",
+    seed: "football-season",
   },
   {
     label: "Live shopping",
@@ -26,23 +56,23 @@ const topDeals = [
   },
   {
     label: "Shop local, sell local",
-    image:
-      "https://images.unsplash.com/photo-1586023492125-27b2c045efd7?auto=format&fit=crop&w=320&h=320&q=80",
+    image: "https://picsum.photos/id/291/320/320",
+    seed: "shop-local",
   },
   {
     label: "Authenticity Guarantee",
-    image:
-      "https://images.unsplash.com/photo-1549298916-b41d501d3772?auto=format&fit=crop&w=320&h=320&q=80",
+    image: "https://picsum.photos/id/488/320/320",
+    seed: "authenticity-shoe",
   },
   {
     label: "Shop deals",
-    image:
-      "https://images.unsplash.com/photo-1578303512597-81e6ccdfdb31?auto=format&fit=crop&w=320&h=320&q=80",
+    image: "https://picsum.photos/id/96/320/320",
+    seed: "shop-deals-tech",
   },
   {
     label: "Sell for free",
-    image:
-      "https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=320&h=320&q=80",
+    image: "https://picsum.photos/id/628/320/320",
+    seed: "sell-for-free",
   },
 ];
 
@@ -51,43 +81,43 @@ const featuredDeals = [
     title: "Roborock Qrevo S5V Robot Vacuum and Mop, FlexiArm Edge Mopping",
     price: "£289.00",
     badge: "20% off coupon available",
-    image:
-      "https://images.unsplash.com/photo-1558317374-074cb98f546a?auto=format&fit=crop&w=480&h=480&q=80",
+    image: "https://picsum.photos/id/449/480/480",
+    seed: "robot-vacuum",
   },
   {
     title: "Evergreen 4-in-1 Complete 4-in-1 Lawn Feed Weed and Moss - 400 m2",
     price: "£47.49",
     badge: null,
-    image:
-      "https://images.unsplash.com/photo-1416879595882-3373a0480b5b?auto=format&fit=crop&w=480&h=480&q=80",
+    image: "https://picsum.photos/id/119/480/480",
+    seed: "lawn-feed",
   },
   {
     title: "Mens Cargo Combat Work Trouser Multi Pocket Stretch Workwear",
     price: "£14.99",
     badge: null,
-    image:
-      "https://images.unsplash.com/photo-1473966968600-fa801b279a20?auto=format&fit=crop&w=480&h=480&q=80",
+    image: "https://picsum.photos/id/452/480/480",
+    seed: "cargo-trousers",
   },
   {
     title: "135Ah 12V Deep Cycle Leisure Battery for Motorhome Caravan",
     price: "£74.95",
     badge: "10% off coupon available",
-    image:
-      "https://images.unsplash.com/photo-1591486787845-2b9b2597a985?auto=format&fit=crop&w=480&h=480&q=80",
+    image: "https://picsum.photos/id/180/480/480",
+    seed: "leisure-battery",
   },
   {
     title: "Lacoste Men's Cargo Shorts - Black",
     price: "£25.99",
     badge: null,
-    image:
-      "https://images.unsplash.com/photo-1591195853828-11db59a44f6b?auto=format&fit=crop&w=480&h=480&q=80",
+    image: "https://picsum.photos/id/399/480/480",
+    seed: "cargo-shorts",
   },
   {
     title: "Mountain Warehouse Path Waterproof Mens Walking Shoes",
     price: "£25.99",
     badge: null,
-    image:
-      "https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=480&h=480&q=80",
+    image: "https://picsum.photos/id/482/480/480",
+    seed: "walking-shoes",
   },
 ];
 
@@ -250,9 +280,10 @@ export function LearnMarketplacePage() {
                       <span className="mt-1 text-sm font-bold tracking-wide">LIVE</span>
                     </div>
                   ) : (
-                    <img
-                      src={deal.image}
-                      alt=""
+                    <PracticeProductImage
+                      src={deal.image ?? ""}
+                      fallbackSeed={deal.seed ?? deal.label}
+                      alt={deal.label}
                       className="h-full w-full rounded-lg object-contain transition group-hover:scale-[1.02]"
                     />
                   )}
@@ -274,9 +305,10 @@ export function LearnMarketplacePage() {
             {featuredDeals.map((deal) => (
               <div key={deal.title} className="overflow-hidden rounded-lg bg-white">
                 <div className="relative aspect-square bg-white p-2">
-                  <img
+                  <PracticeProductImage
                     src={deal.image}
-                    alt=""
+                    fallbackSeed={deal.seed}
+                    alt={deal.title}
                     className="h-full w-full object-contain"
                   />
                   <button
