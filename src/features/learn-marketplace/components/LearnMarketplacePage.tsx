@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { LearnMarketplacePageGuide } from "@/features/learn-marketplace/components/LearnMarketplacePageGuide";
 
 function PracticeProductImage({
   src,
@@ -140,6 +141,8 @@ const navCategories = [
 
 export function LearnMarketplacePage() {
   return (
+    <LearnMarketplacePageGuide registerHref="/dashboard/learn-ebay/register">
+      {(registerLink) => (
     <div className="min-h-full bg-[#f7f7f7] text-[#111827]">
       {/* ── Section 1: header + hero (photo 1) ── */}
       <div className="border-b border-gray-200 bg-white">
@@ -150,10 +153,7 @@ export function LearnMarketplacePage() {
               <Link href="/dashboard/learn-ebay/sign-in" className="hover:underline">
                 Sign in
               </Link>{" "}
-              or{" "}
-              <Link href="/dashboard/learn-ebay/register" className="hover:underline">
-                register
-              </Link>
+              or {registerLink}
             </span>
             <span>Daily Deals</span>
             <span>Fashion</span>
@@ -386,5 +386,7 @@ export function LearnMarketplacePage() {
         </footer>
       </div>
     </div>
+      )}
+    </LearnMarketplacePageGuide>
   );
 }
