@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { LearnEbayPracticeShell } from "@/features/learn-marketplace/components/LearnEbayPracticeShell";
+import { LearnMarketplaceExperienceGate } from "@/features/learn-marketplace/components/LearnMarketplaceExperienceGate";
 import { LearnMarketplacePage } from "@/features/learn-marketplace/components/LearnMarketplacePage";
 
 export const metadata: Metadata = {
@@ -9,7 +10,9 @@ export const metadata: Metadata = {
 export default function LearnEbayPage() {
   return (
     <LearnEbayPracticeShell>
-      <LearnMarketplacePage />
+      <LearnMarketplaceExperienceGate>
+        <LearnMarketplacePage />
+      </LearnMarketplaceExperienceGate>
     </LearnEbayPracticeShell>
   );
 }
