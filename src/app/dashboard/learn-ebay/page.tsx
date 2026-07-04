@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { DashboardLayout } from "@/features/dashboard/components/DashboardLayout";
+import { LearnEbayPracticeShell } from "@/features/learn-marketplace/components/LearnEbayPracticeShell";
 import { LearnMarketplacePage } from "@/features/learn-marketplace/components/LearnMarketplacePage";
 
 export const metadata: Metadata = {
@@ -8,8 +8,8 @@ export const metadata: Metadata = {
 
 export default function LearnEbayPage() {
   return (
-    <DashboardLayout>
+    <LearnEbayPracticeShell>
       <LearnMarketplacePage />
-    </DashboardLayout>
+    </LearnEbayPracticeShell>
   );
 }
