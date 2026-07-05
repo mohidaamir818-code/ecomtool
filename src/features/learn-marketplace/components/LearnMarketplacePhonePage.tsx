@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import {
   DEFAULT_MARKETPLACE_PHONE_COUNTRY,
   MARKETPLACE_PHONE_COUNTRIES,
   marketplaceCountryFlag,
 } from "@/features/learn-marketplace/data/marketplace-phone-countries";
+
+const PRACTICE_PHONE_KEY = "learn_marketplace_practice_phone";
 
 function EcomtoolLogo() {
   return (
@@ -17,6 +20,7 @@ function EcomtoolLogo() {
 }
 
 export function LearnMarketplacePhonePage() {
+  const router = useRouter();
   const [selectedIso, setSelectedIso] = useState(DEFAULT_MARKETPLACE_PHONE_COUNTRY.iso);
   const [phoneNumber, setPhoneNumber] = useState("");
 
@@ -101,6 +105,13 @@ export function LearnMarketplacePhonePage() {
             <button
               type="button"
               disabled={!canContinue}
+              onClick={() => {
+                sessionStorage.setItem(
+                  PRACTICE_PHONE_KEY,
+                  `${selectedCountry.dialCode} ${phoneNumber.trim()}`,
+                );
+                router.push("/dashboard/learn-ebay/register/phone/verify-method");
+              }}
               className={`rounded-full px-10 py-3 text-sm font-semibold text-white transition ${
                 canContinue
                   ? "bg-[#3665f3] hover:bg-[#2f56cc]"
