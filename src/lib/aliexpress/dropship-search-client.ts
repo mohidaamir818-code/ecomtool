@@ -326,9 +326,9 @@ async function collectLocalStockFeedProducts(options: {
   const seenIds = new Set<string>();
   let apiHasMore = false;
 
-  const feedsPerRequest = options.randomize ? Math.min(3, feeds.length) : 1;
-  const startFeedIndex = (page - 1) % feeds.length;
-  const feedPageBase = Math.floor((page - 1) / feeds.length) + 1;
+  const feedsPerRequest = options.randomize ? feeds.length : 1;
+  const startFeedIndex = options.randomize ? 0 : (page - 1) % feeds.length;
+  const feedPageBase = options.randomize ? page : Math.floor((page - 1) / feeds.length) + 1;
 
   for (let feedOffset = 0; feedOffset < feedsPerRequest && collected.length < pageSize; feedOffset++) {
     const feedName = feeds[(startFeedIndex + feedOffset) % feeds.length];
@@ -364,8 +364,10 @@ async function collectLocalStockFeedProducts(options: {
         if (collected.length >= pageSize) break;
       }
 
-      apiHasMore = feedPayloadHasMore(payload, records.length);
-      if (!apiHasMore) break;
+      if (feedPayloadHasMore(payload, records.length)) {
+        apiHasMore = true;
+      }
+      if (!options.randomize && !apiHasMore) break;
     }
   }
 
@@ -380,7 +382,9 @@ async function collectLocalStockFeedProducts(options: {
     total: products.length,
     page,
     pageSize,
-    hasMore: apiHasMore || collected.length > pageSize,
+    hasMore: options.randomize
+      ? products.length >= pageSize || apiHasMore
+      : apiHasMore || collected.length > pageSize,
   };
 }
 

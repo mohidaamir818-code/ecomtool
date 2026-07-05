@@ -170,9 +170,13 @@ export function SupplierFinderShell() {
 
         setResult((current) => {
           if (append && current) {
+            const existingIds = new Set(current.products.map((product) => product.productId));
+            const newProducts = data.products.filter(
+              (product) => !existingIds.has(product.productId),
+            );
             return {
               ...data,
-              products: [...current.products, ...data.products],
+              products: [...current.products, ...newProducts],
             };
           }
           return data;
