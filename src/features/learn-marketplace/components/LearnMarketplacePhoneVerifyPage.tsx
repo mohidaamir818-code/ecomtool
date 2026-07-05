@@ -142,7 +142,7 @@ export function LearnMarketplacePhoneVerifyPage() {
 
     completeCursorGuide();
     setIsVerifying(false);
-    router.push("/dashboard/learn-ebay/register/complete");
+    router.push("/dashboard/learn-ebay/register/username");
   }
 
   function handleResend() {
