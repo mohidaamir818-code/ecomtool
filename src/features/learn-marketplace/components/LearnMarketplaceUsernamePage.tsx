@@ -164,7 +164,7 @@ export function LearnMarketplaceUsernamePage() {
               onClick={() => {
                 sessionStorage.setItem(PRACTICE_USERNAME_KEY, sanitized);
                 completeCursorGuide();
-                router.push("/dashboard/learn-ebay/register/complete");
+                router.push("/dashboard/learn-ebay/register/business-type");
               }}
               className={`rounded-full px-10 py-3 text-sm font-semibold text-white transition ${
                 canContinue
