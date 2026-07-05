@@ -1,9 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { LearnMarketplaceAnimatedCursor } from "@/features/learn-marketplace/components/LearnMarketplaceAnimatedCursor";
 
 const GUIDE_STEP_KEY = "learn_marketplace_guide_step";
+
+function cursorGuideStorageKey(userId: string) {
+  return `learn_marketplace_cursor_guide_${userId}`;
+}
 
 type GuideStep = "loading" | "intro" | "register" | "done";
 
@@ -13,39 +18,73 @@ interface LearnMarketplacePageGuideProps {
 }
 
 export function LearnMarketplacePageGuide({ registerHref, children }: LearnMarketplacePageGuideProps) {
+  const registerRef = useRef<HTMLSpanElement>(null);
   const [guideStep, setGuideStep] = useState<GuideStep>("loading");
+  const [showCursor, setShowCursor] = useState(false);
 
   useEffect(() => {
+    const userId = sessionStorage.getItem("ecomtools_user_id");
+    const cursorAlreadySeen =
+      userId != null && localStorage.getItem(cursorGuideStorageKey(userId)) === "true";
+
+    if (cursorAlreadySeen) {
+      setGuideStep("done");
+      setShowCursor(false);
+      return;
+    }
+
     const stored = sessionStorage.getItem(GUIDE_STEP_KEY);
     if (stored === "done") {
       setGuideStep("done");
+      setShowCursor(false);
     } else if (stored === "register") {
       setGuideStep("register");
+      setShowCursor(true);
     } else {
       setGuideStep("intro");
+      setShowCursor(false);
     }
   }, []);
 
   function acknowledgeIntro() {
     sessionStorage.setItem(GUIDE_STEP_KEY, "register");
     setGuideStep("register");
+    setShowCursor(true);
   }
 
   function completeGuide() {
+    const userId = sessionStorage.getItem("ecomtools_user_id");
+    if (userId) {
+      localStorage.setItem(cursorGuideStorageKey(userId), "true");
+    }
     sessionStorage.setItem(GUIDE_STEP_KEY, "done");
     setGuideStep("done");
+    setShowCursor(false);
   }
 
-  const registerLink =
-    guideStep === "register" ? (
-      <span className="relative inline-block">
-        <Link
-          href={registerHref}
-          onClick={completeGuide}
-          className="relative z-[70] rounded bg-white px-1 font-semibold text-[#3665f3] underline ring-4 ring-[#3665f3]/30 animate-pulse"
-        >
-          register
-        </Link>
+  function replayCursorGuide() {
+    setShowCursor(true);
+    if (guideStep === "done") {
+      setGuideStep("register");
+    }
+  }
+
+  const showRegisterHighlight = guideStep === "register" || showCursor;
+
+  const registerLink = (
+    <span ref={registerRef} className="relative inline-block">
+      <Link
+        href={registerHref}
+        onClick={completeGuide}
+        className={
+          showRegisterHighlight
+            ? "relative z-[70] rounded bg-white px-1 font-semibold text-[#3665f3] underline ring-4 ring-[#3665f3]/30 animate-pulse"
+            : "hover:underline"
+        }
+      >
+        register
+      </Link>
+      {guideStep === "register" ? (
         <span className="absolute left-0 top-full z-[70] mt-3 w-[min(280px,calc(100vw-2rem))] rounded-xl border border-[#3665f3] bg-white p-4 text-left shadow-lg">
           <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-[#3665f3]">
             Step 1
@@ -58,16 +97,33 @@ export function LearnMarketplacePageGuide({ registerHref, children }: LearnMarke
           </span>
           <span className="absolute -top-2 left-6 h-4 w-4 rotate-45 border-l border-t border-[#3665f3] bg-white" />
         </span>
-      </span>
-    ) : (
-      <Link href={registerHref} className="hover:underline">
-        register
-      </Link>
-    );
+      ) : null}
+    </span>
+  );
 
   return (
     <>
+      <style jsx global>{`
+        @keyframes learn-cursor-wiggle {
+          0%,
+          100% {
+            transform: translate(0, 0) rotate(-8deg);
+          }
+          25% {
+            transform: translate(6px, 4px) rotate(-2deg);
+          }
+          50% {
+            transform: translate(2px, 8px) rotate(-12deg);
+          }
+          75% {
+            transform: translate(8px, 2px) rotate(-4deg);
+          }
+        }
+      `}</style>
+
       {children(registerLink)}
+
+      <LearnMarketplaceAnimatedCursor targetRef={registerRef} visible={showCursor} />
 
       {guideStep === "intro" ? (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 px-4">
@@ -98,9 +154,19 @@ export function LearnMarketplacePageGuide({ registerHref, children }: LearnMarke
         </div>
       ) : null}
 
-      {guideStep === "register" ? (
+      {showRegisterHighlight && guideStep !== "intro" ? (
         <div className="pointer-events-none fixed inset-0 z-[60] bg-black/20" aria-hidden />
       ) : null}
+
+      <button
+        type="button"
+        onClick={replayCursorGuide}
+        className="fixed bottom-6 right-6 z-[90] inline-flex items-center gap-2 rounded-full border border-[#3665f3] bg-white px-4 py-2.5 text-sm font-semibold text-[#3665f3] shadow-lg transition hover:bg-[#3665f3] hover:text-white"
+        aria-label="Show cursor guide again"
+      >
+        <span aria-hidden>🖱️</span>
+        Cursor guide
+      </button>
     </>
   );
 }

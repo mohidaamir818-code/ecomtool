@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { LearnMarketplaceVerifyEmailGuide } from "@/features/learn-marketplace/components/LearnMarketplaceVerifyEmailGuide";
 
 const OTP_LENGTH = 6;
 const PRACTICE_EMAIL_KEY = "learn_marketplace_practice_email";
@@ -147,6 +148,7 @@ export function LearnMarketplaceVerifyEmailPage() {
 
   return (
     <div className="flex min-h-full flex-col bg-[#f7f7f7] text-[#191919]">
+      <LearnMarketplaceVerifyEmailGuide />
       <header className="border-b border-gray-200 bg-white">
         <div className="mx-auto flex max-w-[960px] items-center justify-between px-6 py-4">
           <EcomtoolLogo />
