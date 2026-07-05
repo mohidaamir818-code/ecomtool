@@ -9,6 +9,8 @@ import {
   BUSINESS_DETAILS_GUIDE_KEY,
   LearnMarketplaceBusinessDetailsGuide,
 } from "@/features/learn-marketplace/components/LearnMarketplaceBusinessDetailsGuide";
+import { LearnMarketplaceBusinessDetailsNextStepGuide } from "@/features/learn-marketplace/components/LearnMarketplaceBusinessDetailsNextStepGuide";
+import { PRACTICE_BUSINESS_DETAILS_DONE_KEY } from "@/features/learn-marketplace/components/LearnMarketplaceContactStakeholdersGuide";
 import { PRACTICE_REGISTERED_SUBTYPE_KEY } from "@/features/learn-marketplace/components/LearnMarketplaceBusinessTypeGuide";
 import { PRACTICE_USERNAME_KEY } from "@/features/learn-marketplace/components/LearnMarketplaceUsernameGuide";
 
@@ -95,10 +97,10 @@ export function LearnMarketplaceBusinessDetailsPage() {
   const legalNameRef = useRef<HTMLInputElement>(null);
   const [ready, setReady] = useState(false);
   const [showIntroPopup, setShowIntroPopup] = useState(false);
+  const [showNextStepPopup, setShowNextStepPopup] = useState(false);
   const [showCursor, setShowCursor] = useState(false);
 
   const [legalName, setLegalName] = useState("");
-  const [dbaName, setDbaName] = useState("");
   const [registrationNumber, setRegistrationNumber] = useState("");
   const [street1, setStreet1] = useState("");
   const [street2, setStreet2] = useState("");
@@ -172,6 +174,14 @@ export function LearnMarketplaceBusinessDetailsPage() {
       <LearnMarketplaceBusinessDetailsGuide
         visible={showIntroPopup}
         onDismiss={() => setShowIntroPopup(false)}
+      />
+      <LearnMarketplaceBusinessDetailsNextStepGuide
+        visible={showNextStepPopup}
+        onDismiss={() => {
+          setShowNextStepPopup(false);
+          sessionStorage.setItem(PRACTICE_BUSINESS_DETAILS_DONE_KEY, "true");
+          router.push("/dashboard/learn-ebay/register/contact-stakeholders");
+        }}
       />
 
       <style jsx global>{`
@@ -285,12 +295,15 @@ export function LearnMarketplaceBusinessDetailsPage() {
                 <input
                   id="dba-name"
                   type="text"
-                  value={dbaName}
-                  onChange={(event) => setDbaName(event.target.value)}
-                  className="mt-1 w-full rounded-xl border border-[#767676] bg-[#f7f7f7] px-4 py-3.5 text-sm outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
+                  value=""
+                  readOnly
+                  disabled
+                  tabIndex={-1}
+                  className="mt-1 w-full cursor-not-allowed rounded-xl border border-gray-200 bg-[#f0f0f0] px-4 py-3.5 text-sm text-[#767676] outline-none"
                 />
                 <FieldInstruction>
-                  Optional. Use this if you trade under a different name from your legal business name.
+                  Do not fill this field. Leave &quot;Doing Business As&quot; blank and only enter your
+                  legal business name.
                 </FieldInstruction>
               </div>
 
@@ -438,7 +451,7 @@ export function LearnMarketplaceBusinessDetailsPage() {
               onClick={() => {
                 if (!canContinue) return;
                 completeCursorGuide();
-                router.push("/dashboard/learn-ebay/register/complete");
+                setShowNextStepPopup(true);
               }}
               className={`rounded-full px-10 py-3 text-sm font-semibold text-white transition ${
                 canContinue
