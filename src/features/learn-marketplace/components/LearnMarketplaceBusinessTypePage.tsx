@@ -8,8 +8,13 @@ import {
   BUSINESS_TYPE_CURSOR_KEY_PREFIX,
   BUSINESS_TYPE_GUIDE_KEY,
   LearnMarketplaceBusinessTypeGuide,
+  LearnMarketplaceRegisteredSubtypeGuide,
   PRACTICE_BUSINESS_TYPE_KEY,
+  PRACTICE_REGISTERED_SUBTYPE_KEY,
+  REGISTERED_SUBTYPE_CURSOR_KEY_PREFIX,
+  REGISTERED_SUBTYPE_GUIDE_KEY,
   type PracticeBusinessType,
+  type PracticeRegisteredSubtype,
 } from "@/features/learn-marketplace/components/LearnMarketplaceBusinessTypeGuide";
 import { PRACTICE_USERNAME_KEY } from "@/features/learn-marketplace/components/LearnMarketplaceUsernameGuide";
 
@@ -36,6 +41,20 @@ const businessOptions: Array<{
   },
 ];
 
+const registeredSubtypeOptions: Array<{
+  value: PracticeRegisteredSubtype;
+  label: string;
+  disabled?: boolean;
+}> = [
+  { value: "company", label: "Company (e.g. LTD, Untd.)" },
+  {
+    value: "partnership",
+    label: "Partnership (e.g. LP, LLP, general partnership)",
+    disabled: true,
+  },
+  { value: "public", label: "Publicly traded company", disabled: true },
+];
+
 function EcomtoolLogo() {
   return (
     <Link href="/dashboard/learn-ebay" className="text-2xl font-bold tracking-tight text-[#3665f3]">
@@ -44,17 +63,25 @@ function EcomtoolLogo() {
   );
 }
 
-function cursorGuideStorageKey(userId: string) {
+function businessCursorKey(userId: string) {
   return `${BUSINESS_TYPE_CURSOR_KEY_PREFIX}${userId}`;
+}
+
+function subtypeCursorKey(userId: string) {
+  return `${REGISTERED_SUBTYPE_CURSOR_KEY_PREFIX}${userId}`;
 }
 
 export function LearnMarketplaceBusinessTypePage() {
   const router = useRouter();
   const registeredOptionRef = useRef<HTMLButtonElement>(null);
+  const subtypeSelectRef = useRef<HTMLSelectElement>(null);
   const [selected, setSelected] = useState<PracticeBusinessType | null>(null);
+  const [registeredSubtype, setRegisteredSubtype] = useState<PracticeRegisteredSubtype | "">("");
   const [ready, setReady] = useState(false);
   const [showIntroPopup, setShowIntroPopup] = useState(false);
-  const [showCursor, setShowCursor] = useState(false);
+  const [showSubtypePopup, setShowSubtypePopup] = useState(false);
+  const [showBusinessCursor, setShowBusinessCursor] = useState(false);
+  const [showSubtypeCursor, setShowSubtypeCursor] = useState(false);
 
   useEffect(() => {
     const username = sessionStorage.getItem(PRACTICE_USERNAME_KEY);
@@ -66,31 +93,65 @@ export function LearnMarketplaceBusinessTypePage() {
     setReady(true);
   }, [router]);
 
-  const startCursorGuide = useCallback(() => {
-    setShowCursor(true);
-    setSelected("registered");
+  const startBusinessCursorGuide = useCallback(() => {
+    setShowBusinessCursor(true);
+    setShowSubtypeCursor(false);
+  }, []);
+
+  const startSubtypeCursorGuide = useCallback(() => {
+    setShowSubtypeCursor(true);
+    setShowBusinessCursor(false);
+    subtypeSelectRef.current?.focus();
   }, []);
 
   useEffect(() => {
     if (!ready || showIntroPopup) return;
 
     const userId = sessionStorage.getItem("ecomtools_user_id");
-    const cursorSeen =
-      userId != null && localStorage.getItem(cursorGuideStorageKey(userId)) === "true";
-    if (!cursorSeen) {
-      startCursorGuide();
+    const businessCursorSeen =
+      userId != null && localStorage.getItem(businessCursorKey(userId)) === "true";
+    if (!businessCursorSeen) {
+      startBusinessCursorGuide();
     }
-  }, [ready, showIntroPopup, startCursorGuide]);
+  }, [ready, showIntroPopup, startBusinessCursorGuide]);
 
-  function completeCursorGuide() {
+  useEffect(() => {
+    if (selected !== "registered" || showIntroPopup || showSubtypePopup) return;
+    if (sessionStorage.getItem(REGISTERED_SUBTYPE_GUIDE_KEY) !== "true") return;
+
+    const userId = sessionStorage.getItem("ecomtools_user_id");
+    const subtypeCursorSeen =
+      userId != null && localStorage.getItem(subtypeCursorKey(userId)) === "true";
+    if (!subtypeCursorSeen) {
+      startSubtypeCursorGuide();
+    }
+  }, [selected, showIntroPopup, showSubtypePopup, startSubtypeCursorGuide]);
+
+  function completeBusinessCursorGuide() {
     const userId = sessionStorage.getItem("ecomtools_user_id");
     if (userId) {
-      localStorage.setItem(cursorGuideStorageKey(userId), "true");
+      localStorage.setItem(businessCursorKey(userId), "true");
     }
-    setShowCursor(false);
+    setShowBusinessCursor(false);
+    if (sessionStorage.getItem(REGISTERED_SUBTYPE_GUIDE_KEY) !== "true") {
+      setShowSubtypePopup(true);
+    }
   }
 
-  const canContinue = selected === "registered";
+  function completeSubtypeCursorGuide() {
+    const userId = sessionStorage.getItem("ecomtools_user_id");
+    if (userId) {
+      localStorage.setItem(subtypeCursorKey(userId), "true");
+    }
+    setShowSubtypeCursor(false);
+  }
+
+  function handleRegisteredSelect() {
+    setSelected("registered");
+    completeBusinessCursorGuide();
+  }
+
+  const canContinue = selected === "registered" && registeredSubtype === "company";
 
   if (!ready) {
     return (
@@ -108,6 +169,13 @@ export function LearnMarketplaceBusinessTypePage() {
       <LearnMarketplaceBusinessTypeGuide
         visible={showIntroPopup}
         onDismiss={() => setShowIntroPopup(false)}
+      />
+      <LearnMarketplaceRegisteredSubtypeGuide
+        visible={showSubtypePopup}
+        onDismiss={() => {
+          setShowSubtypePopup(false);
+          startSubtypeCursorGuide();
+        }}
       />
 
       <style jsx global>{`
@@ -150,7 +218,7 @@ export function LearnMarketplaceBusinessTypePage() {
             {businessOptions.map((option) => {
               const isSelected = selected === option.value;
               const isRegistered = option.value === "registered";
-              const highlight = isRegistered && (showCursor || isSelected);
+              const highlight = isRegistered && (showBusinessCursor || isSelected);
               const isDisabled = !isRegistered;
 
               if (isDisabled) {
@@ -171,12 +239,7 @@ export function LearnMarketplaceBusinessTypePage() {
                   key={option.value}
                   ref={registeredOptionRef}
                   type="button"
-                  onClick={() => {
-                    setSelected("registered");
-                    if (showCursor) {
-                      completeCursorGuide();
-                    }
-                  }}
+                  onClick={handleRegisteredSelect}
                   className={`relative w-full rounded-xl border p-5 text-left transition ${
                     highlight
                       ? "z-[70] border-[#3665f3] bg-[#f0f6ff] ring-4 ring-[#3665f3]/20"
@@ -192,7 +255,49 @@ export function LearnMarketplaceBusinessTypePage() {
             })}
           </div>
 
-          {showCursor ? (
+          {selected === "registered" ? (
+            <div className="relative z-[70] mt-4">
+              <label htmlFor="registered-business-type" className="text-sm font-semibold text-[#191919]">
+                What type of registered business is it?
+              </label>
+              <select
+                id="registered-business-type"
+                ref={subtypeSelectRef}
+                value={registeredSubtype}
+                onChange={(event) => {
+                  const value = event.target.value as PracticeRegisteredSubtype | "";
+                  if (value !== "company") return;
+                  setRegisteredSubtype("company");
+                  if (showSubtypeCursor) {
+                    completeSubtypeCursorGuide();
+                  }
+                }}
+                className={`mt-2 w-full appearance-none rounded-xl border bg-white px-4 py-3.5 text-sm outline-none ring-[#3665f3] transition focus:ring-2 ${
+                  showSubtypeCursor
+                    ? "border-[#3665f3] ring-4 ring-[#3665f3]/20"
+                    : "border-[#767676]"
+                }`}
+              >
+                <option value="" disabled>
+                  Business type
+                </option>
+                {registeredSubtypeOptions.map((option) => (
+                  <option key={option.value} value={option.value} disabled={option.disabled}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+
+              {showSubtypeCursor ? (
+                <p className="mt-3 rounded-xl border border-[#3665f3] bg-[#f0f6ff] px-4 py-3 text-xs leading-relaxed text-[#555]">
+                  Select <strong className="text-[#191919]">Company (e.g. LTD, Untd.)</strong> from
+                  the dropdown.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {showBusinessCursor ? (
             <p className="relative z-[70] mt-4 rounded-xl border border-[#3665f3] bg-[#f0f6ff] px-4 py-3 text-xs leading-relaxed text-[#555]">
               Select <strong className="text-[#191919]">Registered business</strong> if you registered
               as a Ltd, LLC, or similar legal entity.
@@ -203,14 +308,15 @@ export function LearnMarketplaceBusinessTypePage() {
             Help me choose
           </button>
 
-          <div className="mt-auto flex justify-end pt-10">
+          <div className="relative z-[95] mt-auto flex justify-end pb-24 pt-10">
             <button
               type="button"
               disabled={!canContinue}
               onClick={() => {
-                if (!selected) return;
-                sessionStorage.setItem(PRACTICE_BUSINESS_TYPE_KEY, selected);
-                completeCursorGuide();
+                if (!canContinue) return;
+                sessionStorage.setItem(PRACTICE_BUSINESS_TYPE_KEY, "registered");
+                sessionStorage.setItem(PRACTICE_REGISTERED_SUBTYPE_KEY, "company");
+                completeSubtypeCursorGuide();
                 router.push("/dashboard/learn-ebay/register/complete");
               }}
               className={`rounded-full px-10 py-3 text-sm font-semibold text-white transition ${
@@ -225,11 +331,23 @@ export function LearnMarketplaceBusinessTypePage() {
         </div>
       </main>
 
-      <LearnMarketplaceAnimatedCursor targetRef={registeredOptionRef} visible={showCursor} />
+      <LearnMarketplaceAnimatedCursor targetRef={registeredOptionRef} visible={showBusinessCursor} />
+      <LearnMarketplaceAnimatedCursor targetRef={subtypeSelectRef} visible={showSubtypeCursor} />
 
-      {showCursor ? (
+      {showBusinessCursor || showSubtypeCursor ? (
         <div className="pointer-events-none fixed inset-0 z-[60] bg-black/20" aria-hidden />
       ) : null}
+
+      <button
+        type="button"
+        onClick={() => {
+          sessionStorage.removeItem(REGISTERED_SUBTYPE_GUIDE_KEY);
+          setShowSubtypePopup(true);
+        }}
+        className="fixed bottom-28 right-6 z-[90] inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-2 text-xs font-semibold text-[#555] shadow-lg transition hover:bg-gray-50"
+      >
+        Show company guide
+      </button>
 
       <button
         type="button"
@@ -244,7 +362,13 @@ export function LearnMarketplaceBusinessTypePage() {
 
       <button
         type="button"
-        onClick={startCursorGuide}
+        onClick={() => {
+          if (selected === "registered") {
+            startSubtypeCursorGuide();
+          } else {
+            startBusinessCursorGuide();
+          }
+        }}
         className="fixed bottom-6 right-6 z-[90] inline-flex items-center gap-2 rounded-full border border-[#3665f3] bg-white px-4 py-2.5 text-sm font-semibold text-[#3665f3] shadow-lg transition hover:bg-[#3665f3] hover:text-white"
         aria-label="Show cursor guide again"
       >
