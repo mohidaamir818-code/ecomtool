@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { LearnMarketplaceRegisterCredentialsGuide } from "@/features/learn-marketplace/components/LearnMarketplaceRegisterCredentialsGuide";
 
 const PRACTICE_EMAIL_KEY = "learn_marketplace_practice_email";
@@ -32,6 +32,14 @@ function MarketplaceLogo() {
       <span className="text-[#e53238]">e</span>
       <span className="text-[#0064d2]">t</span>
     </Link>
+  );
+}
+
+function FieldInstruction({ children }: { children: ReactNode }) {
+  return (
+    <p className="mt-1.5 rounded-lg border border-[#3665f3]/20 bg-[#f0f6ff] px-3 py-2 text-xs leading-relaxed text-[#555]">
+      {children}
+    </p>
   );
 }
 
@@ -155,60 +163,84 @@ export function LearnMarketplaceRegisterPage() {
             }}
           >
             {accountType === "business" ? (
-              <input
-                type="text"
-                placeholder="Business name"
-                className="w-full rounded-xl bg-[#f7f7f7] px-4 py-3.5 text-sm outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
-              />
+              <div>
+                <input
+                  type="text"
+                  placeholder="Business name"
+                  className="w-full rounded-xl bg-[#f7f7f7] px-4 py-3.5 text-sm outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
+                />
+                <FieldInstruction>
+                  Write your registered company name here, for example <strong>Acme Trading Ltd</strong> or{" "}
+                  <strong>Smith Holdings LLC</strong>.
+                </FieldInstruction>
+              </div>
             ) : (
               <>
-                <input
-                  type="text"
-                  placeholder="First name"
-                  className="w-full rounded-xl bg-[#f7f7f7] px-4 py-3.5 text-sm outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
-                />
-                <input
-                  type="text"
-                  placeholder="Last name"
-                  className="w-full rounded-xl bg-[#f7f7f7] px-4 py-3.5 text-sm outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
-                />
+                <div>
+                  <input
+                    type="text"
+                    placeholder="First name"
+                    className="w-full rounded-xl bg-[#f7f7f7] px-4 py-3.5 text-sm outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
+                  />
+                  <FieldInstruction>Write your legal first name as it appears on your ID.</FieldInstruction>
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    placeholder="Last name"
+                    className="w-full rounded-xl bg-[#f7f7f7] px-4 py-3.5 text-sm outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
+                  />
+                  <FieldInstruction>Write your legal last name as it appears on your ID.</FieldInstruction>
+                </div>
               </>
             )}
 
-            <input
-              type="email"
-              name="email"
-              placeholder={accountType === "business" ? "Business email" : "Email"}
-              className="w-full rounded-xl bg-[#f7f7f7] px-4 py-3.5 text-sm outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
-            />
-
-            <div className="relative">
+            <div>
               <input
-                type={showPassword ? "text" : "password"}
-                placeholder="Password"
-                className="w-full rounded-xl bg-[#f7f7f7] px-4 py-3.5 pr-12 text-sm outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
+                type="email"
+                name="email"
+                placeholder={accountType === "business" ? "Business email" : "Email"}
+                className="w-full rounded-xl bg-[#f7f7f7] px-4 py-3.5 text-sm outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
               />
-              <button
-                type="button"
-                onClick={() => setShowPassword((value) => !value)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-[#555] hover:text-[#191919]"
-                aria-label={showPassword ? "Hide password" : "Show password"}
-              >
-                {showPassword ? (
-                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <path d="M3 3l18 18M10.58 10.58A2 2 0 0012 15a2 2 0 002.42-2.42M9.88 4.24A10.94 10.94 0 0112 5c5 0 9.27 3.11 11 7.5a11.8 11.8 0 01-4.24 5.11M6.11 6.11A11.8 11.8 0 003 12.5C4.73 15.89 8.99 19 14 19c1.01 0 1.98-.13 2.88-.36" />
-                  </svg>
-                ) : (
-                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <path d="M2 12.5C3.73 8.11 8 5 13 5s9.27 3.11 11 7.5c-1.73 4.39-6 7.5-11 7.5S3.73 16.89 2 12.5z" />
-                    <circle cx="13" cy="12.5" r="3" />
-                  </svg>
-                )}
-              </button>
+              <FieldInstruction>
+                Write the email you registered with <strong>ecomtool</strong>. Do not use an email already linked
+                to other marketplaces.
+              </FieldInstruction>
+            </div>
+
+            <div>
+              <div className="relative">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Password"
+                  className="w-full rounded-xl bg-[#f7f7f7] px-4 py-3.5 pr-12 text-sm outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((value) => !value)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-[#555] hover:text-[#191919]"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? (
+                    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M3 3l18 18M10.58 10.58A2 2 0 0012 15a2 2 0 002.42-2.42M9.88 4.24A10.94 10.94 0 0112 5c5 0 9.27 3.11 11 7.5a11.8 11.8 0 01-4.24 5.11M6.11 6.11A11.8 11.8 0 003 12.5C4.73 15.89 8.99 19 14 19c1.01 0 1.98-.13 2.88-.36" />
+                    </svg>
+                  ) : (
+                    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M2 12.5C3.73 8.11 8 5 13 5s9.27 3.11 11 7.5c-1.73 4.39-6 7.5-11 7.5S3.73 16.89 2 12.5z" />
+                      <circle cx="13" cy="12.5" r="3" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+              <FieldInstruction>
+                Set a strong password with <strong>more than 8 characters</strong>, using letters, numbers, and
+                symbols.
+              </FieldInstruction>
             </div>
 
             {accountType === "business" ? (
-              <>
+              <div>
                 <select
                   defaultValue=""
                   className="w-full appearance-none rounded-xl bg-[#f7f7f7] px-4 py-3.5 text-sm text-[#555] outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
@@ -222,24 +254,28 @@ export function LearnMarketplaceRegisterPage() {
                     </option>
                   ))}
                 </select>
-                <p className="text-xs leading-relaxed text-[#555]">
-                  If your business isn&apos;t registered, select your country of residence.
-                </p>
-              </>
+                <FieldInstruction>
+                  Select the country where your business is officially registered. If not registered yet, choose
+                  your country of residence.
+                </FieldInstruction>
+              </div>
             ) : (
-              <select
-                defaultValue=""
-                className="w-full appearance-none rounded-xl bg-[#f7f7f7] px-4 py-3.5 text-sm text-[#555] outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
-              >
-                <option value="" disabled>
-                  Where do you live?
-                </option>
-                {countries.map((country) => (
-                  <option key={country} value={country}>
-                    {country}
+              <div>
+                <select
+                  defaultValue=""
+                  className="w-full appearance-none rounded-xl bg-[#f7f7f7] px-4 py-3.5 text-sm text-[#555] outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
+                >
+                  <option value="" disabled>
+                    Where do you live?
                   </option>
-                ))}
-              </select>
+                  {countries.map((country) => (
+                    <option key={country} value={country}>
+                      {country}
+                    </option>
+                  ))}
+                </select>
+                <FieldInstruction>Select the country where you live and pay taxes.</FieldInstruction>
+              </div>
             )}
 
             <label className="flex items-start gap-3 pt-1 text-sm text-[#191919]">
