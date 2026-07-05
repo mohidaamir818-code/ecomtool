@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { LearnMarketplaceRegisterCredentialsGuide } from "@/features/learn-marketplace/components/LearnMarketplaceRegisterCredentialsGuide";
 
 const PRACTICE_EMAIL_KEY = "learn_marketplace_practice_email";
 
@@ -43,6 +44,7 @@ export function LearnMarketplaceRegisterPage() {
 
   return (
     <div className="flex min-h-full flex-col bg-white text-[#191919]">
+      <LearnMarketplaceRegisterCredentialsGuide />
       <header className="border-b border-gray-200">
         <div className="mx-auto flex max-w-[1200px] items-center justify-between px-6 py-4">
           <MarketplaceLogo />
