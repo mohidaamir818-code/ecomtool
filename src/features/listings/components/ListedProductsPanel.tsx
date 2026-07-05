@@ -83,10 +83,11 @@ export function ListedProductsPanel({ userId, platform, refreshKey = 0 }: Listed
 
   return (
     <>
-      <section className="mt-8 border-t border-gray-100 pt-8">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+      <section className="mt-10 rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50/30 via-white to-indigo-50/20 p-6 pt-8">
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold text-[#111827]">Your {platformLabel} listings</h2>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-brand">Your store</p>
+            <h2 className="mt-1 text-lg font-bold text-[#111827]">Your {platformLabel} listings</h2>
             <p className="mt-1 text-sm text-[#6B7280]">
               Products listed through ecomtool. AliExpress changes auto-update price and stock.
             </p>
@@ -104,8 +105,11 @@ export function ListedProductsPanel({ userId, platform, refreshKey = 0 }: Listed
         {loading && filteredProducts.length === 0 ? (
           <p className="text-sm text-[#6B7280]">Loading listings…</p>
         ) : filteredProducts.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50/60 px-5 py-8 text-center">
-            <p className="text-sm font-medium text-[#374151]">No {platformLabel} listings yet</p>
+          <div className="rounded-xl border border-dashed border-violet-200/80 bg-white/60 px-5 py-10 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-100 text-xl">
+              📋
+            </div>
+            <p className="mt-3 text-sm font-semibold text-[#374151]">No {platformLabel} listings yet</p>
             <p className="mt-1 text-xs text-[#6B7280]">
               List a product above and it will appear here.
             </p>
@@ -119,7 +123,7 @@ export function ListedProductsPanel({ userId, platform, refreshKey = 0 }: Listed
               return (
                 <article
                   key={product.id}
-                  className="flex gap-4 rounded-xl border border-gray-100 bg-white p-4 shadow-sm transition-shadow hover:shadow-md"
+                  className="flex gap-4 rounded-xl border border-violet-100/80 bg-white p-4 shadow-sm transition-all hover:border-violet-200 hover:shadow-md"
                 >
                   <div className="h-24 w-24 shrink-0 overflow-hidden rounded-lg border border-gray-100 bg-gray-50">
                     {imageUrl ? (

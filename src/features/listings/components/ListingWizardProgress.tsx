@@ -32,17 +32,31 @@ export function ListingWizardProgress({
 }: ListingWizardProgressProps) {
   const steps = getWizardSteps(platform);
   const displayIndex = progressIndexForStep(currentStep, platform);
+  const progressPercent = Math.round(((displayIndex + 1) / steps.length) * 100);
 
   return (
-    <div className="mb-6">
-      <div className="mb-3 flex items-center justify-between text-xs font-medium text-[#6B7280]">
-        <span>
-          Step {displayIndex + 1} of {steps.length}
+    <div className="mb-8 overflow-hidden rounded-2xl border border-violet-100 bg-gradient-to-r from-violet-50/60 via-white to-indigo-50/60 p-5 shadow-sm">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-brand">Listing wizard</p>
+          <p className="mt-0.5 text-sm font-semibold text-[#111827]">
+            Step {displayIndex + 1} of {steps.length}
+            <span className="ml-2 hidden font-normal text-[#6B7280] sm:inline">· {steps[displayIndex]}</span>
+          </p>
+        </div>
+        <span className="rounded-full bg-brand/10 px-3 py-1 text-xs font-bold text-brand">
+          {progressPercent}%
         </span>
-        <span className="hidden sm:inline">{steps[displayIndex]}</span>
       </div>
 
-      <div className="grid grid-cols-5 gap-1 sm:grid-cols-9 sm:gap-2">
+      <div className="mb-1 h-2 overflow-hidden rounded-full bg-gray-100">
+        <div
+          className="h-full rounded-full bg-gradient-to-r from-brand via-violet-500 to-indigo-500 transition-all duration-500"
+          style={{ width: `${progressPercent}%` }}
+        />
+      </div>
+
+      <div className="mt-4 grid grid-cols-5 gap-1 sm:grid-cols-9 sm:gap-2">
         {steps.map((label, index) => {
           const stepIndex = stepForProgressIndex(index, platform);
           const active = stepIndex === currentStep;
@@ -51,13 +65,21 @@ export function ListingWizardProgress({
           return (
             <div key={label} className="min-w-0">
               <div
-                className={`h-2 rounded-full transition-colors ${
-                  complete || active ? "bg-brand" : "bg-gray-200"
+                className={`h-1.5 rounded-full transition-all duration-300 ${
+                  complete
+                    ? "bg-gradient-to-r from-emerald-400 to-teal-500"
+                    : active
+                      ? "bg-gradient-to-r from-brand to-indigo-500 shadow-sm shadow-brand/30"
+                      : "bg-gray-200"
                 }`}
               />
               <p
                 className={`mt-2 hidden truncate text-[10px] lg:block ${
-                  active ? "font-semibold text-brand" : "text-[#9CA3AF]"
+                  active
+                    ? "font-bold text-brand"
+                    : complete
+                      ? "font-medium text-emerald-600"
+                      : "text-[#9CA3AF]"
                 }`}
               >
                 {label}

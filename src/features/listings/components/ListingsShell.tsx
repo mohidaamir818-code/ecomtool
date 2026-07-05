@@ -1128,75 +1128,92 @@ export function ListingsShell() {
   return (
     <DashboardLayout>
       <div className="mx-auto max-w-[960px] p-6 lg:p-8">
-        <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-[#111827]">AI Listing Generator</h1>
-            <p className="mt-1 text-sm text-[#6B7280]">
-              Professional 9-step wizard to create optimized{" "}
-              {isAmazef ? "Amazef" : "eBay"} listings from AliExpress.
-            </p>
-          </div>
+        <div className="relative mb-8 overflow-hidden rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50/80 via-white to-indigo-50/60 p-6 shadow-md shadow-violet-100/30 lg:p-8">
+          <div className="pointer-events-none absolute -right-12 -top-12 h-40 w-40 rounded-full bg-gradient-to-br from-brand/10 to-indigo-200/30" />
+          <div className="pointer-events-none absolute -bottom-8 -left-8 h-28 w-28 rounded-full bg-gradient-to-tr from-amber-100/50 to-transparent" />
 
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-xs font-semibold text-[#374151]">
-              <span>Platform</span>
-              <select
-                value={activePlatform}
-                onChange={(event) => handlePlatformChange(event.target.value as ListingPlatform)}
-                className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-[#374151] outline-none focus:border-brand"
-              >
-                <option value="ebay">eBay</option>
-                <option value="amazef">Amazef</option>
-              </select>
-            </label>
+          <div className="relative flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="inline-flex items-center gap-1.5 rounded-full bg-brand/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-brand">
+                <span aria-hidden>✨</span> AI Powered
+              </p>
+              <h1 className="mt-3 bg-gradient-to-r from-[#111827] via-brand to-indigo-600 bg-clip-text text-2xl font-bold text-transparent lg:text-3xl">
+                AI Listing Generator
+              </h1>
+              <p className="mt-2 max-w-xl text-sm leading-relaxed text-[#6B7280]">
+                Professional 9-step wizard to create optimized{" "}
+                <span className="font-semibold text-brand">{isAmazef ? "Amazef" : "eBay"}</span> listings
+                from AliExpress.
+              </p>
+            </div>
 
-            {wizardStarted ? (
-              <button
-                type="button"
-                onClick={resetWizard}
-                className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-[#374151] hover:bg-gray-50"
-              >
-                Start new listing
-              </button>
-            ) : null}
+            <div className="relative flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 rounded-xl border border-violet-100 bg-white/80 px-3 py-2 text-xs font-semibold text-[#374151] shadow-sm backdrop-blur">
+                <span className="text-[#6B7280]">Platform</span>
+                <select
+                  value={activePlatform}
+                  onChange={(event) => handlePlatformChange(event.target.value as ListingPlatform)}
+                  className="rounded-lg border-0 bg-transparent text-xs font-bold text-brand outline-none focus:ring-0"
+                >
+                  <option value="ebay">eBay</option>
+                  <option value="amazef">Amazef</option>
+                </select>
+              </label>
+
+              {wizardStarted ? (
+                <button
+                  type="button"
+                  onClick={resetWizard}
+                  className="rounded-xl border border-violet-200 bg-white/80 px-3 py-2 text-xs font-semibold text-[#374151] shadow-sm backdrop-blur transition hover:border-brand/30 hover:bg-violet-50"
+                >
+                  Start new listing
+                </button>
+              ) : null}
+            </div>
           </div>
         </div>
 
         {showEbaySpinner || showAmazefSpinner ? (
-          <div className="flex justify-center py-16">
-            <svg
-              className="h-8 w-8 animate-spin text-brand"
-              viewBox="0 0 24 24"
-              fill="none"
-              aria-label="Loading"
-            >
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-              />
-            </svg>
+          <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50/50 to-white py-16">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-brand to-indigo-600 shadow-lg shadow-brand/25">
+              <svg
+                className="h-7 w-7 animate-spin text-white"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-label="Loading"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                />
+              </svg>
+            </div>
+            <p className="text-sm font-medium text-[#6B7280]">Loading your workspace…</p>
           </div>
         ) : showConnectGate && userId ? (
           <EbayStoreConnectGate userId={userId} errorMessage={isError ? notice : undefined} />
         ) : showAmazefConnectGate && userId ? (
-          <div className="rounded-2xl border border-gray-100 bg-white p-8 text-center shadow-sm">
-            <h2 className="text-xl font-bold text-[#111827]">Connect Your Amazef Store</h2>
-            <p className="mx-auto mt-2 max-w-md text-sm text-[#6B7280]">
+          <div className="overflow-hidden rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50 via-white to-indigo-50 p-8 text-center shadow-md">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-brand to-indigo-600 text-2xl text-white shadow-lg shadow-brand/25">
+              🏪
+            </div>
+            <h2 className="mt-5 text-xl font-bold text-[#111827]">Connect Your Amazef Store</h2>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-[#6B7280]">
               Sign in with your Amazef account to start listing products directly to your store.
             </p>
             <button
               type="button"
               onClick={() => setShowAmazefConnectModal(true)}
-              className="mt-6 rounded-lg bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-dark"
+              className="mt-6 rounded-xl bg-gradient-to-r from-brand to-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-md shadow-brand/25 transition hover:shadow-lg"
             >
               Connect Amazef Account
             </button>
@@ -1240,15 +1257,22 @@ export function ListingsShell() {
             ) : null}
 
             {resumeOffer && !wizardStarted ? (
-          <div className="mb-6 rounded-xl border border-brand/20 bg-brand-light/30 p-4">
-            <p className="text-sm text-[#374151]">You have a listing in progress.</p>
-            <button
-              type="button"
-              onClick={() => void resumeSavedDraft()}
-              className="mt-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark"
-            >
-              Resume listing
-            </button>
+          <div className="mb-6 overflow-hidden rounded-2xl border border-amber-200/80 bg-gradient-to-r from-amber-50 via-orange-50/50 to-yellow-50 p-5 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-lg">
+                  ⏸
+                </span>
+                <p className="text-sm font-semibold text-amber-900">You have a listing in progress.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void resumeSavedDraft()}
+                className="rounded-xl bg-gradient-to-r from-brand to-indigo-600 px-5 py-2 text-sm font-semibold text-white shadow-md shadow-brand/20 transition hover:shadow-lg"
+              >
+                Resume listing
+              </button>
+            </div>
           </div>
         ) : null}
 
@@ -1258,9 +1282,15 @@ export function ListingsShell() {
 
         {currentStep === 0 ? (
           <div className="space-y-4">
-            <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-[#111827]">Start New Listing</h2>
-              <label className="mt-4 block text-sm font-medium text-[#111827]">
+            <div className="relative overflow-hidden rounded-2xl border border-violet-100 bg-white p-6 shadow-md shadow-violet-100/30">
+              <div className="pointer-events-none absolute right-0 top-0 h-24 w-32 bg-gradient-to-bl from-violet-100/60 to-transparent" />
+              <div className="relative flex items-center gap-2">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-brand to-violet-600 text-sm text-white shadow-sm">
+                  🔗
+                </span>
+                <h2 className="text-lg font-bold text-[#111827]">Start New Listing</h2>
+              </div>
+              <label className="relative mt-5 block text-sm font-semibold text-[#374151]">
                 AliExpress Product URL
                 <input
                   type="url"
@@ -1271,7 +1301,7 @@ export function ListingsShell() {
                     setPendingFulfillmentSelection(null);
                   }}
                   placeholder="https://www.aliexpress.com/item/..."
-                  className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand disabled:opacity-60"
+                  className="mt-2 w-full rounded-xl border border-violet-100 bg-violet-50/30 px-4 py-3 text-sm outline-none transition focus:border-brand focus:bg-white focus:ring-2 focus:ring-brand/20 disabled:opacity-60"
                 />
               </label>
             </div>
@@ -1398,10 +1428,10 @@ export function ListingsShell() {
 
           {notice ? (
             <p
-              className={`rounded-lg px-4 py-3 text-sm font-medium ${
+              className={`rounded-xl px-4 py-3 text-sm font-medium shadow-sm ${
                 isError
-                  ? "border border-red-100 bg-red-50 text-red-600"
-                  : "border border-emerald-100 bg-emerald-50 text-emerald-700"
+                  ? "border border-red-200 bg-gradient-to-r from-red-50 to-rose-50 text-red-700"
+                  : "border border-emerald-200 bg-gradient-to-r from-emerald-50 to-teal-50 text-emerald-700"
               }`}
             >
               {notice}
@@ -1413,9 +1443,9 @@ export function ListingsShell() {
               href={listedUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex text-sm font-semibold text-brand hover:underline"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-brand/10 px-4 py-2 text-sm font-semibold text-brand transition hover:bg-brand/15"
             >
-              View listing on {isAmazef ? "Amazef" : "eBay"}
+              View listing on {isAmazef ? "Amazef" : "eBay"} →
             </a>
           ) : null}
         </div>
@@ -1512,14 +1542,16 @@ export function ListingsShell() {
       ) : null}
 
       {showSavedToast ? (
-        <div className="fixed bottom-6 right-6 z-50 rounded-lg border border-emerald-200 bg-white px-4 py-2 text-sm font-medium text-emerald-700 shadow-lg">
-          Saved ✓
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-4 py-3 text-sm font-semibold text-emerald-700 shadow-lg shadow-emerald-100/50">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100 text-xs">✓</span>
+          Saved
         </div>
       ) : null}
 
       {showEbayConnectedToast ? (
-        <div className="fixed bottom-6 right-6 z-50 rounded-lg border border-emerald-200 bg-white px-4 py-2 text-sm font-medium text-emerald-700 shadow-lg">
-          Successfully connected to eBay ✓
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-4 py-3 text-sm font-semibold text-emerald-700 shadow-lg shadow-emerald-100/50">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100 text-xs">✓</span>
+          Successfully connected to eBay
         </div>
       ) : null}
     </DashboardLayout>
