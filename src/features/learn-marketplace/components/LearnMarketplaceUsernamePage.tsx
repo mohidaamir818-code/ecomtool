@@ -70,6 +70,13 @@ export function LearnMarketplaceUsernamePage() {
   const sanitized = username.replace(/[^a-zA-Z0-9]/g, "");
   const canContinue = sanitized.length >= 6;
 
+  function handleContinue() {
+    if (!canContinue) return;
+    sessionStorage.setItem(PRACTICE_USERNAME_KEY, sanitized);
+    completeCursorGuide();
+    router.push("/dashboard/learn-ebay/register/business-type");
+  }
+
   if (!ready) {
     return (
       <div className="flex min-h-full items-center justify-center bg-[#f7f7f7]">
@@ -157,15 +164,16 @@ export function LearnMarketplaceUsernamePage() {
             )}
           </div>
 
-          <div className="mt-10 flex justify-end">
+          <form
+            className="relative z-[95] mt-10 flex justify-end pb-24"
+            onSubmit={(event) => {
+              event.preventDefault();
+              handleContinue();
+            }}
+          >
             <button
-              type="button"
+              type="submit"
               disabled={!canContinue}
-              onClick={() => {
-                sessionStorage.setItem(PRACTICE_USERNAME_KEY, sanitized);
-                completeCursorGuide();
-                router.push("/dashboard/learn-ebay/register/business-type");
-              }}
               className={`rounded-full px-10 py-3 text-sm font-semibold text-white transition ${
                 canContinue
                   ? "bg-[#3665f3] hover:bg-[#2f56cc]"
@@ -174,7 +182,7 @@ export function LearnMarketplaceUsernamePage() {
             >
               Continue
             </button>
-          </div>
+          </form>
         </div>
       </main>
 
