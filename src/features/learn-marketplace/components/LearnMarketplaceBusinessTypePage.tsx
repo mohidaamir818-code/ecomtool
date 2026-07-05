@@ -90,7 +90,7 @@ export function LearnMarketplaceBusinessTypePage() {
     setShowCursor(false);
   }
 
-  const canContinue = selected !== null;
+  const canContinue = selected === "registered";
 
   if (!ready) {
     return (
@@ -151,15 +151,29 @@ export function LearnMarketplaceBusinessTypePage() {
               const isSelected = selected === option.value;
               const isRegistered = option.value === "registered";
               const highlight = isRegistered && (showCursor || isSelected);
+              const isDisabled = !isRegistered;
+
+              if (isDisabled) {
+                return (
+                  <div
+                    key={option.value}
+                    aria-disabled="true"
+                    className="relative w-full cursor-not-allowed rounded-xl border border-gray-200 bg-[#f7f7f7] p-5 text-left opacity-60"
+                  >
+                    <p className="text-base font-semibold text-[#191919]">{option.title}</p>
+                    <p className="mt-2 text-sm leading-relaxed text-[#555]">{option.description}</p>
+                  </div>
+                );
+              }
 
               return (
                 <button
                   key={option.value}
-                  ref={isRegistered ? registeredOptionRef : undefined}
+                  ref={registeredOptionRef}
                   type="button"
                   onClick={() => {
-                    setSelected(option.value);
-                    if (showCursor && isRegistered) {
+                    setSelected("registered");
+                    if (showCursor) {
                       completeCursorGuide();
                     }
                   }}
