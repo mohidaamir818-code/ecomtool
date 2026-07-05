@@ -317,7 +317,7 @@ export function LearnMarketplaceBusinessTypePage() {
                 sessionStorage.setItem(PRACTICE_BUSINESS_TYPE_KEY, "registered");
                 sessionStorage.setItem(PRACTICE_REGISTERED_SUBTYPE_KEY, "company");
                 completeSubtypeCursorGuide();
-                router.push("/dashboard/learn-ebay/register/complete");
+                router.push("/dashboard/learn-ebay/register/business-details");
               }}
               className={`rounded-full px-10 py-3 text-sm font-semibold text-white transition ${
                 canContinue
