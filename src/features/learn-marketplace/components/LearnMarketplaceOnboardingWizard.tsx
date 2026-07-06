@@ -463,22 +463,6 @@ export function LearnMarketplaceOnboardingWizard({ onComplete }: LearnMarketplac
                   );
                 })}
               </div>
-
-              {companyCountryMatch === "other" ? (
-                <div className="rounded-xl border border-[#3665f3]/20 bg-[#f0f6ff] p-4">
-                  <p className="text-sm text-[#555]">
-                    For IP setup, install the IPBurger extension to match your operating country.
-                  </p>
-                  <a
-                    href={IPBURGER_CHROME_STORE_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-3 inline-flex items-center rounded-full bg-[#3665f3] px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2f56cc]"
-                  >
-                    Add IPBurger
-                  </a>
-                </div>
-              ) : null}
             </div>
 
             <div className="mt-8 flex justify-between border-t border-gray-100 pt-6">

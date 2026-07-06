@@ -64,20 +64,23 @@ export function LearnMarketplaceIpSetupGuide({ onComplete }: LearnMarketplaceIpS
         </div>
 
         <div className="rounded-xl border border-[#3665f3]/20 bg-[#f0f6ff] p-5">
-          <p className="text-sm font-semibold text-[#191919]">Recommended tool: IPBurger</p>
-          <p className="mt-2 text-sm leading-relaxed text-[#555]">
-            IPBurger is a premium proxy and VPN extension that lets you route your browser traffic
-            through your operating country. It also helps protect your IP address, block WebRTC leaks,
-            and match timezone and language settings automatically.
+          <p className="text-sm text-[#555]">
+            For IP setup, install the IPBurger extension to match your operating country.
           </p>
           <a
             href={IPBURGER_CHROME_STORE_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-4 inline-flex items-center rounded-full bg-[#3665f3] px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2f56cc]"
+            className="mt-3 inline-flex items-center rounded-full bg-[#3665f3] px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2f56cc]"
           >
             Add IPBurger
           </a>
+          <p className="mt-4 text-sm font-semibold text-[#191919]">Why IPBurger?</p>
+          <p className="mt-2 text-sm leading-relaxed text-[#555]">
+            IPBurger is a premium proxy and VPN extension that lets you route your browser traffic
+            through your operating country. It also helps protect your IP address, block WebRTC leaks,
+            and match timezone and language settings automatically.
+          </p>
         </div>
 
         <ol className="mt-6 space-y-3">
