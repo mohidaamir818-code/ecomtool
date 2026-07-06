@@ -10,6 +10,7 @@ import {
   LearnMarketplaceContactStakeholdersGuide,
   PRACTICE_BUSINESS_DETAILS_DONE_KEY,
 } from "@/features/learn-marketplace/components/LearnMarketplaceContactStakeholdersGuide";
+import { PRACTICE_CONTACT_STAKEHOLDERS_DONE_KEY } from "@/features/learn-marketplace/components/LearnMarketplacePayoutInformationGuide";
 import { LearnMarketplaceContactStakeholdersReviewPopup } from "@/features/learn-marketplace/components/LearnMarketplaceContactStakeholdersReviewPopup";
 import { PRACTICE_REGISTERED_SUBTYPE_KEY } from "@/features/learn-marketplace/components/LearnMarketplaceBusinessTypeGuide";
 import { MARKETPLACE_PHONE_COUNTRIES } from "@/features/learn-marketplace/data/marketplace-phone-countries";
@@ -193,8 +194,9 @@ export function LearnMarketplaceContactStakeholdersPage() {
         }}
         onEdit={() => setShowReviewPopup(false)}
         onContinue={() => {
+          sessionStorage.setItem(PRACTICE_CONTACT_STAKEHOLDERS_DONE_KEY, "true");
           completeCursorGuide();
-          router.push("/dashboard/learn-ebay/register/complete");
+          router.push("/dashboard/learn-ebay/register/payout-information");
         }}
       />
 
