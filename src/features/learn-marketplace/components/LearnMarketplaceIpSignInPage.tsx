@@ -7,18 +7,16 @@ import {
   LEARN_MARKETPLACE_ONBOARDING_COMPLETE_KEY,
 } from "@/features/learn-marketplace/components/LearnMarketplaceOnboardingWizard";
 import { LEARN_MARKETPLACE_IP_SETUP_GUIDE_ACK_KEY } from "@/features/learn-marketplace/components/LearnMarketplaceIpSetupGuide";
+import { LEARN_MARKETPLACE_IP_SETUP_INSTALL_DONE_KEY } from "@/features/learn-marketplace/components/LearnMarketplaceIpSetupPage";
 
-export const LEARN_MARKETPLACE_IP_SETUP_INSTALL_DONE_KEY =
-  "learn_marketplace_ip_setup_install_done";
+const IPBURGER_SIGN_IN_URL = "https://secure.ipburger.com/aff.php?aff=3047";
 
-const IPBURGER_CHROME_STORE_URL =
-  "https://chromewebstore.google.com/detail/ipburger-proxy-vpn/kchocjcihdgkoplngjemhpplmmloanja";
+const IP_SIGN_IN_VIDEO_SRC = "/videos/ipburger-signin.mp4";
 
-const IP_SETUP_VIDEO_SRC = "/videos/ipburger-setup.mp4";
-
-export function LearnMarketplaceIpSetupPage() {
+export function LearnMarketplaceIpSignInPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
+  const [hasSignInVideo, setHasSignInVideo] = useState(false);
 
   useEffect(() => {
     const onboardingComplete =
@@ -27,7 +25,6 @@ export function LearnMarketplaceIpSetupPage() {
       sessionStorage.getItem(LEARN_MARKETPLACE_COMPANY_COUNTRY_MATCH_KEY) === "other";
     const ipSetupComplete =
       sessionStorage.getItem(LEARN_MARKETPLACE_IP_SETUP_GUIDE_ACK_KEY) === "true";
-
     const installDone =
       sessionStorage.getItem(LEARN_MARKETPLACE_IP_SETUP_INSTALL_DONE_KEY) === "true";
 
@@ -36,17 +33,21 @@ export function LearnMarketplaceIpSetupPage() {
       return;
     }
 
-    if (installDone) {
-      router.replace("/dashboard/learn-ebay/ip-setup/sign-in");
+    if (!installDone) {
+      router.replace("/dashboard/learn-ebay/ip-setup");
       return;
     }
+
+    fetch(IP_SIGN_IN_VIDEO_SRC, { method: "HEAD" })
+      .then((response) => setHasSignInVideo(response.ok))
+      .catch(() => setHasSignInVideo(false));
 
     setReady(true);
   }, [router]);
 
   function handleContinue() {
-    sessionStorage.setItem(LEARN_MARKETPLACE_IP_SETUP_INSTALL_DONE_KEY, "true");
-    router.push("/dashboard/learn-ebay/ip-setup/sign-in");
+    sessionStorage.setItem(LEARN_MARKETPLACE_IP_SETUP_GUIDE_ACK_KEY, "true");
+    router.push("/dashboard/learn-ebay");
   }
 
   if (!ready) {
@@ -65,41 +66,53 @@ export function LearnMarketplaceIpSetupPage() {
       <div className="w-full max-w-[760px] rounded-2xl border border-gray-200 bg-white p-8 shadow-sm sm:p-10">
         <div className="mb-8 text-center">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#3665f3]">
-            Step 1 · IP setup
+            Step 2 · IP setup
           </p>
           <h1 className="mt-3 text-3xl font-bold tracking-tight text-[#191919]">
-            Add IPBurger
+            Sign in to IPBurger
           </h1>
           <p className="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-[#555]">
-            Watch the setup guide below, then install the IPBurger extension to match your
-            operating country.
+            Watch the guide below, then sign in to your IPBurger account and connect to your
+            operating country before you continue to marketplace practice.
           </p>
         </div>
 
-        <div className="rounded-xl border border-[#3665f3]/20 bg-[#f0f6ff] p-5">
-          <p className="text-sm text-[#555]">
-            For IP setup, install the IPBurger extension to match your operating country.
+        {hasSignInVideo ? (
+          <div className="overflow-hidden rounded-xl border border-gray-200 bg-black">
+            <video
+              className="aspect-video w-full"
+              controls
+              playsInline
+              preload="metadata"
+              src={IP_SIGN_IN_VIDEO_SRC}
+            >
+              Your browser does not support the video tag.
+            </video>
+          </div>
+        ) : (
+          <div
+            className="flex aspect-video items-center justify-center rounded-xl border border-dashed border-gray-300 bg-[#f7f7f7] px-6 text-center text-sm text-[#888]"
+            aria-label="IPBurger sign-in video placeholder"
+          >
+            Sign-in video will be added here. Replace{" "}
+            <span className="font-mono text-xs">public/videos/ipburger-signin.mp4</span> when ready.
+          </div>
+        )}
+
+        <div className="mt-6 rounded-xl border border-[#3665f3]/20 bg-[#f0f6ff] p-5">
+          <p className="text-sm font-semibold text-[#191919]">Sign in</p>
+          <p className="mt-2 text-sm leading-relaxed text-[#555]">
+            Open IPBurger, sign in to your account, and select the country where you will operate
+            your marketplace selling activity.
           </p>
           <a
-            href={IPBURGER_CHROME_STORE_URL}
+            href={IPBURGER_SIGN_IN_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="mt-3 inline-flex items-center rounded-full bg-[#3665f3] px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2f56cc]"
           >
-            Add IPBurger
+            Sign in to IPBurger
           </a>
-        </div>
-
-        <div className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-black">
-          <video
-            className="aspect-video w-full"
-            controls
-            playsInline
-            preload="metadata"
-            src={IP_SETUP_VIDEO_SRC}
-          >
-            Your browser does not support the video tag.
-          </video>
         </div>
 
         <div className="mt-8 flex justify-end border-t border-gray-100 pt-6">

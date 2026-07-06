@@ -8,6 +8,7 @@ import {
   LearnMarketplaceOnboardingWizard,
 } from "@/features/learn-marketplace/components/LearnMarketplaceOnboardingWizard";
 import { LEARN_MARKETPLACE_IP_SETUP_GUIDE_ACK_KEY } from "@/features/learn-marketplace/components/LearnMarketplaceIpSetupGuide";
+import { LEARN_MARKETPLACE_IP_SETUP_INSTALL_DONE_KEY } from "@/features/learn-marketplace/components/LearnMarketplaceIpSetupPage";
 
 interface LearnMarketplaceExperienceGateProps {
   children: React.ReactNode;
@@ -37,7 +38,13 @@ export function LearnMarketplaceExperienceGate({ children }: LearnMarketplaceExp
         sessionStorage.getItem(LEARN_MARKETPLACE_IP_SETUP_GUIDE_ACK_KEY) === "true";
 
       if (needsIpSetup && !ipSetupComplete) {
-        router.replace("/dashboard/learn-ebay/ip-setup");
+        const installDone =
+          sessionStorage.getItem(LEARN_MARKETPLACE_IP_SETUP_INSTALL_DONE_KEY) === "true";
+        router.replace(
+          installDone
+            ? "/dashboard/learn-ebay/ip-setup/sign-in"
+            : "/dashboard/learn-ebay/ip-setup",
+        );
         return;
       }
     }
