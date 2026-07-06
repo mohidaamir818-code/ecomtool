@@ -93,7 +93,7 @@ export function LearnMarketplaceIpSetupPage() {
             onClick={handleContinue}
             className="rounded-full bg-[#3665f3] px-8 py-3 text-sm font-semibold text-white transition hover:bg-[#2f56cc]"
           >
-            Continue to marketplace practice
+            Continue
           </button>
         </div>
       </div>
