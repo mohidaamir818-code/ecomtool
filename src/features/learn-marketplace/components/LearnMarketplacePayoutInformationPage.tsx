@@ -14,6 +14,10 @@ import {
   PAYOUT_INFORMATION_GUIDE_KEY,
   PRACTICE_CONTACT_STAKEHOLDERS_DONE_KEY,
 } from "@/features/learn-marketplace/components/LearnMarketplacePayoutInformationGuide";
+import {
+  PRACTICE_PAYOUT_DONE_KEY,
+  savePracticePayoutDetails,
+} from "@/features/learn-marketplace/data/practice-registration-storage";
 import { PRACTICE_USERNAME_KEY } from "@/features/learn-marketplace/components/LearnMarketplaceUsernameGuide";
 
 const signupSteps = [
@@ -307,7 +311,14 @@ export function LearnMarketplacePayoutInformationPage() {
               onEdit={handleEditBankDetails}
               onContinue={() => {
                 if (!authorisationChecked) return;
-                router.push("/dashboard/learn-ebay/register/complete");
+                savePracticePayoutDetails({
+                  accountHolderName: manualAccountName,
+                  bankName: savedBankName,
+                  sortCode,
+                  accountNumber,
+                });
+                sessionStorage.setItem(PRACTICE_PAYOUT_DONE_KEY, "true");
+                router.push("/dashboard/learn-ebay/register/review-submit");
               }}
             />
           ) : (

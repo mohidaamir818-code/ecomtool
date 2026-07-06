@@ -11,6 +11,7 @@ import {
 } from "@/features/learn-marketplace/components/LearnMarketplaceBusinessDetailsGuide";
 import { LearnMarketplaceBusinessDetailsNextStepGuide } from "@/features/learn-marketplace/components/LearnMarketplaceBusinessDetailsNextStepGuide";
 import { PRACTICE_BUSINESS_DETAILS_DONE_KEY } from "@/features/learn-marketplace/components/LearnMarketplaceContactStakeholdersGuide";
+import { savePracticeBusinessDetails } from "@/features/learn-marketplace/data/practice-registration-storage";
 import { PRACTICE_REGISTERED_SUBTYPE_KEY } from "@/features/learn-marketplace/components/LearnMarketplaceBusinessTypeGuide";
 import { PRACTICE_USERNAME_KEY } from "@/features/learn-marketplace/components/LearnMarketplaceUsernameGuide";
 
@@ -179,6 +180,16 @@ export function LearnMarketplaceBusinessDetailsPage() {
         visible={showNextStepPopup}
         onDismiss={() => {
           setShowNextStepPopup(false);
+          savePracticeBusinessDetails({
+            legalName,
+            registrationNumber,
+            street1,
+            street2,
+            city,
+            county,
+            postcode,
+            phone,
+          });
           sessionStorage.setItem(PRACTICE_BUSINESS_DETAILS_DONE_KEY, "true");
           router.push("/dashboard/learn-ebay/register/contact-stakeholders");
         }}
