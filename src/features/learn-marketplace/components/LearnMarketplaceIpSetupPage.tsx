@@ -11,6 +11,8 @@ import { LEARN_MARKETPLACE_IP_SETUP_GUIDE_ACK_KEY } from "@/features/learn-marke
 const IPBURGER_CHROME_STORE_URL =
   "https://chromewebstore.google.com/detail/ipburger-proxy-vpn/kchocjcihdgkoplngjemhpplmmloanja";
 
+const IP_SETUP_VIDEO_SRC = "/videos/ipburger-setup.mp4";
+
 export function LearnMarketplaceIpSetupPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
@@ -73,11 +75,16 @@ export function LearnMarketplaceIpSetupPage() {
           </a>
         </div>
 
-        <div
-          className="mt-6 flex aspect-video items-center justify-center rounded-xl border border-dashed border-gray-300 bg-[#f7f7f7] text-sm text-[#888]"
-          aria-label="IP setup video placeholder"
-        >
-          Video will be added here
+        <div className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-black">
+          <video
+            className="aspect-video w-full"
+            controls
+            playsInline
+            preload="metadata"
+            src={IP_SETUP_VIDEO_SRC}
+          >
+            Your browser does not support the video tag.
+          </video>
         </div>
 
         <div className="mt-8 flex justify-end border-t border-gray-100 pt-6">
