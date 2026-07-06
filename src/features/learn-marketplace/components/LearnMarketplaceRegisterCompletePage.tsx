@@ -26,7 +26,7 @@ export function LearnMarketplaceRegisterCompletePage() {
   }
 
   function handleMoveToNextStep() {
-    router.push("/dashboard/learn-ebay");
+    router.push("/dashboard/learn-ebay/essential-extensions");
   }
 
   return (
