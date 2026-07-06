@@ -2,10 +2,9 @@
 
 import { useEffect, useState } from "react";
 import {
-  LEARN_MARKETPLACE_EXPERIENCE_KEY,
-  LearnMarketplaceExperiencePage,
-  type MarketplaceExperience,
-} from "@/features/learn-marketplace/components/LearnMarketplaceExperiencePage";
+  LEARN_MARKETPLACE_ONBOARDING_COMPLETE_KEY,
+  LearnMarketplaceOnboardingWizard,
+} from "@/features/learn-marketplace/components/LearnMarketplaceOnboardingWizard";
 
 interface LearnMarketplaceExperienceGateProps {
   children: React.ReactNode;
@@ -13,20 +12,14 @@ interface LearnMarketplaceExperienceGateProps {
 
 export function LearnMarketplaceExperienceGate({ children }: LearnMarketplaceExperienceGateProps) {
   const [ready, setReady] = useState(false);
-  const [experience, setExperience] = useState<MarketplaceExperience | null>(null);
+  const [onboardingComplete, setOnboardingComplete] = useState(false);
 
   useEffect(() => {
-    const stored = sessionStorage.getItem(LEARN_MARKETPLACE_EXPERIENCE_KEY);
-    if (stored === "new" || stored === "experienced") {
-      setExperience(stored);
-    }
+    setOnboardingComplete(
+      sessionStorage.getItem(LEARN_MARKETPLACE_ONBOARDING_COMPLETE_KEY) === "true",
+    );
     setReady(true);
   }, []);
-
-  function handleContinue(value: MarketplaceExperience) {
-    sessionStorage.setItem(LEARN_MARKETPLACE_EXPERIENCE_KEY, value);
-    setExperience(value);
-  }
 
   if (!ready) {
     return (
@@ -39,8 +32,10 @@ export function LearnMarketplaceExperienceGate({ children }: LearnMarketplaceExp
     );
   }
 
-  if (!experience) {
-    return <LearnMarketplaceExperiencePage onContinue={handleContinue} />;
+  if (!onboardingComplete) {
+    return (
+      <LearnMarketplaceOnboardingWizard onComplete={() => setOnboardingComplete(true)} />
+    );
   }
 
   return children;
