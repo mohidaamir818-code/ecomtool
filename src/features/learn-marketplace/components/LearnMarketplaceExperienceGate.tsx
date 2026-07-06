@@ -1,7 +1,7 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { LearnMarketplaceIpSetupGuide } from "@/features/learn-marketplace/components/LearnMarketplaceIpSetupGuide";
 import {
   LEARN_MARKETPLACE_COMPANY_COUNTRY_MATCH_KEY,
   LEARN_MARKETPLACE_ONBOARDING_COMPLETE_KEY,
@@ -13,27 +13,37 @@ interface LearnMarketplaceExperienceGateProps {
   children: React.ReactNode;
 }
 
-type GatePhase = "loading" | "wizard" | "ip-guide" | "main";
+type GatePhase = "loading" | "wizard" | "main";
 
 function resolveGatePhase(): GatePhase {
   const onboardingComplete =
     sessionStorage.getItem(LEARN_MARKETPLACE_ONBOARDING_COMPLETE_KEY) === "true";
-  const ipGuideComplete =
-    sessionStorage.getItem(LEARN_MARKETPLACE_IP_SETUP_GUIDE_ACK_KEY) === "true";
-  const needsIpGuide =
-    sessionStorage.getItem(LEARN_MARKETPLACE_COMPANY_COUNTRY_MATCH_KEY) === "other";
 
   if (!onboardingComplete) return "wizard";
-  if (needsIpGuide && !ipGuideComplete) return "ip-guide";
   return "main";
 }
 
 export function LearnMarketplaceExperienceGate({ children }: LearnMarketplaceExperienceGateProps) {
+  const router = useRouter();
   const [phase, setPhase] = useState<GatePhase>("loading");
 
   useEffect(() => {
-    setPhase(resolveGatePhase());
-  }, []);
+    const nextPhase = resolveGatePhase();
+
+    if (nextPhase === "main") {
+      const needsIpSetup =
+        sessionStorage.getItem(LEARN_MARKETPLACE_COMPANY_COUNTRY_MATCH_KEY) === "other";
+      const ipSetupComplete =
+        sessionStorage.getItem(LEARN_MARKETPLACE_IP_SETUP_GUIDE_ACK_KEY) === "true";
+
+      if (needsIpSetup && !ipSetupComplete) {
+        router.replace("/dashboard/learn-ebay/ip-setup");
+        return;
+      }
+    }
+
+    setPhase(nextPhase);
+  }, [router]);
 
   if (phase === "loading") {
     return (
@@ -49,13 +59,9 @@ export function LearnMarketplaceExperienceGate({ children }: LearnMarketplaceExp
   if (phase === "wizard") {
     return (
       <LearnMarketplaceOnboardingWizard
-        onComplete={() => setPhase(resolveGatePhase())}
+        onComplete={() => setPhase("main")}
       />
     );
-  }
-
-  if (phase === "ip-guide") {
-    return <LearnMarketplaceIpSetupGuide onComplete={() => setPhase("main")} />;
   }
 
   return children;

@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { MARKETPLACE_PHONE_COUNTRIES } from "@/features/learn-marketplace/data/marketplace-phone-countries";
 import {
@@ -11,9 +12,6 @@ export const LEARN_MARKETPLACE_SELLER_COUNTRY_KEY = "learn_marketplace_seller_co
 export const LEARN_MARKETPLACE_REGISTERED_COMPANY_KEY = "learn_marketplace_registered_company";
 export const LEARN_MARKETPLACE_COMPANY_COUNTRY_MATCH_KEY = "learn_marketplace_company_country_match";
 export const LEARN_MARKETPLACE_ONBOARDING_COMPLETE_KEY = "learn_marketplace_onboarding_complete";
-
-const IPBURGER_CHROME_STORE_URL =
-  "https://chromewebstore.google.com/detail/ipburger-proxy-vpn/kchocjcihdgkoplngjemhpplmmloanja";
 
 const experienceOptions: Array<{
   value: MarketplaceExperience;
@@ -129,6 +127,7 @@ function StepIndicator({ current, total }: { current: number; total: number }) {
 }
 
 export function LearnMarketplaceOnboardingWizard({ onComplete }: LearnMarketplaceOnboardingWizardProps) {
+  const router = useRouter();
   const [step, setStep] = useState<WizardStep>("experience");
   const [experience, setExperience] = useState<MarketplaceExperience | null>(null);
   const [country, setCountry] = useState("");
@@ -183,6 +182,12 @@ export function LearnMarketplaceOnboardingWizard({ onComplete }: LearnMarketplac
       resolvedCompanyCountryMatch,
     );
     sessionStorage.setItem(LEARN_MARKETPLACE_ONBOARDING_COMPLETE_KEY, "true");
+
+    if (resolvedCompanyCountryMatch === "other") {
+      router.push("/dashboard/learn-ebay/ip-setup");
+      return;
+    }
+
     onComplete();
   }
 
@@ -515,16 +520,6 @@ export function LearnMarketplaceOnboardingWizard({ onComplete }: LearnMarketplac
                   <div>
                     <p className="text-sm font-semibold text-[#191919]">{item.title}</p>
                     <p className="mt-1 text-xs leading-relaxed text-[#555]">{item.description}</p>
-                    {item.id === "ip-setup" ? (
-                      <a
-                        href={IPBURGER_CHROME_STORE_URL}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="mt-3 inline-flex items-center rounded-full bg-[#3665f3] px-5 py-2 text-xs font-semibold text-white transition hover:bg-[#2f56cc]"
-                      >
-                        Add IPBurger
-                      </a>
-                    ) : null}
                   </div>
                 </li>
               ))}
