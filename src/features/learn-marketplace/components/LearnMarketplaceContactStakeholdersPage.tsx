@@ -10,6 +10,7 @@ import {
   LearnMarketplaceContactStakeholdersGuide,
   PRACTICE_BUSINESS_DETAILS_DONE_KEY,
 } from "@/features/learn-marketplace/components/LearnMarketplaceContactStakeholdersGuide";
+import { LearnMarketplaceContactStakeholdersReviewPopup } from "@/features/learn-marketplace/components/LearnMarketplaceContactStakeholdersReviewPopup";
 import { PRACTICE_REGISTERED_SUBTYPE_KEY } from "@/features/learn-marketplace/components/LearnMarketplaceBusinessTypeGuide";
 import { MARKETPLACE_PHONE_COUNTRIES } from "@/features/learn-marketplace/data/marketplace-phone-countries";
 import { PRACTICE_USERNAME_KEY } from "@/features/learn-marketplace/components/LearnMarketplaceUsernameGuide";
@@ -95,6 +96,7 @@ export function LearnMarketplaceContactStakeholdersPage() {
   const firstNameRef = useRef<HTMLInputElement>(null);
   const [ready, setReady] = useState(false);
   const [showIntroPopup, setShowIntroPopup] = useState(false);
+  const [showReviewPopup, setShowReviewPopup] = useState(false);
   const [showCursor, setShowCursor] = useState(false);
 
   const [firstName, setFirstName] = useState("");
@@ -173,6 +175,27 @@ export function LearnMarketplaceContactStakeholdersPage() {
       <LearnMarketplaceContactStakeholdersGuide
         visible={showIntroPopup}
         onDismiss={() => setShowIntroPopup(false)}
+      />
+
+      <LearnMarketplaceContactStakeholdersReviewPopup
+        visible={showReviewPopup}
+        details={{
+          firstName,
+          middleName,
+          surname,
+          dateOfBirth,
+          nationality,
+          residenceCountry,
+          street1,
+          street2,
+          city,
+          county,
+        }}
+        onEdit={() => setShowReviewPopup(false)}
+        onContinue={() => {
+          completeCursorGuide();
+          router.push("/dashboard/learn-ebay/register/complete");
+        }}
       />
 
       <style jsx global>{`
@@ -337,7 +360,10 @@ export function LearnMarketplaceContactStakeholdersPage() {
                     onChange={(event) => setDateOfBirth(event.target.value)}
                     className="mt-1 w-full rounded-xl border border-[#767676] bg-[#f7f7f7] px-4 py-3.5 text-sm outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
                   />
-                  <FieldInstruction>Must match your passport or ID.</FieldInstruction>
+                  <FieldInstruction>
+                    <strong className="text-[#191919]">Give the date exactly as on your ID</strong> —
+                    same day, month and year as printed on your passport or government-issued ID.
+                  </FieldInstruction>
                 </div>
                 <div>
                   <label htmlFor="contact-nationality" className="text-xs text-[#767676]">
@@ -368,6 +394,10 @@ export function LearnMarketplaceContactStakeholdersPage() {
 
             <section className="mt-8">
               <h3 className="text-base font-bold">Legal residence</h3>
+              <FieldInstruction>
+                <strong className="text-[#191919]">Write only the address of the company</strong> —
+                use your company&apos;s registered business address, not a personal home address.
+              </FieldInstruction>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <div className="sm:col-span-2 sm:max-w-md">
                   <label htmlFor="residence-country" className="text-xs text-[#767676]">
@@ -386,8 +416,7 @@ export function LearnMarketplaceContactStakeholdersPage() {
                     ))}
                   </select>
                   <FieldInstruction>
-                    <strong className="text-[#191919]">Always give your own country details</strong> —
-                    select where you legally live.
+                    Country where your <strong className="text-[#191919]">company is registered</strong>.
                   </FieldInstruction>
                 </div>
                 <div>
@@ -401,6 +430,10 @@ export function LearnMarketplaceContactStakeholdersPage() {
                     onChange={(event) => setStreet1(event.target.value)}
                     className="mt-1 w-full rounded-xl border border-[#767676] bg-[#f7f7f7] px-4 py-3.5 text-sm outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
                   />
+                  <FieldInstruction>
+                    <strong className="text-[#191919]">Company address only</strong> — street line 1 of
+                    your registered company address.
+                  </FieldInstruction>
                 </div>
                 <div>
                   <label htmlFor="contact-street-2" className="text-xs text-[#767676]">
@@ -413,6 +446,7 @@ export function LearnMarketplaceContactStakeholdersPage() {
                     onChange={(event) => setStreet2(event.target.value)}
                     className="mt-1 w-full rounded-xl border border-[#767676] bg-[#f7f7f7] px-4 py-3.5 text-sm outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
                   />
+                  <FieldInstruction>Optional second line of the company address.</FieldInstruction>
                 </div>
                 <div>
                   <label htmlFor="contact-city" className="text-xs text-[#767676]">
@@ -425,6 +459,7 @@ export function LearnMarketplaceContactStakeholdersPage() {
                     onChange={(event) => setCity(event.target.value)}
                     className="mt-1 w-full rounded-xl border border-[#767676] bg-[#f7f7f7] px-4 py-3.5 text-sm outline-none ring-[#3665f3] transition focus:bg-white focus:ring-2"
                   />
+                  <FieldInstruction>City from your company&apos;s registered address.</FieldInstruction>
                 </div>
                 <div>
                   <label htmlFor="contact-county" className="text-xs text-[#767676]">
@@ -445,6 +480,7 @@ export function LearnMarketplaceContactStakeholdersPage() {
                       </option>
                     ))}
                   </select>
+                  <FieldInstruction>County for the company&apos;s registered address.</FieldInstruction>
                 </div>
               </div>
             </section>
@@ -456,8 +492,7 @@ export function LearnMarketplaceContactStakeholdersPage() {
               disabled={!canContinue}
               onClick={() => {
                 if (!canContinue) return;
-                completeCursorGuide();
-                router.push("/dashboard/learn-ebay/register/complete");
+                setShowReviewPopup(true);
               }}
               className={`rounded-full px-10 py-3 text-sm font-semibold text-white transition ${
                 canContinue

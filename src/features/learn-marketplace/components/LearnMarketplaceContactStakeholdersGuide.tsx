@@ -54,10 +54,18 @@ export function LearnMarketplaceContactStakeholdersGuide({
           </div>
 
           <div className="rounded-xl border border-gray-100 bg-[#f7f7f7] p-4">
+            <p className="text-sm font-semibold text-[#191919]">Date of birth</p>
+            <p className="mt-1 text-sm leading-relaxed text-[#555]">
+              <strong className="text-[#191919]">Give the date exactly as on your ID</strong> — same day,
+              month and year as printed on your passport or government-issued ID.
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-gray-100 bg-[#f7f7f7] p-4">
             <p className="text-sm font-semibold text-[#191919]">Legal residence</p>
             <p className="mt-1 text-sm leading-relaxed text-[#555]">
-              Use the country and address where you legally live — not a suggested or recommended
-              address from the marketplace.
+              <strong className="text-[#191919]">Write only the address of the company</strong> — use your
+              company&apos;s registered business address, not a personal home address.
             </p>
           </div>
         </div>
