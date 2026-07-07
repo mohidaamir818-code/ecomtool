@@ -25,11 +25,19 @@ const extensions = [
   },
 ] as const;
 
+const MARKETPLACE_GUIDE_STEP_KEY = "learn_marketplace_guide_step";
+const MARKETPLACE_CURSOR_GUIDE_PREFIX = "learn_marketplace_cursor_guide_";
+
 export function LearnMarketplaceEssentialExtensionsPage() {
   const router = useRouter();
 
   function handleDone() {
-    router.push("/dashboard/learn-ebay");
+    sessionStorage.setItem(MARKETPLACE_GUIDE_STEP_KEY, "done");
+    const userId = sessionStorage.getItem("ecomtools_user_id");
+    if (userId) {
+      localStorage.setItem(`${MARKETPLACE_CURSOR_GUIDE_PREFIX}${userId}`, "true");
+    }
+    router.replace("/dashboard/learn-ebay");
   }
 
   return (
