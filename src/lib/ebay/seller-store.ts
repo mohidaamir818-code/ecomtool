@@ -103,19 +103,26 @@ function parseAvailableQuantity(block: string, fallbackQty: number): number {
   return available >= 0 ? available : fallbackQty;
 }
 
+function parsePriceValue(block: string, tag: string, fallback = 0): number {
+  const match = block.match(new RegExp(`<${tag}[^>]*>([^<]*)<\\/${tag}>`, "i"));
+  const value = Number(match?.[1]?.trim() ?? xmlTagValue(block, tag) ?? fallback);
+  return Number.isFinite(value) ? value : fallback;
+}
+
 function isActiveListingItem(itemBlock: string): boolean {
   const listingStatus = parseListingStatus(itemBlock);
   if (listingStatus && listingStatus.toLowerCase() !== "active") {
     return false;
   }
 
-  const quantityAvailable = parseAvailableQuantity(itemBlock, 0);
+  const itemQuantity = parseAvailableQuantity(itemBlock, 0);
   const variationBlocks = itemBlock.match(/<Variation>[\s\S]*?<\/Variation>/gi) ?? [];
   if (variationBlocks.length > 0) {
-    return variationBlocks.some((varBlock) => parseAvailableQuantity(varBlock, 0) > 0);
+    if (itemQuantity > 0) return true;
+    return variationBlocks.some((varBlock) => parseAvailableQuantity(varBlock, itemQuantity) > 0);
   }
 
-  return quantityAvailable > 0;
+  return itemQuantity > 0;
 }
 
 function extractActiveListXml(xml: string): string {
@@ -175,18 +182,19 @@ async function fetchSellerActiveListRows(
         /<SellingStatus>[\s\S]*?<CurrentPrice[^>]*currencyID="([^"]*)"[^>]*>([^<]*)<\/CurrentPrice>/i,
       );
       const currency = priceMatch?.[1] ?? config.currency;
-      const price = Number(priceMatch?.[2] ?? 0);
-      if (!Number.isFinite(price) || price <= 0) continue;
-
+      const itemPrice = parsePriceValue(block, "CurrentPrice", Number(priceMatch?.[2] ?? 0));
       const itemQuantity = parseAvailableQuantity(block, 1);
       const variationBlocks = block.match(/<Variation>[\s\S]*?<\/Variation>/gi) ?? [];
 
       if (variationBlocks.length > 0) {
+        const rowsBefore = rows.length;
         for (const varBlock of variationBlocks) {
           const availableQty = parseAvailableQuantity(varBlock, itemQuantity);
           if (availableQty <= 0) continue;
 
-          const varPrice = Number(xmlTagValue(varBlock, "StartPrice") ?? price);
+          const varPrice = parsePriceValue(varBlock, "StartPrice", itemPrice);
+          if (varPrice <= 0 && itemPrice <= 0) continue;
+
           const variationSpecifics = parseVariationSpecifics(varBlock);
           const variationSku = xmlTagValue(varBlock, "SKU")?.trim() || `${listingId}-${rows.length + 1}`;
           rows.push({
@@ -194,7 +202,7 @@ async function fetchSellerActiveListRows(
             listingUrl: buildEbayListingUrl(listingId, marketplaceId),
             title,
             imageUrl: galleryUrl,
-            price: Number.isFinite(varPrice) && varPrice > 0 ? varPrice : price,
+            price: varPrice > 0 ? varPrice : itemPrice,
             currency,
             label: parseVariationLabel(varBlock) ?? "Default",
             quantity: availableQty,
@@ -202,13 +210,31 @@ async function fetchSellerActiveListRows(
             variationSpecifics,
           });
         }
-      } else if (itemQuantity > 0) {
+
+        if (rows.length === rowsBefore && itemPrice > 0 && itemQuantity > 0) {
+          rows.push({
+            listingId,
+            listingUrl: buildEbayListingUrl(listingId, marketplaceId),
+            title,
+            imageUrl: galleryUrl,
+            price: itemPrice,
+            currency,
+            label: "Default",
+            quantity: itemQuantity,
+            sku: xmlTagValue(block, "SKU")?.trim() || listingId,
+            variationSpecifics: [],
+          });
+        }
+      } else {
+        if (itemPrice <= 0) continue;
+        if (itemQuantity <= 0) continue;
+
         rows.push({
           listingId,
           listingUrl: buildEbayListingUrl(listingId, marketplaceId),
           title,
           imageUrl: galleryUrl,
-          price,
+          price: itemPrice,
           currency,
           label: "Default",
           quantity: itemQuantity,
