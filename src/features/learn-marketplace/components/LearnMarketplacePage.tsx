@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { EbayGuideStartButton } from "@/features/learn-marketplace/components/EbayGuideStartButton";
 import { LearnMarketplacePageGuide } from "@/features/learn-marketplace/components/LearnMarketplacePageGuide";
 
 function PracticeProductImage({
@@ -208,6 +209,8 @@ export function LearnMarketplacePage() {
       </div>
 
       <div className="mx-auto max-w-[1400px] space-y-6 px-4 py-6">
+        <EbayGuideStartButton />
+
         <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl bg-[#191919] px-6 py-5 text-white">
           <p className="max-w-3xl text-lg font-semibold">
             Massive wins await. Tap into Live to score the things you love in real time.

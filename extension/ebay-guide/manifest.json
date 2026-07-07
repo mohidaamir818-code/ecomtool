@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "EcomTool eBay Guide",
+  "version": "1.0.0",
+  "description": "Step-by-step product research guidance on real eBay pages, linked to EcomTool Learn eBay.",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": [
+    "*://*.ebay.com/*",
+    "*://*.ebay.co.uk/*",
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.ebay.com/*", "*://*.ebay.co.uk/*"],
+      "js": ["content-scripts/ebay-guide.js"],
+      "css": ["styles/overlay.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "http://localhost:3000/*",
+        "http://127.0.0.1:3000/*",
+        "https://*/*"
+      ],
+      "js": ["content-scripts/ecomtool-bridge.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "EcomTool eBay Guide",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "guides": [
+    {
+      "id": "hunting-basics",
+      "title": "Product hunting on eBay",
+      "description": "Learn how to search eBay and review sold listings for product research.",
+      "steps": [
+        {
+          "urlPattern": "ebay.co.uk",
+          "selector": "input#gh-ac",
+          "message": "Yahan search bar mein apna product keyword type karo — jaise \"wireless earbuds\" ya \"phone case\".",
+          "position": "bottom"
+        },
+        {
+          "urlPattern": "ebay.co.uk",
+          "selector": "button#gh-search-btn, input#gh-btn",
+          "message": "Ab Search button par click karo taake results open hon.",
+          "position": "left"
+        },
+        {
+          "urlPattern": "/sch/",
+          "selector": "a[href*=\"LH_Complete=1\"], a[href*=\"LH_Sold=1\"], [aria-label*=\"Sold\"]",
+          "message": "Sold listings filter par click karo — yeh batata hai ke product kitna bikta hai.",
+          "position": "right"
+        },
+        {
+          "urlPattern": "/sch/",
+          "selector": ".s-item, li.s-item",
+          "message": "Yahan sold listings dekho — title, price aur kitni baar bika yeh sab note karo.",
+          "position": "top"
+        },
+        {
+          "urlPattern": "/sch/",
+          "selector": ".s-item__price, .s-item__detail--primary",
+          "message": "Average sold price check karo. Agar margin theek lagay to EcomTool mein supplier dhundho.",
+          "position": "bottom"
+        }
+      ]
+    }
+  ]
+}
