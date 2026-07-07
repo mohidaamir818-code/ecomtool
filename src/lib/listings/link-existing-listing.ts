@@ -6,6 +6,7 @@ import { mergeInternalSkusIntoDraft } from "@/lib/listings/internal-sku";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type { ListingPlatform, ListingDraft } from "@/types/listing-generator";
 import { ensureHandlingForListedProduct } from "@/lib/listings/listed-products-service";
+import { ensureCompetitorWatchForImportedListing } from "@/lib/competitors/service";
 import type { LinkExistingVariantInput } from "@/types/listed-products";
 
 export interface ParsedListingUrl {
@@ -51,6 +52,7 @@ async function buildDraftForLinkedListing(
   userId: string,
   product: Awaited<ReturnType<typeof fetchListingProductSource>>,
   variants: LinkExistingVariantInput[],
+  tradingImport?: ListingDraft["ebayTradingImport"],
 ): Promise<ListingDraft> {
   const skuResult = await ensureInternalSkus({
     userId,
@@ -93,6 +95,7 @@ async function buildDraftForLinkedListing(
       };
     }),
     promotions: [],
+    ebayTradingImport: tradingImport,
   };
 
   draft = mergeInternalSkusIntoDraft(draft, skuResult.baseSku, skuResult.variantSkus);
@@ -105,6 +108,7 @@ export async function linkExistingListing(
   aliexpressUrl: string,
   listingUrlRaw: string,
   variants: LinkExistingVariantInput[],
+  options?: { tradingImport?: ListingDraft["ebayTradingImport"]; fromStoreImport?: boolean },
 ): Promise<void> {
   if (variants.length === 0) {
     throw new Error("Add at least one variant.");
@@ -119,9 +123,9 @@ export async function linkExistingListing(
     }
   }
 
-  const product = await fetchListingProductSource(aliexpressUrl.trim());
+  const product = await fetchListingProductSource(aliexpressUrl.trim(), { forImport: true });
   const parsedListing = parseMarketplaceListingUrl(platform, listingUrlRaw);
-  const draft = await buildDraftForLinkedListing(userId, product, variants);
+  const draft = await buildDraftForLinkedListing(userId, product, variants, options?.tradingImport);
   const handlingProductId = await ensureHandlingForListedProduct(userId, draft);
 
   const supabase = getSupabaseAdmin();
@@ -175,5 +179,16 @@ export async function linkExistingListing(
   const { error: variantError } = await supabase.from("listed_product_variants").insert(variantInserts);
   if (variantError) {
     throw new Error(variantError.message);
+  }
+
+  if (options?.fromStoreImport) {
+    const primaryPrice = variants[0]?.listedPrice ?? draft.listing.suggestedPrice;
+    await ensureCompetitorWatchForImportedListing(
+      userId,
+      platform,
+      draft.listing.seoTitle,
+      primaryPrice,
+      draft.listing.currency,
+    );
   }
 }

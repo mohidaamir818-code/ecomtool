@@ -48,14 +48,16 @@ export async function suggestImportStoreMatches(
 export async function linkImportStoreListingsBatch(
   userId: string,
   platform: ListingPlatform,
-  links: Array<{ listingId: string; aliexpressUrl: string }>,
+  links: Array<{ listingId: string; aliexpressUrl: string; skipMatchValidation?: boolean }>,
 ): Promise<{ linked: string[]; failed: Array<{ listingId: string; error: string }> }> {
   const linked: string[] = [];
   const failed: Array<{ listingId: string; error: string }> = [];
 
   for (const link of links) {
     try {
-      await linkImportStoreListing(userId, platform, link.listingId, link.aliexpressUrl);
+      await linkImportStoreListing(userId, platform, link.listingId, link.aliexpressUrl, {
+        skipMatchValidation: link.skipMatchValidation === true,
+      });
       linked.push(link.listingId);
     } catch (error) {
       failed.push({
@@ -73,6 +75,7 @@ export async function linkImportStoreListing(
   platform: ListingPlatform,
   listingId: string,
   aliexpressUrl: string,
+  options?: { skipMatchValidation?: boolean },
 ): Promise<void> {
   const listings = await fetchStoreListings(userId, platform);
   const storeListing = listings.find((listing) => listing.listingId === listingId);
@@ -83,10 +86,14 @@ export async function linkImportStoreListing(
     throw new Error("This listing is already linked.");
   }
 
-  const aliProduct = await fetchListingProductSource(aliexpressUrl.trim());
-  validateAliMatchesStoreListing(aliProduct, storeListing);
+  const aliProduct = await fetchListingProductSource(aliexpressUrl.trim(), { forImport: true });
+  if (!options?.skipMatchValidation) {
+    validateAliMatchesStoreListing(aliProduct, storeListing);
+  }
 
-  const mappings = mapAliVariantsToStoreVariants(aliProduct, storeListing);
+  const mappings = mapAliVariantsToStoreVariants(aliProduct, storeListing, {
+    relaxed: options?.skipMatchValidation === true,
+  });
   const variants: LinkExistingVariantInput[] = mappings.map(({ aliVariantId, storeVariant }) => {
     const aliVariant =
       aliProduct.variants?.find((entry) => entry.id === aliVariantId) ??
@@ -105,6 +112,7 @@ export async function linkImportStoreListing(
       listedQuantity: storeVariant.quantity,
       sku: storeVariant.sku,
       offerId: storeVariant.offerId,
+      variationSpecifics: storeVariant.variationSpecifics,
     };
   });
 
@@ -114,5 +122,19 @@ export async function linkImportStoreListing(
     aliProduct.productUrl,
     storeListing.listingUrl,
     variants,
+    {
+      tradingImport:
+        platform === "ebay"
+          ? {
+              listingId: storeListing.listingId,
+              variants: storeListing.variants.map((variant) => ({
+                label: variant.label,
+                sku: variant.sku,
+                variationSpecifics: variant.variationSpecifics,
+              })),
+            }
+          : undefined,
+      fromStoreImport: true,
+    },
   );
 }

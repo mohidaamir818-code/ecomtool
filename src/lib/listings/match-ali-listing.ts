@@ -42,6 +42,7 @@ function normalizeVariantLabel(label: string): string {
 export function mapAliVariantsToStoreVariants(
   aliProduct: ListingProductSource,
   storeListing: StoreImportListing,
+  options?: { relaxed?: boolean },
 ): Array<{ aliVariantId: string; storeVariant: StoreImportListing["variants"][number] }> {
   const aliVariants =
     aliProduct.variants?.length && aliProduct.variants.length > 0
@@ -77,6 +78,12 @@ export function mapAliVariantsToStoreVariants(
       }) ?? null;
 
     if (!match) {
+      if (options?.relaxed && aliVariants.length > 0) {
+        const fallback = aliVariants[mappings.length % aliVariants.length]!;
+        mappings.push({ aliVariantId: fallback.id, storeVariant });
+        continue;
+      }
+
       throw new Error(
         `Variant "${storeVariant.label}" on your eBay listing does not match any AliExpress variant. Please paste the exact AliExpress product URL.`,
       );

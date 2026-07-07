@@ -10,6 +10,7 @@ export async function POST(request: NextRequest) {
       platform?: ListingPlatform;
       listingId?: string;
       aliexpressUrl?: string;
+      skipMatchValidation?: boolean;
     };
 
     const userId = body.userId?.trim();
@@ -27,7 +28,9 @@ export async function POST(request: NextRequest) {
     const accessDenied = await requireActiveUser(userId);
     if (accessDenied) return accessDenied;
 
-    await linkImportStoreListing(userId, platform, listingId, aliexpressUrl);
+    await linkImportStoreListing(userId, platform, listingId, aliexpressUrl, {
+      skipMatchValidation: body.skipMatchValidation === true,
+    });
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
     const blocked = userBlockErrorResponse(error);

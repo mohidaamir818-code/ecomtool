@@ -70,7 +70,10 @@ async function fetchDescriptionFromHtml(url: string): Promise<{ text: string | n
 }
 
 
-export async function fetchListingProductSource(url: string): Promise<ListingProductSource> {
+export async function fetchListingProductSource(
+  url: string,
+  options?: { forImport?: boolean },
+): Promise<ListingProductSource> {
   const product = await fetchAliExpressProduct(url);
   const descriptionPayload = await fetchDescriptionFromHtml(product.productUrl);
   const description = sanitizeListingText(
@@ -92,7 +95,7 @@ export async function fetchListingProductSource(url: string): Promise<ListingPro
   const shippingDaysLabel = await fetchAliExpressShippingDaysLabel(product.productUrl);
 
   const variants = product.variants
-    ?.filter((variant) => variant.stock != null && variant.stock > 0)
+    ?.filter((variant) => options?.forImport || (variant.stock != null && variant.stock > 0))
     .map((variant) => {
       const variantFilter = variant.imageUrl
         ? filterListingImages([variant.imageUrl])

@@ -7,6 +7,7 @@ export interface LinkExistingVariantInput {
   listedQuantity: number;
   sku?: string;
   offerId?: string;
+  variationSpecifics?: Array<{ name: string; value: string }>;
 }
 
 export interface ListedProductDetail extends ListedProduct {

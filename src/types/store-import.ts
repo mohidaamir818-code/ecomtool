@@ -5,6 +5,7 @@ export interface StoreImportVariant {
   price: number;
   quantity: number;
   imageUrl: string | null;
+  variationSpecifics?: Array<{ name: string; value: string }>;
 }
 
 export interface StoreImportListing {

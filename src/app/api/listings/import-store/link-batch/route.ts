@@ -10,7 +10,7 @@ export async function POST(request: NextRequest) {
     const body = (await request.json()) as {
       userId?: string;
       platform?: ListingPlatform;
-      links?: Array<{ listingId?: string; aliexpressUrl?: string }>;
+      links?: Array<{ listingId?: string; aliexpressUrl?: string; skipMatchValidation?: boolean }>;
     };
 
     const userId = body.userId?.trim();
@@ -20,6 +20,7 @@ export async function POST(request: NextRequest) {
           .map((link) => ({
             listingId: link.listingId?.trim() ?? "",
             aliexpressUrl: link.aliexpressUrl?.trim() ?? "",
+            skipMatchValidation: link.skipMatchValidation === true,
           }))
           .filter((link) => link.listingId && link.aliexpressUrl)
       : [];

@@ -3,6 +3,7 @@ import "server-only";
 import { reviseAmazefListedProduct } from "@/lib/amazef/revise-listed-product";
 import { reviseAmazefListedVariants } from "@/lib/amazef/revise-listing";
 import { reviseEbayListedProduct, reviseEbayListedVariant } from "@/lib/ebay/sell-inventory";
+import { reviseEbayTradingListing } from "@/lib/ebay/seller-store";
 import { sendEmail } from "@/lib/email/send-email";
 import { defaultSellerPreferences, type ListingPricingPreferences } from "@/types/listing-generator";
 import {
@@ -90,7 +91,21 @@ export async function ensureHandlingForListedProduct(
   const existing = (await getHandlingProducts(userId)).find(
     (product) => product.externalId === externalId && product.status === "active",
   );
-  if (existing) return existing.id;
+  if (existing) {
+    const supabase = getSupabaseAdmin();
+    const nextUpdateAt = new Date();
+    nextUpdateAt.setHours(nextUpdateAt.getHours() + 24);
+    await supabase
+      .from("handling_products")
+      .update({
+        update_mode: "auto_24h",
+        update_interval_hours: 24,
+        next_update_at: nextUpdateAt.toISOString(),
+      })
+      .eq("id", existing.id)
+      .eq("user_id", userId);
+    return existing.id;
+  }
 
   const handlingVariants: HandlingProductVariant[] =
     draft.product.variants?.map((variant) => ({
@@ -382,6 +397,63 @@ export async function removeListedProduct(userId: string, listedProductId: strin
   if (error) throw new Error(error.message);
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+interface SyncEmailUpdate {
+  title: string;
+  imageUrl: string | null;
+  platformLabel: string;
+  variantLabel: string;
+  lines: string[];
+}
+
+function buildSyncUpdateEmailHtml(updates: SyncEmailUpdate[]): string {
+  const cards = updates
+    .map((update) => {
+      const imageBlock = update.imageUrl
+        ? `<img src="${escapeHtml(update.imageUrl)}" alt="" width="100" height="100" style="display:block;border-radius:8px;object-fit:cover;" />`
+        : "";
+      return `<div style="margin-bottom:18px;padding:16px;border:1px solid #E5E7EB;border-radius:10px;background:#FAFAFA;">
+        <table cellpadding="0" cellspacing="0"><tr>
+          ${imageBlock ? `<td valign="top" style="padding-right:12px;">${imageBlock}</td>` : ""}
+          <td valign="top">
+            <p style="margin:0;font-size:16px;font-weight:700;color:#111827;">${escapeHtml(update.title)}</p>
+            <p style="margin:6px 0 0;font-size:12px;color:#6B7280;">${escapeHtml(update.platformLabel)} · Variant: <strong>${escapeHtml(update.variantLabel)}</strong></p>
+          </td>
+        </tr></table>
+        <ul style="margin:12px 0 0;padding-left:18px;color:#374151;font-size:14px;line-height:1.5;">
+          ${update.lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}
+        </ul>
+      </div>`;
+    })
+    .join("");
+
+  return `<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#F3F4F6;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;margin:24px auto;background:#ffffff;border-radius:12px;overflow:hidden;">
+    <tr>
+      <td style="padding:20px;background:#2563EB;color:#ffffff;font-size:16px;font-weight:700;">
+        Marketplace auto-sync update
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:20px;">
+        <p style="margin:0 0 16px;font-size:14px;color:#374151;">We checked your linked products and updated your marketplace listing where AliExpress changed.</p>
+        ${cards}
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
 export async function syncListedProductsForAliVariants(
   userId: string,
   previousVariants: HandlingProductVariant[],
@@ -418,11 +490,9 @@ export async function syncListedProductsForAliVariants(
   if (!listedVariants?.length) return;
 
   const productsById = new Map(products.map((row) => [String(row.id), row]));
-  const sellerPrefs = (await getSellerPreferences(userId)) ?? defaultSellerPreferences("GBP");
-  const baseFeePrefs = sellerPreferencesToFeePrefs(sellerPrefs);
 
   const email = await getUserEmail(userId);
-  const emailLines: string[] = [];
+  const emailUpdates: SyncEmailUpdate[] = [];
 
   for (const row of listedVariants) {
     const listedProduct = productsById.get(String(row.listed_product_id));
@@ -445,10 +515,8 @@ export async function syncListedProductsForAliVariants(
 
     if (previousAli.price < currentAli.price) {
       const delta = currentAli.price - previousAli.price;
-      const raisedByDelta = Number((listedPrice + delta).toFixed(2));
-      const profitFloor = minProfitFloorForAliCost(currentAli.price, currency, baseFeePrefs);
-      nextPrice = Number(Math.max(raisedByDelta, profitFloor).toFixed(2));
-      if (nextPrice > listedPrice) {
+      nextPrice = Number((listedPrice + delta).toFixed(2));
+      if (nextPrice !== listedPrice) {
         priceChanged = true;
       }
     }
@@ -460,19 +528,34 @@ export async function syncListedProductsForAliVariants(
 
     if (!priceChanged && !stockChanged) continue;
 
+    const tradingImport = draft.ebayTradingImport;
+    const tradingVariant = tradingImport?.variants.find((variant) => variant.label === label);
+
     try {
-      if (platform === "ebay" && row.offer_id) {
+      if (platform === "ebay" && tradingImport?.listingId) {
+        await reviseEbayTradingListing(userId, tradingImport.listingId, {
+          price: priceChanged ? nextPrice : undefined,
+          quantity: stockChanged ? nextQuantity : undefined,
+          label,
+          sku: String(row.sku),
+          variationSpecifics: tradingVariant?.variationSpecifics,
+        });
+      } else if (platform === "ebay" && row.offer_id && draft.ebayPolicies && draft.listing.categoryId) {
         await reviseEbayListedVariant(userId, draft, {
           sku: String(row.sku),
           offerId: String(row.offer_id),
-          price: nextPrice,
-          quantity: nextQuantity,
+          price: priceChanged ? nextPrice : listedPrice,
+          quantity: stockChanged ? nextQuantity : listedQuantity,
           label,
           ean: draft.variants.find((variant) => variant.id === aliVariantId)?.ean,
         });
       } else if (platform === "amazef" && listedProduct.listing_id) {
         await reviseAmazefListedVariants(userId, draft, String(listedProduct.listing_id), [
-          { aliVariantId, price: nextPrice, quantity: nextQuantity },
+          {
+            aliVariantId,
+            price: priceChanged ? nextPrice : listedPrice,
+            quantity: stockChanged ? nextQuantity : listedQuantity,
+          },
         ]);
       }
     } catch {
@@ -490,25 +573,47 @@ export async function syncListedProductsForAliVariants(
       })
       .eq("id", row.id);
 
+    const platformLabel = platform === "amazef" ? "Amazef" : "eBay";
+    const updateLines: string[] = [];
+
     if (priceChanged) {
-      emailLines.push(
-        `${label}: AliExpress price changed from ${formatMoney(previousAli.price, currentAli.currency)} to ${formatMoney(currentAli.price, currentAli.currency)}. Your ${platform} price was updated from ${formatMoney(listedPrice, currency)} to ${formatMoney(nextPrice, currency)}.`,
+      updateLines.push(
+        `AliExpress price: ${formatMoney(previousAli.price, currentAli.currency)} → ${formatMoney(currentAli.price, currentAli.currency)}. Your ${platformLabel} price: ${formatMoney(listedPrice, currency)} → ${formatMoney(nextPrice, currency)}.`,
       );
     }
     if (stockChanged) {
-      emailLines.push(
-        `${label}: AliExpress stock is now 0. Your ${platform} listing quantity was set to 0.`,
+      updateLines.push(
+        `AliExpress stock reached 0. Your ${platformLabel} quantity for this variant was set to 0.`,
       );
+    }
+
+    if (updateLines.length > 0) {
+      emailUpdates.push({
+        title: String(listedProduct.title ?? "Your listing"),
+        imageUrl: listedProduct.image_url
+          ? String(listedProduct.image_url)
+          : row.image_url
+            ? String(row.image_url)
+            : null,
+        platformLabel,
+        variantLabel: label,
+        lines: updateLines,
+      });
     }
   }
 
-  if (email && emailLines.length > 0) {
-    const title = String(products[0]?.title ?? "Your listing");
+  if (email && emailUpdates.length > 0) {
+    const primaryTitle = emailUpdates[0]?.title ?? "Your listing";
     await sendEmail({
       to: email,
-      subject: `Listing updated: ${title}`,
-      text: [`We detected AliExpress changes and updated your listing:\n`, ...emailLines].join("\n"),
-      html: `<p>We detected AliExpress changes and updated your listing:</p><ul>${emailLines.map((line) => `<li>${line}</li>`).join("")}</ul>`,
+      subject: `Auto-sync update: ${primaryTitle}`,
+      text: emailUpdates
+        .map(
+          (update) =>
+            `${update.title} (${update.platformLabel}, ${update.variantLabel})\n${update.lines.join("\n")}`,
+        )
+        .join("\n\n"),
+      html: buildSyncUpdateEmailHtml(emailUpdates),
     });
   }
 }

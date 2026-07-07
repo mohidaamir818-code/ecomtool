@@ -48,6 +48,7 @@ export function AddAliUrlModal({
           platform,
           listingId: listing.listingId,
           aliexpressUrl: aliexpressUrl.trim(),
+          skipMatchValidation: true,
         }),
       });
       const data = await response.json();

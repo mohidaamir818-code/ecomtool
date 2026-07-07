@@ -175,18 +175,6 @@ export async function fetchSellerAmazefStore(userId: string): Promise<StoreImpor
   }
 
   return remoteListings
-    .map((listing) => {
-      const savedProduct = savedByListingId.get(String(listing.listingId));
-      if (!savedProduct) return listing;
-      return {
-        ...listing,
-        linked: true,
-        listedProductId: savedProduct.id,
-        aliexpressUrl: savedProduct.aliexpressUrl,
-      };
-    })
-    .sort((a, b) => {
-      if (a.linked === b.linked) return a.title.localeCompare(b.title);
-      return a.linked ? 1 : -1;
-    });
+    .filter((listing) => !savedByListingId.has(String(listing.listingId)))
+    .sort((a, b) => a.title.localeCompare(b.title));
 }

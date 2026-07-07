@@ -181,6 +181,14 @@ export interface ListingDraft {
   pricingBreakdown?: PricingBreakdown;
   manualPriceOverride?: number | null;
   ebayPolicies?: EbayBusinessPolicies;
+  ebayTradingImport?: {
+    listingId: string;
+    variants: Array<{
+      label: string;
+      sku?: string;
+      variationSpecifics?: Array<{ name: string; value: string }>;
+    }>;
+  };
 }
 
 export interface EbayCategorySuggestion {

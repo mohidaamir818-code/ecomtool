@@ -190,10 +190,15 @@ export function ImportStoreModal({ userId, platform, onClose, onLinked }: Import
   async function handleSaveSelected() {
     const links = listings
       .filter((listing) => !listing.linked && selectedToSave[listing.listingId])
-      .map((listing) => ({
-        listingId: listing.listingId,
-        aliexpressUrl: suggestionUrls[listing.listingId]?.trim() ?? "",
-      }))
+      .map((listing) => {
+        const draftUrl = suggestionUrls[listing.listingId]?.trim() ?? "";
+        const suggestedUrl = suggestions[listing.listingId]?.aliexpressUrl?.trim() ?? "";
+        return {
+          listingId: listing.listingId,
+          aliexpressUrl: draftUrl,
+          skipMatchValidation: !suggestedUrl || draftUrl !== suggestedUrl,
+        };
+      })
       .filter((link) => link.aliexpressUrl);
 
     if (links.length === 0) {

@@ -689,6 +689,55 @@ export async function upgradeCompetitorWatchPrice(
   return checkCompetitorWatchUpdate(userId, watchId, { sendEmail: false });
 }
 
+export async function ensureCompetitorWatchForImportedListing(
+  userId: string,
+  platform: "ebay" | "amazef",
+  productQuery: string,
+  userPrice: number,
+  currency: string,
+): Promise<void> {
+  const query = productQuery.trim();
+  if (!query || !Number.isFinite(userPrice) || userPrice <= 0) return;
+
+  const supabase = getSupabaseAdmin();
+  const competitorPlatform: CompetitorPlatform = platform === "ebay" ? "ebay" : "amazef";
+
+  const { data: existing } = await supabase
+    .from("competitor_watches")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("platform", competitorPlatform)
+    .eq("product_query", query)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (existing?.id) return;
+
+  const nextUpdateAt = computeNextUpdateAt("auto_24h");
+  const { data: watchRow, error: watchError } = await supabase
+    .from("competitor_watches")
+    .insert({
+      user_id: userId,
+      platform: competitorPlatform,
+      product_query: query,
+      user_price: userPrice,
+      currency: currency || "GBP",
+      update_mode: "auto_24h",
+      update_interval_hours: 24,
+      next_update_at: nextUpdateAt,
+      status: "active",
+    })
+    .select("id")
+    .single();
+
+  if (watchError || !watchRow?.id) return;
+
+  await checkCompetitorWatchUpdate(userId, String(watchRow.id), {
+    skipQuota: true,
+    sendEmail: true,
+  });
+}
+
 export async function processDueCompetitorWatchUpdates(userId?: string): Promise<number> {
   const supabase = getSupabaseAdmin();
   const now = new Date().toISOString();
