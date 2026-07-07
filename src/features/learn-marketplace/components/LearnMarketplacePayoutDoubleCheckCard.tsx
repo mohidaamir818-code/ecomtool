@@ -5,14 +5,6 @@ function formatSortCode(digits: string): string {
   return `${digits.slice(0, 2)}-${digits.slice(2, 4)}-${digits.slice(4, 6)}`;
 }
 
-function BlurredValue({ children }: { children: string }) {
-  return (
-    <span className="inline-block select-none font-semibold text-[#191919] blur-[3px]">
-      {children}
-    </span>
-  );
-}
-
 export function LearnMarketplacePayoutDoubleCheckCard({
   bankName,
   sortCode,
@@ -58,21 +50,15 @@ export function LearnMarketplacePayoutDoubleCheckCard({
       <dl className="mt-6 space-y-4 border-t border-gray-100 pt-6">
         <div>
           <dt className="text-sm text-[#767676]">Bank or building society name</dt>
-          <dd className="mt-1 text-sm">
-            <BlurredValue>{bankName}</BlurredValue>
-          </dd>
+          <dd className="mt-1 text-sm font-semibold text-[#191919]">{bankName}</dd>
         </div>
         <div>
           <dt className="text-sm text-[#767676]">Sort code</dt>
-          <dd className="mt-1 text-sm">
-            <BlurredValue>{formatSortCode(sortCode)}</BlurredValue>
-          </dd>
+          <dd className="mt-1 text-sm font-semibold text-[#191919]">{formatSortCode(sortCode)}</dd>
         </div>
         <div>
           <dt className="text-sm text-[#767676]">Bank or building society account number</dt>
-          <dd className="mt-1 text-sm">
-            <BlurredValue>{accountNumber}</BlurredValue>
-          </dd>
+          <dd className="mt-1 text-sm font-semibold text-[#191919]">{accountNumber}</dd>
         </div>
       </dl>
 
