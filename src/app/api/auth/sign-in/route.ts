@@ -1,15 +1,25 @@
-import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
-import { serverEnv } from "@/lib/env";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type { AuthNextStep, SignInPayload } from "@/types/auth";
 
-function getAuthClient() {
-  return createClient(
-    serverEnv.supabaseUrl(),
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } },
-  );
+const AUTH_TIMEOUT_MS = 20_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out. Please try again.`));
+    }, ms);
+
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
 }
 
 function resolveNextStep(
@@ -34,15 +44,27 @@ export async function POST(request: NextRequest) {
     }
 
     const email = body.email.trim().toLowerCase();
-    const authClient = getAuthClient();
+    const supabase = getSupabaseAdmin();
 
-    const { data: authData, error: authError } =
-      await authClient.auth.signInWithPassword({
+    const { data: authData, error: authError } = await withTimeout(
+      supabase.auth.signInWithPassword({
         email,
         password: body.password,
-      });
+      }),
+      AUTH_TIMEOUT_MS,
+      "Sign-in",
+    );
 
     if (authError || !authData.user) {
+      const message = authError?.message?.toLowerCase() ?? "";
+
+      if (message.includes("rate limit") || message.includes("too many")) {
+        return NextResponse.json(
+          { error: "Too many sign-in attempts. Please wait a minute and try again." },
+          { status: 429 },
+        );
+      }
+
       return NextResponse.json(
         { error: "Invalid email or password. Please try again." },
         { status: 401 },
@@ -50,13 +72,16 @@ export async function POST(request: NextRequest) {
     }
 
     const userId = authData.user.id;
-    const admin = getSupabaseAdmin();
 
-    const { data: profile, error: profileError } = await admin
-      .from("profiles")
-      .select("full_name, email, email_verified, onboarding_completed")
-      .eq("id", userId)
-      .single();
+    const { data: profile, error: profileError } = await withTimeout(
+      supabase
+        .from("profiles")
+        .select("full_name, email, email_verified, onboarding_completed")
+        .eq("id", userId)
+        .single(),
+      AUTH_TIMEOUT_MS,
+      "Profile lookup",
+    );
 
     if (profileError || !profile) {
       return NextResponse.json(
@@ -65,8 +90,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const authEmailConfirmed = Boolean(authData.user.email_confirmed_at);
+    const emailVerified = Boolean(profile.email_verified) || authEmailConfirmed;
+
+    if (!profile.email_verified && authEmailConfirmed) {
+      void supabase.from("profiles").update({ email_verified: true }).eq("id", userId);
+    }
+
     const nextStep = resolveNextStep(
-      profile.email_verified ?? false,
+      emailVerified,
       profile.onboarding_completed ?? false,
     );
 

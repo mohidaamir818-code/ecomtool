@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { DashboardLayout } from "@/features/dashboard/components/DashboardLayout";
 import { useUserBlock } from "@/features/dashboard/context/UserBlockContext";
@@ -92,7 +93,13 @@ function normalizeWizardStep(step: number, platform: ListingPlatform): number {
   return step;
 }
 
-export function ListingsShell() {
+interface ListingsShellProps {
+  mode?: "list" | "create";
+}
+
+export function ListingsShell({ mode = "list" }: ListingsShellProps) {
+  const isListMode = mode === "list";
+  const isCreateMode = mode === "create";
   const searchParams = useSearchParams();
   const router = useRouter();
   const { isBlocked } = useUserBlock();
@@ -160,6 +167,7 @@ export function ListingsShell() {
   const oauthJustSucceeded = useRef(false);
   const oauthReturnHandled = useRef(false);
   const oauthFailureHandled = useRef(false);
+  const resumeParamHandled = useRef(false);
 
   listingRef.current = listing;
   draftRef.current = draft;
@@ -409,6 +417,16 @@ export function ListingsShell() {
     }
     void loadSaved();
   }, [userId]);
+
+  useEffect(() => {
+    if (!isCreateMode) return;
+    if (searchParams.get("resume") !== "1") return;
+    if (resumeParamHandled.current) return;
+    if (!resumeOffer || !userId) return;
+    resumeParamHandled.current = true;
+    void resumeSavedDraft();
+    router.replace("/dashboard/listings/new");
+  }, [isCreateMode, searchParams, resumeOffer, userId, router]);
 
   async function clearSavedDraft() {
     if (!userId) return;
@@ -1134,16 +1152,33 @@ export function ListingsShell() {
 
           <div className="relative flex flex-wrap items-start justify-between gap-4">
             <div>
+              {isCreateMode ? (
+                <Link
+                  href="/dashboard/listings"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-brand transition hover:text-brand/80"
+                >
+                  ← Back to listings
+                </Link>
+              ) : null}
               <p className="inline-flex items-center gap-1.5 rounded-full bg-brand/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-brand">
                 <span aria-hidden>✨</span> AI Powered
               </p>
               <h1 className="mt-3 bg-gradient-to-r from-[#111827] via-brand to-indigo-600 bg-clip-text text-2xl font-bold text-transparent lg:text-3xl">
-                AI Listing Generator
+                {isCreateMode ? "Create New Listing" : "AI Listing Generator"}
               </h1>
               <p className="mt-2 max-w-xl text-sm leading-relaxed text-[#6B7280]">
-                Professional 9-step wizard to create optimized{" "}
-                <span className="font-semibold text-brand">{isAmazef ? "Amazef" : "eBay"}</span> listings
-                from AliExpress.
+                {isCreateMode ? (
+                  <>
+                    Paste an AliExpress URL, adjust auto listing settings, and publish to{" "}
+                    <span className="font-semibold text-brand">{isAmazef ? "Amazef" : "eBay"}</span>.
+                  </>
+                ) : (
+                  <>
+                    Manage your{" "}
+                    <span className="font-semibold text-brand">{isAmazef ? "Amazef" : "eBay"}</span>{" "}
+                    listings and import products from your store.
+                  </>
+                )}
               </p>
             </div>
 
@@ -1160,7 +1195,7 @@ export function ListingsShell() {
                 </select>
               </label>
 
-              {wizardStarted ? (
+              {isCreateMode && wizardStarted ? (
                 <button
                   type="button"
                   onClick={resetWizard}
@@ -1218,6 +1253,46 @@ export function ListingsShell() {
               Connect Amazef Account
             </button>
           </div>
+        ) : isListMode ? (
+          <>
+            {resumeOffer ? (
+              <div className="mb-6 overflow-hidden rounded-2xl border border-amber-200/80 bg-gradient-to-r from-amber-50 via-orange-50/50 to-yellow-50 p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-lg">
+                      ⏸
+                    </span>
+                    <p className="text-sm font-semibold text-amber-900">You have a listing in progress.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => router.push("/dashboard/listings/new?resume=1")}
+                    className="rounded-xl bg-gradient-to-r from-brand to-indigo-600 px-5 py-2 text-sm font-semibold text-white shadow-md shadow-brand/20 transition hover:shadow-lg"
+                  >
+                    Resume listing
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="mb-4 flex justify-end">
+              <Link
+                href="/dashboard/listings/new"
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-brand to-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-brand/20 transition hover:shadow-lg hover:shadow-brand/30"
+              >
+                <span aria-hidden>+</span>
+                Create new listing
+              </Link>
+            </div>
+
+            {userId ? (
+              <ListedProductsPanel
+                userId={userId}
+                platform={activePlatform}
+                refreshKey={listedProductsRefreshKey}
+              />
+            ) : null}
+          </>
         ) : (
           <>
             {!isAmazef && ebayStatus.connected && userId ? (
@@ -1478,14 +1553,6 @@ export function ListingsShell() {
                 Boolean(pendingFulfillmentSelection) &&
                 !pendingFulfillmentSelection?.selectedFulfillmentPolicyId)
             }
-          />
-        ) : null}
-
-        {userId ? (
-          <ListedProductsPanel
-            userId={userId}
-            platform={activePlatform}
-            refreshKey={listedProductsRefreshKey}
           />
         ) : null}
           </>

@@ -111,7 +111,7 @@ export function ListedProductsPanel({ userId, platform, refreshKey = 0 }: Listed
             </div>
             <p className="mt-3 text-sm font-semibold text-[#374151]">No {platformLabel} listings yet</p>
             <p className="mt-1 text-xs text-[#6B7280]">
-              List a product above and it will appear here.
+              Create a new listing to get started.
             </p>
           </div>
         ) : (

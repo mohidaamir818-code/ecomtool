@@ -9,6 +9,23 @@ import type { SignInResponse } from "@/types/auth";
 
 type FormErrors = Partial<Record<"email" | "password" | "form", string>>;
 
+const SIGN_IN_TIMEOUT_MS = 25000;
+
+async function fetchWithTimeout(
+  input: RequestInfo,
+  init: RequestInit,
+  timeoutMs = SIGN_IN_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 export function SignInForm() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -43,10 +60,10 @@ export function SignInForm() {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch("/api/auth/sign-in", {
+      const response = await fetchWithTimeout("/api/auth/sign-in", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: email.trim(), password }),
       });
 
       const data = (await response.json()) as SignInResponse & { error?: string };
@@ -58,16 +75,22 @@ export function SignInForm() {
 
       saveAuthSession(data);
 
-      if (data.nextStep === "verify-email") {
-        await fetch("/api/auth/send-otp", {
+      if (data.nextStep === "verify-email" && data.userId && data.email) {
+        void fetch("/api/auth/send-otp", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ userId: data.userId, email: data.email }),
-        });
+        }).catch(() => {});
       }
 
       router.push(getRedirectPath(data.nextStep!));
-    } catch {
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setErrors({
+          form: "Sign-in is taking too long. Please check your connection and try again.",
+        });
+        return;
+      }
       setErrors({ form: "Network error. Please check your connection and try again." });
     } finally {
       setIsSubmitting(false);
