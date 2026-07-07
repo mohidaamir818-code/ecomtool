@@ -4,13 +4,13 @@ import type { AuthNextStep, SignInPayload } from "@/types/auth";
 
 const AUTH_TIMEOUT_MS = 20_000;
 
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+function withTimeout<T>(promise: PromiseLike<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error(`${label} timed out. Please try again.`));
     }, ms);
 
-    promise
+    Promise.resolve(promise)
       .then((value) => {
         clearTimeout(timer);
         resolve(value);
