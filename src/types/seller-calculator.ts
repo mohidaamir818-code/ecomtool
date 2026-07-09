@@ -66,4 +66,5 @@ export interface SellerCalculatorResponse {
   message?: string;
   addedCount?: number;
   skippedNoNote?: number;
+  ebayOrdersFound?: number;
 }

@@ -10,7 +10,8 @@ const TRADING_SITE_ID: Record<string, string> = {
 };
 
 const ENTRIES_PER_PAGE = 200;
-const MAX_PAGES = 20;
+const MAX_PAGES = 25;
+const DURATION_IN_DAYS = 120;
 
 function tradingSiteId(marketplaceId: string): string {
   return TRADING_SITE_ID[marketplaceId] ?? TRADING_SITE_ID.EBAY_GB;
@@ -19,6 +20,10 @@ function tradingSiteId(marketplaceId: string): string {
 function xmlTagValue(block: string, tag: string): string | null {
   const match = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, "i"));
   return match?.[1]?.trim() ?? null;
+}
+
+function normalizeOrderId(id: string): string {
+  return id.replace(/[^\dA-Za-z]/g, "").toLowerCase();
 }
 
 async function tradingApiRequest(
@@ -50,15 +55,37 @@ async function tradingApiRequest(
   }
 }
 
-/** Map eBay order ID -> seller "My note" text from Trading API SoldList. */
-export async function fetchSellerOrderNotesMap(userId: string): Promise<Map<string, string>> {
-  const token = await getEbayUserAccessToken(userId);
-  if (!token) return new Map();
+function registerNote(notes: Map<string, string>, orderId: string | null, note: string): void {
+  if (!orderId || !note.trim()) return;
+  notes.set(orderId, note);
+  notes.set(normalizeOrderId(orderId), note);
+}
 
-  const marketplaceId = await getSellerMarketplaceId(userId);
-  const siteId = tradingSiteId(marketplaceId);
-  const notes = new Map<string, string>();
+function parseNotesFromXml(xml: string, notes: Map<string, string>): void {
+  const transactions = xml.match(/<OrderTransaction>[\s\S]*?<\/OrderTransaction>/gi) ?? [];
 
+  for (const block of transactions) {
+    const note = xmlTagValue(block, "PrivateNotes");
+    if (!note) continue;
+
+    registerNote(notes, xmlTagValue(block, "ExtendedOrderID"), note);
+    registerNote(notes, xmlTagValue(block, "OrderID"), note);
+
+    const transactionBlock = block.match(/<Transaction>[\s\S]*?<\/Transaction>/i)?.[0];
+    if (transactionBlock) {
+      registerNote(notes, xmlTagValue(transactionBlock, "ExtendedOrderID"), note);
+      registerNote(notes, xmlTagValue(transactionBlock, "OrderID"), note);
+      registerNote(notes, xmlTagValue(transactionBlock, "OrderLineItemID"), note);
+    }
+  }
+}
+
+async function fetchMyEbaySellingListNotes(
+  token: string,
+  siteId: string,
+  listName: "SoldList" | "DeletedFromSoldList",
+  notes: Map<string, string>,
+): Promise<void> {
   for (let page = 1; page <= MAX_PAGES; page += 1) {
     let xml = "";
     try {
@@ -68,14 +95,14 @@ export async function fetchSellerOrderNotesMap(userId: string): Promise<Map<stri
         "GetMyeBaySelling",
         `<?xml version="1.0" encoding="utf-8"?>
 <GetMyeBaySellingRequest xmlns="urn:ebay:apis:eBLBaseComponents">
-  <SoldList>
+  <${listName}>
     <Include>true</Include>
     <Pagination>
       <EntriesPerPage>${ENTRIES_PER_PAGE}</EntriesPerPage>
       <PageNumber>${page}</PageNumber>
     </Pagination>
-    <DurationInDays>90</DurationInDays>
-  </SoldList>
+    <DurationInDays>${DURATION_IN_DAYS}</DurationInDays>
+  </${listName}>
   <DetailLevel>ReturnAll</DetailLevel>
 </GetMyeBaySellingRequest>`,
       );
@@ -85,22 +112,78 @@ export async function fetchSellerOrderNotesMap(userId: string): Promise<Map<stri
 
     if (/Ack>Failure</i.test(xml)) break;
 
-    const transactions =
-      xml.match(/<OrderTransaction>[\s\S]*?<\/OrderTransaction>/gi) ?? [];
+    parseNotesFromXml(xml, notes);
 
-    for (const block of transactions) {
+    const listBlock = xml.match(new RegExp(`<${listName}>[\\s\\S]*?<\\/${listName}>`, "i"))?.[0] ?? xml;
+    const totalPages = Number(xmlTagValue(listBlock, "TotalNumberOfPages") ?? "1");
+    if (page >= totalPages) break;
+  }
+}
+
+async function fetchTradingGetOrdersNotes(
+  token: string,
+  siteId: string,
+  fromIso: string,
+  toIso: string,
+  notes: Map<string, string>,
+): Promise<void> {
+  for (let page = 1; page <= MAX_PAGES; page += 1) {
+    let xml = "";
+    try {
+      xml = await tradingApiRequest(
+        token,
+        siteId,
+        "GetOrders",
+        `<?xml version="1.0" encoding="utf-8"?>
+<GetOrdersRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <CreateTimeFrom>${fromIso}</CreateTimeFrom>
+  <CreateTimeTo>${toIso}</CreateTimeTo>
+  <OrderRole>Seller</OrderRole>
+  <OrderStatus>All</OrderStatus>
+  <Pagination>
+    <EntriesPerPage>${ENTRIES_PER_PAGE}</EntriesPerPage>
+    <PageNumber>${page}</PageNumber>
+  </Pagination>
+</GetOrdersRequest>`,
+      );
+    } catch {
+      break;
+    }
+
+    if (/Ack>Failure</i.test(xml)) break;
+
+    const orderBlocks = xml.match(/<Order>[\s\S]*?<\/Order>/gi) ?? [];
+    for (const block of orderBlocks) {
       const note = xmlTagValue(block, "PrivateNotes");
       if (!note) continue;
-
-      const extendedOrderId = xmlTagValue(block, "ExtendedOrderID");
-      const orderId = xmlTagValue(block, "OrderID");
-
-      if (extendedOrderId) notes.set(extendedOrderId, note);
-      if (orderId) notes.set(orderId, note);
+      registerNote(notes, xmlTagValue(block, "OrderID"), note);
+      registerNote(notes, xmlTagValue(block, "ExtendedOrderID"), note);
+      parseNotesFromXml(block, notes);
     }
 
     const totalPages = Number(xmlTagValue(xml, "TotalNumberOfPages") ?? "1");
     if (page >= totalPages) break;
+  }
+}
+
+/** Map eBay order ID -> seller "My note" text from Trading API sold lists. */
+export async function fetchSellerOrderNotesMap(
+  userId: string,
+  fromIso?: string,
+  toIso?: string,
+): Promise<Map<string, string>> {
+  const token = await getEbayUserAccessToken(userId);
+  if (!token) return new Map();
+
+  const marketplaceId = await getSellerMarketplaceId(userId);
+  const siteId = tradingSiteId(marketplaceId);
+  const notes = new Map<string, string>();
+
+  await fetchMyEbaySellingListNotes(token, siteId, "SoldList", notes);
+  await fetchMyEbaySellingListNotes(token, siteId, "DeletedFromSoldList", notes);
+
+  if (fromIso && toIso) {
+    await fetchTradingGetOrdersNotes(token, siteId, fromIso, toIso, notes);
   }
 
   return notes;
@@ -110,5 +193,16 @@ export function resolveOrderNote(
   notesMap: Map<string, string>,
   orderId: string,
 ): string | null {
-  return notesMap.get(orderId) ?? null;
+  const direct = notesMap.get(orderId);
+  if (direct) return direct;
+
+  const normalized = normalizeOrderId(orderId);
+  const normalizedHit = notesMap.get(normalized);
+  if (normalizedHit) return normalizedHit;
+
+  for (const [key, value] of notesMap) {
+    if (normalizeOrderId(key) === normalized) return value;
+  }
+
+  return null;
 }

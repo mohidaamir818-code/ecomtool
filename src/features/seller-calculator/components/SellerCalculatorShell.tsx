@@ -259,7 +259,7 @@ export function SellerCalculatorShell() {
             {closing ? "Fetching..." : "Month complete — fetch remaining"}
           </button>
 
-          {sheet && sheet.orders.length > 0 && (
+          {sheet && (
             <>
               <button
                 type="button"
@@ -286,75 +286,81 @@ export function SellerCalculatorShell() {
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
           </div>
-        ) : sheet && sheet.orders.length > 0 ? (
-          <div ref={printRef} className="seller-calculator-print overflow-x-auto rounded-2xl border border-gray-200 bg-white shadow-sm">
-            <table className="min-w-full border-collapse text-sm">
-              <thead>
-                <tr className="bg-[#F4A460] text-left text-[#111827]">
-                  <th className="border border-[#E8C9A0] px-3 py-2 font-bold">Date</th>
-                  <th className="border border-[#E8C9A0] px-3 py-2 font-bold">Order no / Name</th>
-                  <th className="border border-[#E8C9A0] px-3 py-2 font-bold">Cost Price</th>
-                  <th className="border border-[#E8C9A0] px-3 py-2 font-bold">eBay Order No</th>
-                  <th className="border border-[#E8C9A0] px-3 py-2 font-bold">Selling Price</th>
-                  <th className="border border-[#E8C9A0] px-3 py-2 font-bold">Fees</th>
-                  <th className="border border-[#E8C9A0] px-3 py-2 font-bold">Net Sale</th>
-                  <th className="border border-[#E8C9A0] px-3 py-2 font-bold">Profit</th>
-                  <th className="border border-[#E8C9A0] px-3 py-2 font-bold">ROI</th>
-                  <th className="border border-[#E8C9A0] px-3 py-2 font-bold">Refunds Amount</th>
-                  <th className="border border-[#E8C9A0] px-3 py-2 font-bold">Payouts</th>
-                </tr>
-                <tr className="bg-[#FFF2A8] text-left font-semibold text-[#111827]">
-                  <td className="border border-[#E8D98A] px-3 py-2">TOTAL</td>
-                  <td className="border border-[#E8D98A] px-3 py-2" />
-                  <td className="border border-[#E8D98A] px-3 py-2">{sheet.totals.costPriceLabel}</td>
-                  <td className="border border-[#E8D98A] px-3 py-2" />
-                  <td className="border border-[#E8D98A] px-3 py-2">{sheet.totals.sellingPriceLabel}</td>
-                  <td className="border border-[#E8D98A] px-3 py-2">{sheet.totals.feesLabel}</td>
-                  <td className="border border-[#E8D98A] px-3 py-2">{sheet.totals.netSaleLabel}</td>
-                  <td className="border border-[#E8D98A] px-3 py-2 text-emerald-700">{sheet.totals.profitLabel}</td>
-                  <td className="border border-[#E8D98A] px-3 py-2">{sheet.totals.roiLabel}</td>
-                  <td className="border border-[#E8D98A] px-3 py-2">{sheet.totals.refundAmountLabel}</td>
-                  <td className="border border-[#E8D98A] px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {sheet.orders.map((row) => (
-                  <tr
-                    key={row.id}
-                    className={
-                      row.orderStatus === "cancelled" || row.orderStatus === "refunded"
-                        ? "bg-red-50/60"
-                        : row.orderStatus === "partial_refund"
-                          ? "bg-amber-50/60"
-                          : "bg-white"
-                    }
-                  >
-                    <td className="border border-gray-200 px-3 py-2">{row.orderDateLabel}</td>
-                    <td className="border border-gray-200 px-3 py-2">{row.supplierOrderId ?? "—"}</td>
-                    <td className="border border-gray-200 px-3 py-2">{row.costPriceLabel}</td>
-                    <td className="border border-gray-200 px-3 py-2">{row.ebayOrderId}</td>
-                    <td className="border border-gray-200 px-3 py-2">{row.sellingPriceLabel}</td>
-                    <td className="border border-gray-200 px-3 py-2">{row.feesLabel}</td>
-                    <td className="border border-gray-200 px-3 py-2">{row.netSaleLabel}</td>
-                    <td className="border border-gray-200 px-3 py-2">{row.profitLabel}</td>
-                    <td className="border border-gray-200 px-3 py-2">
-                      {row.roi == null ? "—" : `${row.roi.toFixed(2)}%`}
-                    </td>
-                    <td className="border border-gray-200 px-3 py-2">{row.refundAmountLabel}</td>
-                    <td className="border border-gray-200 px-3 py-2">
-                      {row.payoutAmount == null ? row.netSaleLabel : formatPayout(row.payoutAmount, row.currency)}
-                    </td>
+        ) : sheet ? (
+          <div className="space-y-3">
+            <div ref={printRef} className="seller-calculator-print overflow-x-auto rounded-2xl border border-gray-200 bg-white shadow-sm">
+              <table className="min-w-full border-collapse text-sm">
+                <thead>
+                  <tr className="bg-[#FFF2A8] text-left font-semibold text-[#111827]">
+                    <th className="border border-[#E8D98A] px-3 py-2">TOTAL</th>
+                    <th className="border border-[#E8D98A] px-3 py-2" />
+                    <th className="border border-[#E8D98A] px-3 py-2">{sheet.totals.costPriceLabel}</th>
+                    <th className="border border-[#E8D98A] px-3 py-2" />
+                    <th className="border border-[#E8D98A] px-3 py-2">{sheet.totals.sellingPriceLabel}</th>
+                    <th className="border border-[#E8D98A] px-3 py-2">{sheet.totals.feesLabel}</th>
+                    <th className="border border-[#E8D98A] px-3 py-2">{sheet.totals.netSaleLabel}</th>
+                    <th className="border border-[#E8D98A] px-3 py-2 text-emerald-700">{sheet.totals.profitLabel}</th>
+                    <th className="border border-[#E8D98A] px-3 py-2">{sheet.totals.roiLabel}</th>
+                    <th className="border border-[#E8D98A] px-3 py-2">{sheet.totals.refundAmountLabel}</th>
+                    <th className="border border-[#E8D98A] px-3 py-2" />
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                  <tr className="bg-[#F4A460] text-left text-[#111827]">
+                    <th className="border border-[#E8C9A0] px-3 py-2 font-bold">Date</th>
+                    <th className="border border-[#E8C9A0] px-3 py-2 font-bold">Order no / Name</th>
+                    <th className="border border-[#E8C9A0] px-3 py-2 font-bold">Cost Price</th>
+                    <th className="border border-[#E8C9A0] px-3 py-2 font-bold">eBay Order No</th>
+                    <th className="border border-[#E8C9A0] px-3 py-2 font-bold">Selling Price</th>
+                    <th className="border border-[#E8C9A0] px-3 py-2 font-bold">Fees</th>
+                    <th className="border border-[#E8C9A0] px-3 py-2 font-bold">Net Sale</th>
+                    <th className="border border-[#E8C9A0] px-3 py-2 font-bold">Profit</th>
+                    <th className="border border-[#E8C9A0] px-3 py-2 font-bold">ROI</th>
+                    <th className="border border-[#E8C9A0] px-3 py-2 font-bold">Refunds Amount</th>
+                    <th className="border border-[#E8C9A0] px-3 py-2 font-bold">Payouts</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sheet.orders.map((row) => (
+                    <tr
+                      key={row.id}
+                      className={
+                        row.orderStatus === "cancelled" || row.orderStatus === "refunded"
+                          ? "bg-red-50/60"
+                          : row.orderStatus === "partial_refund"
+                            ? "bg-amber-50/60"
+                            : "bg-white"
+                      }
+                    >
+                      <td className="border border-gray-200 px-3 py-2">{row.orderDateLabel}</td>
+                      <td className="border border-gray-200 px-3 py-2">{row.supplierOrderId ?? "—"}</td>
+                      <td className="border border-gray-200 px-3 py-2">{row.costPriceLabel}</td>
+                      <td className="border border-gray-200 px-3 py-2">{row.ebayOrderId}</td>
+                      <td className="border border-gray-200 px-3 py-2">{row.sellingPriceLabel}</td>
+                      <td className="border border-gray-200 px-3 py-2">{row.feesLabel}</td>
+                      <td className="border border-gray-200 px-3 py-2">{row.netSaleLabel}</td>
+                      <td className="border border-gray-200 px-3 py-2">{row.profitLabel}</td>
+                      <td className="border border-gray-200 px-3 py-2">
+                        {row.roi == null ? "—" : `${row.roi.toFixed(2)}%`}
+                      </td>
+                      <td className="border border-gray-200 px-3 py-2">{row.refundAmountLabel}</td>
+                      <td className="border border-gray-200 px-3 py-2">
+                        {row.payoutAmount == null
+                          ? row.netSaleLabel
+                          : formatPayout(row.payoutAmount, row.currency)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {sheet.orders.length === 0 ? (
+              <p className="text-center text-sm text-[#6B7280]">
+                No orders with supplier notes yet. Add notes on eBay orders, then click Sync new orders.
+              </p>
+            ) : null}
           </div>
         ) : (
           <div className="rounded-2xl border border-dashed border-gray-200 bg-[#FAFAFA] px-6 py-12 text-center">
-            <p className="text-sm font-semibold text-[#374151]">No orders in this sheet yet</p>
-            <p className="mt-1 text-xs text-[#9CA3AF]">
-              Add supplier notes on eBay orders, then click Sync new orders.
-            </p>
+            <p className="text-sm font-semibold text-[#374151]">Select a month to view your profit sheet</p>
           </div>
         )}
       </div>

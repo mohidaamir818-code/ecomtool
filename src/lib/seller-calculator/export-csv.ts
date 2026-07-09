@@ -16,6 +16,22 @@ export function buildCalculatorCsv(month: SellerCalculatorMonth): string {
     "Status",
   ];
 
+  const totals = month.totals;
+  const totalsRow = [
+    "TOTAL",
+    "",
+    totals.costPrice.toFixed(2),
+    "",
+    totals.sellingPrice.toFixed(2),
+    totals.fees.toFixed(2),
+    totals.netSale.toFixed(2),
+    totals.profit.toFixed(2),
+    totals.roi == null ? "" : `${totals.roi.toFixed(2)}%`,
+    totals.refundAmount.toFixed(2),
+    "",
+    "",
+  ];
+
   const rows = month.orders.map((row) => [
     row.orderDateLabel,
     row.supplierOrderId ?? row.ebayOrderId,
@@ -31,23 +47,7 @@ export function buildCalculatorCsv(month: SellerCalculatorMonth): string {
     row.orderStatus,
   ]);
 
-  const totals = month.totals;
-  rows.push([
-    "TOTAL",
-    "",
-    totals.costPrice.toFixed(2),
-    "",
-    totals.sellingPrice.toFixed(2),
-    totals.fees.toFixed(2),
-    totals.netSale.toFixed(2),
-    totals.profit.toFixed(2),
-    totals.roi == null ? "" : `${totals.roi.toFixed(2)}%`,
-    totals.refundAmount.toFixed(2),
-    "",
-    "",
-  ]);
-
-  return [headers, ...rows]
+  return [totalsRow, headers, ...rows]
     .map((line) => line.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
     .join("\n");
 }
