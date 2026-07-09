@@ -3,32 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { DashboardLayout } from "@/features/dashboard/components/DashboardLayout";
 import type { CompetitorWatch, CompetitorWatchListResponse } from "@/types/competitor";
-import type { EbayListing, EbaySearchResponse } from "@/types/ebay";
 import { AddCompetitorWatchFlow } from "./AddCompetitorWatchFlow";
 import { CompetitorWatchCard } from "./CompetitorWatchCard";
-import { EbayListingsTable } from "./EbayListingsTable";
-import { EbaySearchForm } from "./EbaySearchForm";
 import {
   PlatformQuotaWidget,
   usePlatformQuota,
   useUserQueue,
 } from "@/features/quota/components/PlatformQuotaWidget";
-import { QUOTA_EXCEEDED_MESSAGE } from "@/lib/quota/constants";
 
 type Platform = "amazef" | "ebay";
-
-type EbaySearchState = {
-  query: string;
-  alertBelow: number | null;
-  listings: EbayListing[];
-  total: number;
-  offerCount: number;
-  offset: number;
-  limit: number;
-  sort: "asc" | "desc";
-};
-
-const PAGE_SIZE = 25;
 
 export function CompetitorsShell() {
   const [platform, setPlatform] = useState<Platform>("amazef");
@@ -38,9 +21,6 @@ export function CompetitorsShell() {
   const [notice, setNotice] = useState("");
   const [watches, setWatches] = useState<CompetitorWatch[]>([]);
   const [checkingId, setCheckingId] = useState<string | null>(null);
-
-  const [ebaySearch, setEbaySearch] = useState<EbaySearchState | null>(null);
-  const [ebayLoading, setEbayLoading] = useState(false);
 
   const ebayQuota = usePlatformQuota(userId, "ebay");
   const amazefQuota = usePlatformQuota(userId, "amazef");
@@ -68,62 +48,6 @@ export function CompetitorsShell() {
     }
   }, []);
 
-  const fetchEbayListings = useCallback(
-    async (params: {
-      query: string;
-      alertBelow: number | null;
-      offset?: number;
-      sort?: "asc" | "desc";
-    }) => {
-      setEbayLoading(true);
-      setError("");
-
-      const offset = params.offset ?? 0;
-      const sort = params.sort ?? "asc";
-
-      try {
-        const url = new URL("/api/competitors/ebay/search", window.location.origin);
-        url.searchParams.set("q", params.query);
-        url.searchParams.set("offset", String(offset));
-        url.searchParams.set("limit", String(PAGE_SIZE));
-        url.searchParams.set("sort", sort);
-        if (userId) {
-          url.searchParams.set("userId", userId);
-        }
-
-        const response = await fetch(url.toString());
-        const data = (await response.json()) as EbaySearchResponse & { message?: string };
-
-        if (response.status === 429) {
-          setError(data.message ?? QUOTA_EXCEEDED_MESSAGE);
-          void ebayQuota.reload();
-          return;
-        }
-
-        if (!response.ok) {
-          setError(data.error ?? "eBay search failed.");
-          return;
-        }
-
-        setEbaySearch({
-          query: params.query,
-          alertBelow: params.alertBelow,
-          listings: data.listings ?? [],
-          total: data.total ?? 0,
-          offerCount: data.offerCount ?? data.listings?.length ?? 0,
-          offset: data.offset ?? offset,
-          limit: data.limit ?? PAGE_SIZE,
-          sort: data.sort ?? sort,
-        });
-      } catch {
-        setError("Network error while searching eBay.");
-      } finally {
-        setEbayLoading(false);
-      }
-    },
-    [userId],
-  );
-
   useEffect(() => {
     const id = sessionStorage.getItem("ecomtools_user_id");
     if (id) {
@@ -138,7 +62,6 @@ export function CompetitorsShell() {
     setPlatform(next);
     setError("");
     setNotice("");
-    setEbaySearch(null);
   }
 
   async function handleCheck(watchId: string) {
@@ -195,30 +118,6 @@ export function CompetitorsShell() {
     } catch {
       setNotice("Network error while removing watch.");
     }
-  }
-
-  function handleEbaySearch(params: { query: string; alertBelow: number | null }) {
-    fetchEbayListings({ ...params, offset: 0, sort: "asc" });
-  }
-
-  function handleEbaySortChange(sort: "asc" | "desc") {
-    if (!ebaySearch) return;
-    fetchEbayListings({
-      query: ebaySearch.query,
-      alertBelow: ebaySearch.alertBelow,
-      offset: ebaySearch.offset,
-      sort,
-    });
-  }
-
-  function handleEbayPageChange(offset: number) {
-    if (!ebaySearch) return;
-    fetchEbayListings({
-      query: ebaySearch.query,
-      alertBelow: ebaySearch.alertBelow,
-      offset,
-      sort: ebaySearch.sort,
-    });
   }
 
   const platformWatches = watches.filter((watch) => watch.platform === platform);
@@ -302,7 +201,7 @@ export function CompetitorsShell() {
           </div>
         )}
 
-        <div className={platform === "ebay" ? "mb-8" : ""}>
+        <div>
           <div className="mb-5">
             <h2 className="text-lg font-bold text-[#111827]">Your competitor watches</h2>
             <p className="text-sm text-[#6B7280]">
@@ -345,47 +244,6 @@ export function CompetitorsShell() {
             </div>
           )}
         </div>
-
-        {platform === "ebay" && (
-          <div className="space-y-6">
-            <EbaySearchForm
-              onSearch={handleEbaySearch}
-              isSearching={ebayLoading && !ebaySearch}
-              disabled={ebayQuota.limitReached}
-            />
-
-            {ebaySearch && (
-              <EbayListingsTable
-                listings={ebaySearch.listings}
-                total={ebaySearch.total}
-                offerCount={ebaySearch.offerCount}
-                offset={ebaySearch.offset}
-                limit={ebaySearch.limit}
-                sort={ebaySearch.sort}
-                alertBelow={ebaySearch.alertBelow}
-                query={ebaySearch.query}
-                isLoading={ebayLoading}
-                onSortChange={handleEbaySortChange}
-                onPageChange={handleEbayPageChange}
-              />
-            )}
-
-            <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-              <h3 className="text-sm font-semibold text-[#111827]">eBay Browse API</h3>
-              <p className="mt-2 text-sm leading-relaxed text-[#6B7280]">
-                Each row is priced from eBay&apos;s item API for that exact variant. The
-                &quot;eBay price&quot; column matches what you see on the listing page (including
-                VAT). Pick the variant row, then click through to verify.
-              </p>
-              <ul className="mt-4 space-y-2 text-xs text-[#6B7280]">
-                <li>· One row per variant (colour/size) with its own price</li>
-                <li>· eBay price = listing page Buy it now (VAT included)</li>
-                <li>· + Postage = eBay price + cheapest delivery</li>
-                <li>· Click title or View on eBay — opens that variant</li>
-              </ul>
-            </div>
-          </div>
-        )}
       </div>
     </DashboardLayout>
   );
