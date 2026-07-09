@@ -117,6 +117,10 @@ interface EbayItemDetail {
   localizedAspects?: EbayLocalizedAspect[];
   color?: string;
   taxes?: EbayTax[];
+  primaryItemGroup?: {
+    itemGroupId?: string;
+    itemGroupType?: string;
+  };
 }
 
 const ACCESSORY_VARIANT_PATTERN =
@@ -505,5 +509,140 @@ export async function searchEbayListings(params: {
     offerCount: listings.length,
     offset,
     limit,
+  };
+}
+
+export interface ResolvedEbaySellerListing {
+  title: string;
+  listingUrl: string;
+  sellerName: string;
+  variants: EbayListing[];
+}
+
+function parseEbayListingUrlParts(rawUrl: string): { legacyItemId: string; variantId: string | null } {
+  const trimmed = rawUrl.trim();
+  const idMatch =
+    trimmed.match(/\/itm\/(?:[^/]+\/)?(\d{9,15})/i) ??
+    trimmed.match(/[?&]item=(\d{9,15})/i) ??
+    trimmed.match(/^(\d{9,15})$/);
+
+  if (!idMatch?.[1]) {
+    throw new Error("Could not read eBay item ID from that URL.");
+  }
+
+  let variantId: string | null = null;
+  try {
+    const parsed = new URL(trimmed.startsWith("http") ? trimmed : `https://${trimmed}`);
+    variantId = parsed.searchParams.get("var");
+  } catch {
+    variantId = null;
+  }
+
+  return { legacyItemId: idMatch[1], variantId };
+}
+
+function listingMatchesVariantId(listing: EbayListing, variantId: string): boolean {
+  try {
+    const parsed = new URL(listing.listingUrl);
+    return parsed.searchParams.get("var") === variantId;
+  } catch {
+    return listing.id.includes(variantId) || listing.listingUrl.includes(variantId);
+  }
+}
+
+async function fetchItemsByItemGroup(
+  token: string,
+  itemGroupId: string,
+  marketplaceId?: EbayMarketplaceId,
+): Promise<EbayItemDetail[]> {
+  const url = new URL(`${EBAY_API_BASE}/buy/browse/v1/item/get_items_by_item_group`);
+  url.searchParams.set("item_group_id", itemGroupId);
+
+  const response = await fetch(url.toString(), {
+    headers: ebayHeaders(token, marketplaceId),
+    next: { revalidate: 0 },
+  });
+
+  if (!response.ok) return [];
+
+  const data = (await response.json()) as { items?: EbayItemDetail[] };
+  const items = data.items ?? [];
+
+  const detailed = await runBatched(items, FETCH_BATCH, async (item) => {
+    if (!item.itemId) return item;
+    const detail = await fetchItemDetail(token, item.itemId, marketplaceId);
+    return detail ?? item;
+  });
+
+  return detailed.filter((item): item is EbayItemDetail => item !== null);
+}
+
+/** Load a seller's eBay listing (all variants on that listing) from a product page URL. */
+export async function resolveEbayListingFromUrl(
+  rawUrl: string,
+  marketplaceId?: EbayMarketplaceId,
+): Promise<ResolvedEbaySellerListing> {
+  const { legacyItemId, variantId } = parseEbayListingUrlParts(rawUrl);
+  const token = await getAccessToken();
+  const itemId = `v1|${legacyItemId}|0`;
+  const detail = await fetchItemDetail(token, itemId, marketplaceId);
+
+  if (!detail?.title) {
+    throw new Error("Could not load that eBay listing. Check the URL and try again.");
+  }
+
+  const title = detail.title.trim();
+  const sellerName = detail.seller?.username ?? "Unknown seller";
+  const listingUrl = normalizeEbayListingUrl(detail.itemWebUrl ?? rawUrl, legacyItemId);
+
+  const isVariationGroup =
+    detail.primaryItemGroup?.itemGroupType === "SELLER_DEFINED_VARIATIONS" &&
+    detail.primaryItemGroup.itemGroupId;
+
+  let variantDetails: EbayItemDetail[] = [detail];
+
+  if (isVariationGroup && detail.primaryItemGroup?.itemGroupId) {
+    const groupItems = await fetchItemsByItemGroup(
+      token,
+      detail.primaryItemGroup.itemGroupId,
+      marketplaceId,
+    );
+    if (groupItems.length > 0) {
+      const siblingNetPrices = groupItems
+        .map((item) => Number.parseFloat(item.price?.value ?? "0"))
+        .filter((value) => value > 0);
+
+      variantDetails = groupItems.filter((item) => {
+        const netPrice = Number.parseFloat(item.price?.value ?? "0");
+        const label = extractVariantLabel(item);
+        return !isLikelyAccessoryVariant(label, netPrice, siblingNetPrices);
+      });
+    }
+  }
+
+  let variants = variantDetails
+    .map((item) => mapDetailToListing(item, variantDetails.length > 1))
+    .filter((listing): listing is EbayListing => listing !== null);
+
+  if (variantId) {
+    const filtered = variants.filter((listing) => listingMatchesVariantId(listing, variantId));
+    if (filtered.length > 0) {
+      variants = filtered;
+    }
+  }
+
+  if (variants.length === 0) {
+    const single = mapDetailToListing(detail, false);
+    if (!single) {
+      throw new Error("Could not read pricing for that eBay listing.");
+    }
+    variants = [single];
+  }
+
+  return {
+    title,
+    listingUrl,
+    sellerName,
+    variants,
   };
 }

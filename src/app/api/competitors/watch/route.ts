@@ -72,7 +72,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "userId is required." }, { status: 400 });
     }
 
-    if (!body.productQuery?.trim() || body.productQuery.trim().length < 2) {
+    const platform = body.platform === "ebay" ? "ebay" : "amazef";
+
+    if (platform === "ebay") {
+      if (!body.listingUrl?.trim()) {
+        return NextResponse.json({ error: "Enter your eBay listing URL." }, { status: 400 });
+      }
+    } else if (!body.productQuery?.trim() || body.productQuery.trim().length < 2) {
       return NextResponse.json(
         { error: "Product name or keyword must be at least 2 characters." },
         { status: 400 },

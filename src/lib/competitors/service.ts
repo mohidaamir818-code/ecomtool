@@ -1,7 +1,7 @@
 import "server-only";
 
 import { searchAmazefProducts } from "@/lib/amazef/client";
-import { searchEbayListings } from "@/lib/ebay/browse";
+import { resolveEbayListingFromUrl, searchEbayListings } from "@/lib/ebay/browse";
 import {
   buildEbayCompetitorWatchSearchQueries,
   cleanCompetitorProductQuery,
@@ -94,14 +94,54 @@ function buildWatchMessage(
   return `No sellers on ${marketplace} found below your ${userPriceLabel} price for "${productQuery}".`;
 }
 
+function normalizeVariantLabel(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9/]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function variantLabelMatches(watchedLabels: string[], competitorLabel: string | null): boolean {
+  if (watchedLabels.length === 0) return true;
+  if (!competitorLabel) return false;
+
+  const normalized = normalizeVariantLabel(competitorLabel);
+  return watchedLabels.some((watched) => {
+    const watchedNorm = normalizeVariantLabel(watched);
+    return (
+      normalized === watchedNorm ||
+      normalized.includes(watchedNorm) ||
+      watchedNorm.includes(normalized)
+    );
+  });
+}
+
+function parseWatchedVariantLabels(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => String(entry).trim()).filter(Boolean);
+}
+
 function getEbayListingGroupKey(listing: EbayListing): string {
   const titleKey = listing.title.trim().toLowerCase();
   const sellerKey = listing.sellerName.trim().toLowerCase();
   return `${sellerKey}::${titleKey}`;
 }
 
-function buildEbayMatchFromGroup(group: EbayListing[], userPrice: number): CompetitorMatch {
-  const sorted = [...group].sort((a, b) => a.totalPrice - b.totalPrice);
+function buildEbayMatchFromGroup(
+  group: EbayListing[],
+  userPrice: number,
+  watchedVariantLabels?: string[],
+): CompetitorMatch | null {
+  let filtered = group;
+  if (watchedVariantLabels?.length) {
+    filtered = group.filter((listing) =>
+      variantLabelMatches(watchedVariantLabels, listing.variantLabel),
+    );
+  }
+  if (filtered.length === 0) return null;
+
+  const sorted = [...filtered].sort((a, b) => a.totalPrice - b.totalPrice);
   const primary = sorted[0];
   const currency = primary.currency;
   const minPrice = sorted[0].totalPrice;
@@ -139,7 +179,11 @@ function buildEbayMatchFromGroup(group: EbayListing[], userPrice: number): Compe
   };
 }
 
-function groupEbayCheaperMatches(listings: EbayListing[], userPrice: number): CompetitorMatch[] {
+function groupEbayCheaperMatches(
+  listings: EbayListing[],
+  userPrice: number,
+  watchedVariantLabels?: string[],
+): CompetitorMatch[] {
   const groups = new Map<string, EbayListing[]>();
 
   for (const listing of listings) {
@@ -150,7 +194,8 @@ function groupEbayCheaperMatches(listings: EbayListing[], userPrice: number): Co
   }
 
   return [...groups.values()]
-    .map((group) => buildEbayMatchFromGroup(group, userPrice))
+    .map((group) => buildEbayMatchFromGroup(group, userPrice, watchedVariantLabels))
+    .filter((match): match is CompetitorMatch => match !== null)
     .sort((a, b) => a.price - b.price);
 }
 
@@ -225,6 +270,7 @@ export async function searchCheaperCompetitors(
 export async function searchCheaperEbayCompetitors(
   productQuery: string,
   userPrice: number,
+  options?: { watchedVariantLabels?: string[] },
 ): Promise<{
   matches: CompetitorMatch[];
   totalSearched: number;
@@ -234,6 +280,7 @@ export async function searchCheaperEbayCompetitors(
   const cleanedTitle = cleanCompetitorProductQuery(productQuery.trim());
   const queryCandidates = buildEbayCompetitorWatchSearchQueries(cleanedTitle);
   const candidates = queryCandidates.length > 0 ? queryCandidates : [cleanedTitle];
+  const watchedVariantLabels = options?.watchedVariantLabels?.filter(Boolean) ?? [];
 
   const seenIds = new Set<string>();
   let mergedListings: EbayListing[] = [];
@@ -244,7 +291,7 @@ export async function searchCheaperEbayCompetitors(
       limit: 25,
       offset: 0,
       sort: "asc",
-      enrichDetails: false,
+      enrichDetails: watchedVariantLabels.length > 0,
     });
 
     for (const listing of result.listings) {
@@ -260,9 +307,15 @@ export async function searchCheaperEbayCompetitors(
     if (sameTitleCount > 0) break;
   }
 
-  const bestRelevantListings = mergedListings.filter((listing) =>
+  let bestRelevantListings = mergedListings.filter((listing) =>
     ebayListingMatchesSameTitle(listing.title, cleanedTitle),
   );
+
+  if (watchedVariantLabels.length > 0) {
+    bestRelevantListings = bestRelevantListings.filter((listing) =>
+      variantLabelMatches(watchedVariantLabels, listing.variantLabel),
+    );
+  }
 
   const currency = bestRelevantListings[0]?.currency ?? "GBP";
   const userPriceLabel = formatPrice(userPrice, currency);
@@ -271,7 +324,7 @@ export async function searchCheaperEbayCompetitors(
     .filter((listing) => listing.totalPrice > 0 && listing.totalPrice < userPrice)
     .sort((a, b) => a.totalPrice - b.totalPrice);
 
-  const matches = groupEbayCheaperMatches(cheaperListings, userPrice);
+  const matches = groupEbayCheaperMatches(cheaperListings, userPrice, watchedVariantLabels);
 
   return {
     matches,
@@ -285,6 +338,7 @@ export async function searchCheaperCompetitorsByPlatform(
   platform: CompetitorPlatform,
   productQuery: string,
   userPrice: number,
+  options?: { watchedVariantLabels?: string[] },
 ): Promise<{
   matches: CompetitorMatch[];
   totalSearched: number;
@@ -292,10 +346,46 @@ export async function searchCheaperCompetitorsByPlatform(
   userPriceLabel: string;
 }> {
   if (platform === "ebay") {
-    return searchCheaperEbayCompetitors(productQuery, userPrice);
+    return searchCheaperEbayCompetitors(productQuery, userPrice, options);
   }
 
   return searchCheaperCompetitors(productQuery, userPrice);
+}
+
+export async function resolveEbayListingForCompetitorWatch(
+  listingUrl: string,
+): Promise<{
+  title: string;
+  listingUrl: string;
+  sellerName: string;
+  watchedVariantLabels: string[];
+  suggestedPrice: number;
+  currency: string;
+  variants: Array<{ label: string; totalPrice: number; totalPriceLabel: string }>;
+}> {
+  const resolved = await resolveEbayListingFromUrl(listingUrl);
+  const watchedVariantLabels = resolved.variants.map((variant, index) =>
+    (variant.variantLabel?.trim() || `Variant ${index + 1}`),
+  );
+
+  const primaryVariant = resolved.variants[0];
+  if (!primaryVariant) {
+    throw new Error("Could not read pricing for that eBay listing.");
+  }
+
+  return {
+    title: resolved.title,
+    listingUrl: resolved.listingUrl,
+    sellerName: resolved.sellerName,
+    watchedVariantLabels,
+    suggestedPrice: primaryVariant.totalPrice,
+    currency: primaryVariant.currency,
+    variants: resolved.variants.map((variant) => ({
+      label: variant.variantLabel ?? "Default",
+      totalPrice: variant.totalPrice,
+      totalPriceLabel: variant.totalPriceLabel,
+    })),
+  };
 }
 
 function mapRowToWatch(row: Record<string, unknown>): CompetitorWatch {
@@ -307,6 +397,8 @@ function mapRowToWatch(row: Record<string, unknown>): CompetitorWatch {
     id: String(row.id),
     platform: (row.platform === "ebay" ? "ebay" : "amazef") as CompetitorPlatform,
     productQuery: String(row.product_query),
+    listingUrl: row.listing_url ? String(row.listing_url) : null,
+    watchedVariantLabels: parseWatchedVariantLabels(row.watched_variants_json),
     userPrice,
     userPriceLabel: formatPrice(userPrice, currency),
     currency,
@@ -444,15 +536,35 @@ export async function addCompetitorWatch(
   payload: CompetitorWatchAddPayload,
 ): Promise<{ watch: CompetitorWatch; message: string; matches: CompetitorMatch[] }> {
   const supabase = getSupabaseAdmin();
-  const query = payload.productQuery.trim();
   const platform = payload.platform === "ebay" ? "ebay" : "amazef";
   const intervalHours = getIntervalHours(payload.updateMode, payload.customHours);
   const nextUpdateAt = computeNextUpdateAt(payload.updateMode, payload.customHours);
 
+  let query = payload.productQuery?.trim() ?? "";
+  let listingUrl: string | null = payload.listingUrl?.trim() ?? null;
+  let watchedVariantLabels = payload.watchedVariantLabels?.map((label) => label.trim()).filter(Boolean) ?? [];
+
+  if (platform === "ebay") {
+    if (!listingUrl) {
+      throw new Error("Enter your eBay listing URL.");
+    }
+
+    const resolved = await resolveEbayListingForCompetitorWatch(listingUrl);
+    query = resolved.title;
+    listingUrl = resolved.listingUrl;
+    if (watchedVariantLabels.length === 0) {
+      watchedVariantLabels = resolved.watchedVariantLabels;
+    }
+  } else if (!query || query.length < 2) {
+    throw new Error("Product name or keyword must be at least 2 characters.");
+  }
+
   const quotaPlatform = platform === "ebay" ? "ebay" : "amazef";
   await consumeQuota(payload.userId, quotaPlatform, 1);
 
-  const search = await searchCheaperCompetitorsByPlatform(platform, query, payload.userPrice);
+  const search = await searchCheaperCompetitorsByPlatform(platform, query, payload.userPrice, {
+    watchedVariantLabels: platform === "ebay" ? watchedVariantLabels : undefined,
+  });
   const now = new Date().toISOString();
 
   const { data: watchRow, error: watchError } = await supabase
@@ -461,6 +573,8 @@ export async function addCompetitorWatch(
       user_id: payload.userId,
       platform,
       product_query: query,
+      listing_url: listingUrl,
+      watched_variants_json: watchedVariantLabels.length > 0 ? watchedVariantLabels : null,
       user_price: payload.userPrice,
       currency: search.currency,
       update_mode: payload.updateMode,
@@ -585,13 +699,17 @@ export async function checkCompetitorWatchUpdate(
   const query = String(existing.product_query);
   const userPrice = Number(existing.user_price);
   const platform = (existing.platform === "ebay" ? "ebay" : "amazef") as CompetitorPlatform;
+  const watchedVariantLabels =
+    platform === "ebay" ? parseWatchedVariantLabels(existing.watched_variants_json) : [];
 
   if (!options?.skipQuota) {
     const quotaPlatform = platform === "ebay" ? "ebay" : "amazef";
     await consumeQuota(userId, quotaPlatform, 1);
   }
 
-  const search = await searchCheaperCompetitorsByPlatform(platform, query, userPrice);
+  const search = await searchCheaperCompetitorsByPlatform(platform, query, userPrice, {
+    watchedVariantLabels: watchedVariantLabels.length > 0 ? watchedVariantLabels : undefined,
+  });
   const now = new Date().toISOString();
   const intervalHours =
     existing.update_interval_hours != null ? Number(existing.update_interval_hours) : null;

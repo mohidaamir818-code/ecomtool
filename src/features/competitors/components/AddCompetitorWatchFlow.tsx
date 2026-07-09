@@ -8,6 +8,16 @@ import type {
   CompetitorWatchDetailResponse,
 } from "@/types/competitor";
 
+interface ResolvedEbayListing {
+  title: string;
+  listingUrl: string;
+  sellerName: string;
+  watchedVariantLabels: string[];
+  suggestedPrice: number;
+  currency: string;
+  variants: Array<{ label: string; totalPrice: number; totalPriceLabel: string }>;
+}
+
 interface AddCompetitorWatchFlowProps {
   userId: string;
   platform: CompetitorPlatform;
@@ -22,6 +32,8 @@ export function AddCompetitorWatchFlow({
   onAdded,
 }: AddCompetitorWatchFlowProps) {
   const [productQuery, setProductQuery] = useState("");
+  const [listingUrl, setListingUrl] = useState("");
+  const [resolvedListing, setResolvedListing] = useState<ResolvedEbayListing | null>(null);
   const [userPrice, setUserPrice] = useState("");
   const [showSchedule, setShowSchedule] = useState(false);
   const [updateMode, setUpdateMode] = useState<CompetitorUpdateMode>("auto_24h");
@@ -29,6 +41,7 @@ export function AddCompetitorWatchFlow({
   const [notice, setNotice] = useState("");
   const [isError, setIsError] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isResolving, setIsResolving] = useState(false);
 
   function resetForm() {
     setShowSchedule(false);
@@ -36,8 +49,58 @@ export function AddCompetitorWatchFlow({
     setIsError(false);
   }
 
+  async function handleResolveListing() {
+    if (!listingUrl.trim()) {
+      setNotice("Please enter your eBay listing URL.");
+      setIsError(true);
+      return;
+    }
+
+    setIsResolving(true);
+    setNotice("");
+    setIsError(false);
+    setResolvedListing(null);
+
+    try {
+      const url = new URL("/api/competitors/ebay/resolve", window.location.origin);
+      url.searchParams.set("url", listingUrl.trim());
+      url.searchParams.set("userId", userId);
+
+      const response = await fetch(url.toString());
+      const data = await response.json();
+
+      if (!response.ok) {
+        setNotice(data.error ?? "Failed to load eBay listing.");
+        setIsError(true);
+        return;
+      }
+
+      const resolved = data as ResolvedEbayListing;
+      setResolvedListing(resolved);
+      setProductQuery(resolved.title);
+      setUserPrice(resolved.suggestedPrice.toFixed(2));
+      setNotice(
+        resolved.watchedVariantLabels.length > 0
+          ? `Loaded "${resolved.title}" with ${resolved.watchedVariantLabels.length} variant${resolved.watchedVariantLabels.length === 1 ? "" : "s"} to track.`
+          : `Loaded "${resolved.title}".`,
+      );
+      setIsError(false);
+    } catch {
+      setNotice("Network error while loading eBay listing.");
+      setIsError(true);
+    } finally {
+      setIsResolving(false);
+    }
+  }
+
   async function handleAdd() {
-    if (!productQuery.trim()) {
+    if (platform === "ebay") {
+      if (!resolvedListing) {
+        setNotice("Load your eBay listing first.");
+        setIsError(true);
+        return;
+      }
+    } else if (!productQuery.trim()) {
       setNotice("Please enter a product keyword or full product name.");
       setIsError(true);
       return;
@@ -70,7 +133,10 @@ export function AddCompetitorWatchFlow({
         body: JSON.stringify({
           userId,
           platform,
-          productQuery: productQuery.trim(),
+          productQuery: platform === "ebay" ? resolvedListing?.title : productQuery.trim(),
+          listingUrl: platform === "ebay" ? resolvedListing?.listingUrl ?? listingUrl.trim() : undefined,
+          watchedVariantLabels:
+            platform === "ebay" ? resolvedListing?.watchedVariantLabels : undefined,
           userPrice: price,
           updateMode,
           customHours: updateMode === "custom" ? Number(customHours) : undefined,
@@ -86,6 +152,8 @@ export function AddCompetitorWatchFlow({
       }
 
       setProductQuery("");
+      setListingUrl("");
+      setResolvedListing(null);
       setUserPrice("");
       resetForm();
       setNotice(data.message ?? "Competitor watch added. Check your email for the first report.");
@@ -100,32 +168,93 @@ export function AddCompetitorWatchFlow({
   }
 
   const marketplace = platform === "ebay" ? "eBay" : "Amazef";
+  const canProceed =
+    platform === "ebay"
+      ? Boolean(resolvedListing && userPrice)
+      : Boolean(productQuery.trim() && userPrice);
 
   return (
     <div className="overflow-hidden rounded-2xl border border-brand/20 bg-gradient-to-br from-brand-light/60 via-white to-white shadow-sm">
       <div className="border-b border-brand/10 bg-white/70 px-6 py-5">
         <h2 className="text-lg font-bold text-[#111827]">Add competitor watch</h2>
         <p className="mt-1 text-sm text-[#6B7280]">
-          Enter your product title and price. We check {marketplace} on your schedule and email you
-          when sellers list below your price
-          {platform === "ebay" ? " (item + postage total)" : ""}.
+          {platform === "ebay"
+            ? "Paste your eBay listing URL. We load your title and variants, then check only the same title and your variants on your schedule."
+            : `Enter your product title and price. We check ${marketplace} on your schedule and email you when sellers list below your price.`}
         </p>
       </div>
 
       <div className="space-y-5 p-6">
-        <div>
-          <label htmlFor="watch-product" className="mb-1.5 block text-sm font-semibold text-[#374151]">
-            Product keyword or full name
-          </label>
-          <textarea
-            id="watch-product"
-            value={productQuery}
-            onChange={(event) => setProductQuery(event.target.value)}
-            rows={3}
-            placeholder="e.g. wireless headphones, or paste the full long product title..."
-            className="w-full resize-none rounded-xl border border-gray-200 bg-white px-4 py-3 text-[15px] leading-relaxed text-[#111827] shadow-sm outline-none transition-all placeholder:text-[#9CA3AF] focus:border-brand focus:ring-4 focus:ring-brand/10"
-          />
-        </div>
+        {platform === "ebay" ? (
+          <>
+            <div>
+              <label htmlFor="watch-listing-url" className="mb-1.5 block text-sm font-semibold text-[#374151]">
+                Your eBay listing URL
+              </label>
+              <input
+                id="watch-listing-url"
+                type="url"
+                value={listingUrl}
+                onChange={(event) => {
+                  setListingUrl(event.target.value);
+                  setResolvedListing(null);
+                  setProductQuery("");
+                }}
+                placeholder="https://www.ebay.co.uk/itm/..."
+                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-[15px] text-[#111827] shadow-sm outline-none transition-all placeholder:text-[#9CA3AF] focus:border-brand focus:ring-4 focus:ring-brand/10"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={handleResolveListing}
+              disabled={!listingUrl.trim() || isResolving || disabled}
+              className="inline-flex items-center gap-2 rounded-xl border border-brand/20 bg-white px-5 py-2.5 text-sm font-semibold text-brand hover:bg-brand-light disabled:opacity-60"
+            >
+              {isResolving ? "Loading listing..." : "Load listing"}
+            </button>
+
+            {resolvedListing ? (
+              <div className="rounded-xl border border-gray-100 bg-[#FAFAFA] p-4">
+                <p className="text-sm font-semibold text-[#111827]">{resolvedListing.title}</p>
+                <p className="mt-1 text-xs text-[#6B7280]">
+                  Your store: <span className="font-semibold text-[#374151]">{resolvedListing.sellerName}</span>
+                </p>
+                {resolvedListing.watchedVariantLabels.length > 0 ? (
+                  <div className="mt-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#9CA3AF]">
+                      Variants to track
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {resolvedListing.variants.map((variant) => (
+                        <span
+                          key={variant.label}
+                          className="rounded-full bg-white px-3 py-1 text-xs font-medium text-[#374151] ring-1 ring-gray-200"
+                        >
+                          {variant.label} — {variant.totalPriceLabel}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <div>
+            <label htmlFor="watch-product" className="mb-1.5 block text-sm font-semibold text-[#374151]">
+              Product keyword or full name
+            </label>
+            <textarea
+              id="watch-product"
+              value={productQuery}
+              onChange={(event) => setProductQuery(event.target.value)}
+              rows={3}
+              placeholder="e.g. wireless headphones, or paste the full long product title..."
+              className="w-full resize-none rounded-xl border border-gray-200 bg-white px-4 py-3 text-[15px] leading-relaxed text-[#111827] shadow-sm outline-none transition-all placeholder:text-[#9CA3AF] focus:border-brand focus:ring-4 focus:ring-brand/10"
+            />
+          </div>
+        )}
 
         <div>
           <label htmlFor="watch-price" className="mb-1.5 block text-sm font-semibold text-[#374151]">
@@ -146,13 +275,18 @@ export function AddCompetitorWatchFlow({
               className="w-full rounded-xl border border-gray-200 bg-white py-3 pl-9 pr-4 text-[15px] text-[#111827] shadow-sm outline-none transition-all placeholder:text-[#9CA3AF] focus:border-brand focus:ring-4 focus:ring-brand/10"
             />
           </div>
+          {platform === "ebay" ? (
+            <p className="mt-1.5 text-xs text-[#9CA3AF]">
+              Item + postage total. Pre-filled from your listing — edit if needed.
+            </p>
+          ) : null}
         </div>
 
         {!showSchedule ? (
           <button
             type="button"
             onClick={() => setShowSchedule(true)}
-            disabled={!productQuery.trim() || !userPrice || disabled}
+            disabled={!canProceed || disabled}
             className="inline-flex items-center gap-2 rounded-xl bg-brand px-6 py-3 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(88,66,244,0.35)] transition-all hover:bg-brand-dark disabled:opacity-60"
           >
             Add for tracking

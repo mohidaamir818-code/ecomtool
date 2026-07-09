@@ -234,7 +234,7 @@ export function CompetitorsShell() {
           <p className="mt-1 max-w-2xl text-sm leading-relaxed text-[#6B7280]">
             {platform === "amazef"
               ? "Track your product title and price on Amazef. We check on your schedule and email you when sellers list below your price."
-              : "Track your product title and price on eBay (item + postage). We check on your schedule and email you when sellers list below your price."}
+              : "Paste your eBay listing URL to track competitors on the same title and your variants only (item + postage). We email you when sellers list below your price."}
           </p>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
@@ -322,7 +322,7 @@ export function CompetitorsShell() {
             <div className="rounded-2xl border border-dashed border-gray-200 bg-[#FAFAFA] px-6 py-12 text-center">
               <p className="text-sm font-semibold text-[#374151]">No competitor watches yet</p>
               <p className="mt-1 text-xs text-[#9CA3AF]">
-                Add your product title and price above to start tracking{" "}
+                Add your {platform === "ebay" ? "eBay listing URL" : "product title and price"} above to start tracking{" "}
                 {platform === "ebay" ? "eBay" : "Amazef"} sellers.
               </p>
             </div>

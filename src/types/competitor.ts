@@ -54,6 +54,8 @@ export interface CompetitorWatch {
   id: string;
   platform: CompetitorPlatform;
   productQuery: string;
+  listingUrl: string | null;
+  watchedVariantLabels: string[];
   userPrice: number;
   userPriceLabel: string;
   currency: string;
@@ -70,7 +72,9 @@ export interface CompetitorWatch {
 export interface CompetitorWatchAddPayload {
   userId: string;
   platform?: CompetitorPlatform;
-  productQuery: string;
+  productQuery?: string;
+  listingUrl?: string;
+  watchedVariantLabels?: string[];
   userPrice: number;
   updateMode: CompetitorUpdateMode;
   customHours?: number;

@@ -153,6 +153,25 @@ export function CompetitorWatchCard({
               </span>
             </div>
             <h3 className="line-clamp-2 text-base font-bold text-[#111827]">{watch.productQuery}</h3>
+            {watch.platform === "ebay" && watch.listingUrl ? (
+              <a
+                href={watch.listingUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(event) => event.stopPropagation()}
+                className="mt-1 inline-block text-xs font-medium text-brand hover:underline"
+              >
+                View your listing
+              </a>
+            ) : null}
+            {watch.platform === "ebay" && watch.watchedVariantLabels.length > 0 ? (
+              <p className="mt-2 text-xs text-[#6B7280]">
+                Tracking variants:{" "}
+                <span className="font-semibold text-[#374151]">
+                  {watch.watchedVariantLabels.join(", ")}
+                </span>
+              </p>
+            ) : null}
             <div className="mt-2">
               {editingPrice ? (
                 <div className="space-y-2" onClick={(event) => event.stopPropagation()}>
