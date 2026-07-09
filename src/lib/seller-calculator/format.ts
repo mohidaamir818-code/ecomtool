@@ -18,6 +18,18 @@ export function monthLabel(year: number, month: number): string {
 
 export function getMonthDateRange(year: number, month: number): { from: string; to: string } {
   const from = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
-  const to = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+  const monthEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+  const now = new Date();
+
+  let to = monthEnd.getTime() > now.getTime() ? now : monthEnd;
+
+  if (from.getTime() > now.getTime()) {
+    return { from: now.toISOString(), to: now.toISOString() };
+  }
+
+  if (to.getTime() < from.getTime()) {
+    to = from;
+  }
+
   return { from: from.toISOString(), to: to.toISOString() };
 }
