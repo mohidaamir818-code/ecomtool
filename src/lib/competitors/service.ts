@@ -8,8 +8,9 @@ import {
   ebayListingMatchesSameTitle,
 } from "@/lib/ebay/query";
 import { sendEmail } from "@/lib/email/send-email";
-import { QuotaExceededError } from "@/lib/quota/errors";
+import { QuotaExceededError, getNextUtcMidnightIso } from "@/lib/quota/errors";
 import { enqueueOverflow } from "@/lib/quota/queue-service";
+import { QUOTA_EXCEEDED_MESSAGE } from "@/lib/quota/constants";
 import { consumeQuota } from "@/lib/quota/service";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type {
@@ -22,6 +23,7 @@ import type {
   CompetitorWatchAddPayload,
 } from "@/types/competitor";
 import type { EbayListing } from "@/types/ebay";
+import type { QuotaPlatform } from "@/types/quota";
 
 function formatPrice(price: number, currency: string): string {
   if (currency === "GBP") return `£${price.toFixed(2)}`;
@@ -416,6 +418,103 @@ function mapRowToWatch(row: Record<string, unknown>): CompetitorWatch {
   };
 }
 
+async function consumeCompetitorQuota(userId: string, platform: CompetitorPlatform): Promise<void> {
+  const quotaPlatform: QuotaPlatform = platform === "ebay" ? "ebay" : "amazef";
+
+  try {
+    await consumeQuota(userId, quotaPlatform, 1);
+    return;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!(error instanceof QuotaExceededError) && !message.includes("Cannot coerce")) {
+      throw error;
+    }
+    if (error instanceof QuotaExceededError) {
+      throw error;
+    }
+  }
+
+  const supabase = getSupabaseAdmin();
+  const { data: rows, error: fetchError } = await supabase
+    .from("user_quotas")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("platform", quotaPlatform)
+    .order("updated_at", { ascending: false })
+    .limit(1);
+
+  if (fetchError || !rows?.[0]) {
+    throw new Error(fetchError?.message ?? "Quota row not found.");
+  }
+
+  const row = rows[0];
+  const dailyLimit = row.daily_limit === null ? null : Number(row.daily_limit);
+  const usedToday = Number(row.used_today ?? 0);
+  const totalUsed = Number(row.total_used ?? 0);
+  const resetsAt = getNextUtcMidnightIso();
+
+  if (dailyLimit !== null && usedToday + 1 > dailyLimit) {
+    throw new QuotaExceededError({
+      platform: quotaPlatform,
+      used: usedToday,
+      limit: dailyLimit,
+      remaining: Math.max(dailyLimit - usedToday, 0),
+      resetsAt,
+      message: QUOTA_EXCEEDED_MESSAGE,
+    });
+  }
+
+  const { error: updateError } = await supabase
+    .from("user_quotas")
+    .update({
+      used_today: usedToday + 1,
+      total_used: totalUsed + 1,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", row.id);
+
+  if (updateError) throw new Error(updateError.message);
+}
+
+function isMissingOptionalColumnError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("listing_url") ||
+    lower.includes("watched_variants_json") ||
+    lower.includes("seller_name") ||
+    lower.includes("variants_json") ||
+    lower.includes("schema cache")
+  );
+}
+
+async function insertCompetitorWatchRow(
+  row: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const supabase = getSupabaseAdmin();
+
+  const attemptInsert = async (payload: Record<string, unknown>) => {
+    const { data, error } = await supabase.from("competitor_watches").insert(payload).select("*");
+    if (error) return { row: null, error };
+    return { row: data?.[0] ?? null, error: null };
+  };
+
+  let { row: watchRow, error } = await attemptInsert(row);
+
+  if (error && isMissingOptionalColumnError(error.message)) {
+    const fallbackRow = { ...row };
+    delete fallbackRow.listing_url;
+    delete fallbackRow.watched_variants_json;
+    ({ row: watchRow, error } = await attemptInsert(fallbackRow));
+  }
+
+  if (error) throw new Error(error.message);
+  if (!watchRow) {
+    throw new Error("Failed to save competitor watch.");
+  }
+
+  return watchRow;
+}
+
 async function replaceWatchMatches(watchId: string, matches: CompetitorMatch[]): Promise<void> {
   const supabase = getSupabaseAdmin();
 
@@ -428,19 +527,33 @@ async function replaceWatchMatches(watchId: string, matches: CompetitorMatch[]):
 
   if (matches.length === 0) return;
 
-  const { error: insertError } = await supabase.from("competitor_watch_matches").insert(
-    matches.map((match) => ({
-      watch_id: watchId,
-      external_product_id: match.id,
-      product_name: match.productName,
-      seller_name: match.sellerName,
-      competitor_price: match.price,
-      currency: match.currency,
-      image_url: match.imageUrl,
-      product_url: match.productUrl,
-      variants_json: match.variants?.length ? match.variants : null,
-    })),
-  );
+  const fullRows = matches.map((match) => ({
+    watch_id: watchId,
+    external_product_id: match.id,
+    product_name: match.productName,
+    seller_name: match.sellerName,
+    competitor_price: match.price,
+    currency: match.currency,
+    image_url: match.imageUrl,
+    product_url: match.productUrl,
+    variants_json: match.variants?.length ? match.variants : null,
+  }));
+
+  const baseRows = matches.map((match) => ({
+    watch_id: watchId,
+    external_product_id: match.id,
+    product_name: match.productName,
+    competitor_price: match.price,
+    currency: match.currency,
+    image_url: match.imageUrl,
+    product_url: match.productUrl,
+  }));
+
+  let { error: insertError } = await supabase.from("competitor_watch_matches").insert(fullRows);
+
+  if (insertError && isMissingOptionalColumnError(insertError.message)) {
+    ({ error: insertError } = await supabase.from("competitor_watch_matches").insert(baseRows));
+  }
 
   if (insertError) throw new Error(insertError.message);
 }
@@ -559,36 +672,29 @@ export async function addCompetitorWatch(
     throw new Error("Product name or keyword must be at least 2 characters.");
   }
 
-  const quotaPlatform = platform === "ebay" ? "ebay" : "amazef";
-  await consumeQuota(payload.userId, quotaPlatform, 1);
+  await consumeCompetitorQuota(payload.userId, platform);
 
   const search = await searchCheaperCompetitorsByPlatform(platform, query, payload.userPrice, {
     watchedVariantLabels: platform === "ebay" ? watchedVariantLabels : undefined,
   });
   const now = new Date().toISOString();
 
-  const { data: watchRow, error: watchError } = await supabase
-    .from("competitor_watches")
-    .insert({
-      user_id: payload.userId,
-      platform,
-      product_query: query,
-      listing_url: listingUrl,
-      watched_variants_json: watchedVariantLabels.length > 0 ? watchedVariantLabels : null,
-      user_price: payload.userPrice,
-      currency: search.currency,
-      update_mode: payload.updateMode,
-      update_interval_hours: intervalHours,
-      next_update_at: nextUpdateAt,
-      last_checked_at: now,
-      matches_found: search.matches.length,
-      products_searched: search.totalSearched,
-      status: "active",
-    })
-    .select()
-    .single();
-
-  if (watchError) throw new Error(watchError.message);
+  const watchRow = await insertCompetitorWatchRow({
+    user_id: payload.userId,
+    platform,
+    product_query: query,
+    listing_url: listingUrl,
+    watched_variants_json: watchedVariantLabels.length > 0 ? watchedVariantLabels : null,
+    user_price: payload.userPrice,
+    currency: search.currency,
+    update_mode: payload.updateMode,
+    update_interval_hours: intervalHours,
+    next_update_at: nextUpdateAt,
+    last_checked_at: now,
+    matches_found: search.matches.length,
+    products_searched: search.totalSearched,
+    status: "active",
+  });
 
   await replaceWatchMatches(String(watchRow.id), search.matches);
 
