@@ -15,25 +15,43 @@
           "urlPattern": "ebay.co.uk",
           "selector": "button#gh-search-btn, input#gh-btn",
           "message": "Ab Search button par click karo taake results open hon.",
-          "position": "left"
+          "position": "left",
+          "advanceOnUrl": "/sch/"
         },
         {
           "urlPattern": "/sch/",
-          "selector": "a[href*=\"LH_Complete=1\"], a[href*=\"LH_Sold=1\"], [aria-label*=\"Sold\"]",
-          "message": "Sold listings filter par click karo — yeh batata hai ke product kitna bikta hai.",
-          "position": "right"
+          "selector": "input[aria-label*=\"Sold items\"], input[id*=\"LH_Sold\"], label[for*=\"LH_Sold\"], a[href*=\"LH_Sold=1\"], a[href*=\"LH_Complete=1\"], [aria-label*=\"Sold\"]",
+          "message": "Left side par `Sold items` ke checkbox par tick karo taa ke seller sirf sold items dekh sake.",
+          "position": "right",
+          "advanceOnUrl": "LH_Sold=1,LH_Complete=1"
         },
         {
           "urlPattern": "/sch/",
-          "selector": ".s-item, li.s-item",
-          "message": "Yahan sold listings dekho — title, price aur kitni baar bika yeh sab note karo.",
-          "position": "top"
+          "selector": "sold-date-count",
+          "combinedSoldHints": true,
+          "waitSoldCount": true,
+          "message": "Perfect! Is product par <strong>{{soldDate}}</strong> (aaj ki date) aur <strong>Sold: {{soldCount}}</strong> (20 se zyada) hai — ab <strong>yahi product open</strong> karo.",
+          "messageNoGrabley": "Sold number abhi nazar nahi aa raha. <strong>Grabley</strong> extension install karo taake Sold count dikhe, phir aaj ki date aur 20+ sold wala product choose karo.",
+          "messageNoMatch": "Koi product nahi mila jahan <strong>{{todayDate}}</strong> (aaj ki date) ho aur <strong>Sold 20+</strong> ho. Wapis jao aur <strong>naya keyword</strong> search karo — jaise \"wireless earbuds\" ya \"phone case\".",
+          "grableyUrl": "https://chromewebstore.google.com/detail/grabley-product-search-to/hppdgjpcbnbfapnailmeiibngpolplao",
+          "position": "right",
+          "action": "ok"
         },
         {
-          "urlPattern": "/sch/",
-          "selector": ".s-item__price, .s-item__detail--primary",
-          "message": "Average sold price check karo. Agar margin theek lagay to EcomTool mein supplier dhundho.",
-          "position": "bottom"
+          "urlPattern": "/itm/",
+          "selector": "h1.x-item-title__mainTitle, h1.it-ttl, #itemTitle",
+          "productCheck": true,
+          "messageSold": "Yeh product sold ho chuka hai. Wapis jao aur koi aur product dhundo jo <strong>in stock</strong> ho, ya naya keyword search karo.",
+          "messageInStock": "Acha! Yeh product <strong>in stock</strong> hai. Next par click karo aur agla step dekho.",
+          "position": "bottom",
+          "silentWait": true
+        },
+        {
+          "urlPattern": "/itm/",
+          "selector": "#binBtn_btn, .x-buybox, .x-price-primary, [itemprop=\"price\"], .ux-textspans--PRICE",
+          "message": "Buy It Now price aur shipping check karo. Agar margin theek lagay to EcomTool mein supplier dhundho.",
+          "position": "left",
+          "action": "finish"
         }
       ]
     }

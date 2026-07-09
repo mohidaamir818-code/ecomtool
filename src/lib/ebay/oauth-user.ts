@@ -109,6 +109,24 @@ async function persistUserTokens(
     row.marketplace_id = marketplaceId;
   }
 
+  const { error: rpcError } = await supabase.rpc("upsert_ebay_oauth_token", {
+    p_user_id: userId,
+    p_access_token: token.access_token,
+    p_refresh_token: token.refresh_token,
+    p_access_token_expires_at: resolveExpiry(token.expires_in),
+    p_refresh_token_expires_at: resolveExpiry(token.refresh_token_expires_in),
+    p_scope: EBAY_SCOPES,
+    p_token_type: token.token_type ?? "Bearer",
+    p_ebay_username: ebayUsername,
+    p_raw_response: raw,
+    p_marketplace_id:
+      marketplaceId && !existing?.marketplace_id ? marketplaceId : null,
+  });
+
+  if (!rpcError) {
+    return;
+  }
+
   const { error } = await supabase.from("ebay_oauth_tokens").upsert(row, { onConflict: "user_id" });
 
   if (error) {
