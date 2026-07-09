@@ -542,12 +542,69 @@ function parseEbayListingUrlParts(rawUrl: string): { legacyItemId: string; varia
 }
 
 function listingMatchesVariantId(listing: EbayListing, variantId: string): boolean {
+  if (listing.id.split("|")[2] === variantId) return true;
+
   try {
     const parsed = new URL(listing.listingUrl);
     return parsed.searchParams.get("var") === variantId;
   } catch {
     return listing.id.includes(variantId) || listing.listingUrl.includes(variantId);
   }
+}
+
+function itemDetailMatchesLegacyVariationId(item: EbayItemDetail, variationId: string): boolean {
+  const itemVariationId = item.itemId?.split("|")[2];
+  if (itemVariationId && itemVariationId === variationId) return true;
+
+  if (!item.itemWebUrl) return false;
+
+  try {
+    return new URL(item.itemWebUrl).searchParams.get("var") === variationId;
+  } catch {
+    return item.itemWebUrl.includes(variationId);
+  }
+}
+
+function isItemGroupLegacyIdError(errors?: Array<{ message?: string }>): boolean {
+  const message = errors?.[0]?.message?.toLowerCase() ?? "";
+  return message.includes("item group") || message.includes("item_group");
+}
+
+async function fetchItemByLegacyId(
+  token: string,
+  legacyItemId: string,
+  marketplaceId?: EbayMarketplaceId,
+  legacyVariationId?: string | null,
+): Promise<{ detail: EbayItemDetail | null; isItemGroupHint: boolean }> {
+  const url = new URL(`${EBAY_API_BASE}/buy/browse/v1/item/get_item_by_legacy_id`);
+  url.searchParams.set("legacy_item_id", legacyItemId);
+  if (legacyVariationId) {
+    url.searchParams.set("legacy_variation_id", legacyVariationId);
+  }
+
+  const response = await fetch(url.toString(), {
+    headers: ebayHeaders(token, marketplaceId),
+    next: { revalidate: 0 },
+  });
+
+  if (response.ok) {
+    return { detail: (await response.json()) as EbayItemDetail, isItemGroupHint: false };
+  }
+
+  const data = (await response.json()) as { errors?: Array<{ message?: string }> };
+  return { detail: null, isItemGroupHint: isItemGroupLegacyIdError(data.errors) };
+}
+
+function filterAccessoryVariants(items: EbayItemDetail[]): EbayItemDetail[] {
+  const siblingNetPrices = items
+    .map((item) => Number.parseFloat(item.price?.value ?? "0"))
+    .filter((value) => value > 0);
+
+  return items.filter((item) => {
+    const netPrice = Number.parseFloat(item.price?.value ?? "0");
+    const label = extractVariantLabel(item);
+    return !isLikelyAccessoryVariant(label, netPrice, siblingNetPrices);
+  });
 }
 
 async function fetchItemsByItemGroup(
@@ -584,8 +641,61 @@ export async function resolveEbayListingFromUrl(
 ): Promise<ResolvedEbaySellerListing> {
   const { legacyItemId, variantId } = parseEbayListingUrlParts(rawUrl);
   const token = await getAccessToken();
-  const itemId = `v1|${legacyItemId}|0`;
-  const detail = await fetchItemDetail(token, itemId, marketplaceId);
+
+  const legacyAttempt = await fetchItemByLegacyId(
+    token,
+    legacyItemId,
+    marketplaceId,
+    variantId,
+  );
+
+  let detail = legacyAttempt.detail;
+  let variantDetails: EbayItemDetail[] = detail ? [detail] : [];
+
+  if (!detail?.title && (legacyAttempt.isItemGroupHint || !variantId)) {
+    const groupItems = await fetchItemsByItemGroup(token, legacyItemId, marketplaceId);
+    if (groupItems.length > 0) {
+      variantDetails = filterAccessoryVariants(groupItems);
+      detail = variantDetails[0] ?? groupItems[0] ?? null;
+    }
+  } else if (detail?.title) {
+    const isVariationGroup =
+      detail.primaryItemGroup?.itemGroupType === "SELLER_DEFINED_VARIATIONS" &&
+      detail.primaryItemGroup.itemGroupId;
+
+    if (isVariationGroup && detail.primaryItemGroup?.itemGroupId && !variantId) {
+      const groupItems = await fetchItemsByItemGroup(
+        token,
+        detail.primaryItemGroup.itemGroupId,
+        marketplaceId,
+      );
+      if (groupItems.length > 0) {
+        variantDetails = filterAccessoryVariants(groupItems);
+      }
+    }
+  }
+
+  if (!detail?.title) {
+    const fallback = await fetchItemDetail(token, `v1|${legacyItemId}|0`, marketplaceId);
+    if (fallback?.title) {
+      detail = fallback;
+      variantDetails = [fallback];
+    }
+  }
+
+  if (!detail?.title) {
+    throw new Error("Could not load that eBay listing. Check the URL and try again.");
+  }
+
+  if (variantId && variantDetails.length > 1) {
+    const filtered = variantDetails.filter((item) =>
+      itemDetailMatchesLegacyVariationId(item, variantId),
+    );
+    if (filtered.length > 0) {
+      variantDetails = filtered;
+      detail = filtered[0];
+    }
+  }
 
   if (!detail?.title) {
     throw new Error("Could not load that eBay listing. Check the URL and try again.");
@@ -594,31 +704,6 @@ export async function resolveEbayListingFromUrl(
   const title = detail.title.trim();
   const sellerName = detail.seller?.username ?? "Unknown seller";
   const listingUrl = normalizeEbayListingUrl(detail.itemWebUrl ?? rawUrl, legacyItemId);
-
-  const isVariationGroup =
-    detail.primaryItemGroup?.itemGroupType === "SELLER_DEFINED_VARIATIONS" &&
-    detail.primaryItemGroup.itemGroupId;
-
-  let variantDetails: EbayItemDetail[] = [detail];
-
-  if (isVariationGroup && detail.primaryItemGroup?.itemGroupId) {
-    const groupItems = await fetchItemsByItemGroup(
-      token,
-      detail.primaryItemGroup.itemGroupId,
-      marketplaceId,
-    );
-    if (groupItems.length > 0) {
-      const siblingNetPrices = groupItems
-        .map((item) => Number.parseFloat(item.price?.value ?? "0"))
-        .filter((value) => value > 0);
-
-      variantDetails = groupItems.filter((item) => {
-        const netPrice = Number.parseFloat(item.price?.value ?? "0");
-        const label = extractVariantLabel(item);
-        return !isLikelyAccessoryVariant(label, netPrice, siblingNetPrices);
-      });
-    }
-  }
 
   let variants = variantDetails
     .map((item) => mapDetailToListing(item, variantDetails.length > 1))
