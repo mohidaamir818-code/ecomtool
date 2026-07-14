@@ -172,9 +172,10 @@ export function normalizeEbayAutoListingSettings(
       base.autoPromoteAdRatePercent,
     ),
     aiPhotoEditEnabled: Boolean(input.aiPhotoEditEnabled),
+    // Do not trim while typing — trailing spaces are needed between words.
     aiPhotoEditPrompt:
       typeof input.aiPhotoEditPrompt === "string"
-        ? input.aiPhotoEditPrompt.trim().slice(0, 500)
+        ? input.aiPhotoEditPrompt.slice(0, 500)
         : base.aiPhotoEditPrompt,
   };
 }

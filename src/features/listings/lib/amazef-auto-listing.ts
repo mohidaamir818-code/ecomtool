@@ -168,7 +168,11 @@ export function normalizeAutoListingSettings(
     flashSaleMinProfit: clampNumber(input.flashSaleMinProfit, 0, 100000, base.flashSaleMinProfit),
     flashSaleRule: clampString(input.flashSaleRule, base.flashSaleRule),
     aiPhotoEditEnabled: Boolean(input.aiPhotoEditEnabled),
-    aiPhotoEditPrompt: clampString(input.aiPhotoEditPrompt, base.aiPhotoEditPrompt),
+    // Do not trim while typing — trailing spaces are needed between words.
+    aiPhotoEditPrompt:
+      typeof input.aiPhotoEditPrompt === "string"
+        ? input.aiPhotoEditPrompt.slice(0, 500)
+        : base.aiPhotoEditPrompt,
   };
 }
 
