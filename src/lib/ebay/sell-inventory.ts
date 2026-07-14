@@ -1154,12 +1154,126 @@ export async function getItemAspectsForCategory(
     .filter((name): name is string => Boolean(name));
 }
 
+async function getCategoryVariationSupport(
+  token: string,
+  categoryIds: string[],
+  marketplaceId: EbayMarketplaceId,
+): Promise<Map<string, boolean>> {
+  const support = new Map<string, boolean>();
+  const uniqueIds = [...new Set(categoryIds.map((id) => id.trim()).filter(Boolean))].slice(0, 50);
+  if (uniqueIds.length === 0) return support;
+
+  const url = new URL(
+    `${EBAY_API_BASE}/sell/metadata/v1/marketplace/${marketplaceId}/get_listing_structure_policies`,
+  );
+  url.searchParams.set("filter", `categoryIds:{${uniqueIds.join("|")}}`);
+
+  const { response, bodyText } = await ebayFetch("metadata/listing-structure", url.toString(), {
+    headers: taxonomyHeaders(token, marketplaceId),
+    cache: "no-store",
+  });
+
+  if (response.status === 204 || !response.ok) {
+    return support;
+  }
+
+  const data = parseJsonSafe(bodyText, {} as {
+    listingStructurePolicies?: Array<{
+      categoryId?: string;
+      category_id?: string;
+      variationsSupported?: boolean;
+      variations_supported?: boolean;
+    }>;
+  });
+
+  for (const policy of data.listingStructurePolicies ?? []) {
+    const categoryId = policy.categoryId ?? policy.category_id;
+    const variationsSupported = policy.variationsSupported ?? policy.variations_supported;
+    if (categoryId) {
+      support.set(categoryId, Boolean(variationsSupported));
+    }
+  }
+
+  return support;
+}
+
+async function categorySupportsVariationsViaAspects(
+  token: string,
+  categoryId: string,
+  marketplaceId: EbayMarketplaceId,
+): Promise<boolean> {
+  const config = resolveMarketplaceConfig(marketplaceId);
+  const url = new URL(
+    `${EBAY_API_BASE}/commerce/taxonomy/v1/category_tree/${config.categoryTreeId}/get_item_aspects_for_category`,
+  );
+  url.searchParams.set("category_id", categoryId);
+
+  const { response, bodyText } = await ebayFetch("taxonomy/aspect-variations", url.toString(), {
+    headers: taxonomyHeaders(token, marketplaceId),
+    cache: "no-store",
+  });
+
+  if (!response.ok) return false;
+
+  const data = parseJsonSafe(bodyText, {} as {
+    aspects?: Array<{
+      aspectConstraint?: {
+        aspectEnabledForVariations?: boolean;
+      };
+    }>;
+  });
+
+  return (data.aspects ?? []).some(
+    (aspect) => aspect.aspectConstraint?.aspectEnabledForVariations === true,
+  );
+}
+
+async function categorySupportsVariations(
+  token: string,
+  categoryId: string,
+  marketplaceId: EbayMarketplaceId,
+  supportCache?: Map<string, boolean>,
+): Promise<boolean> {
+  const cached = supportCache?.get(categoryId);
+  if (cached !== undefined) return cached;
+
+  let supported = false;
+  const metadataSupport = await getCategoryVariationSupport(token, [categoryId], marketplaceId);
+  const fromMetadata = metadataSupport.get(categoryId);
+  if (fromMetadata !== undefined) {
+    supported = fromMetadata;
+  } else {
+    supported = await categorySupportsVariationsViaAspects(token, categoryId, marketplaceId);
+  }
+
+  supportCache?.set(categoryId, supported);
+  return supported;
+}
+
 async function resolveCategoryId(
   token: string,
   listing: GeneratedListing,
   marketplaceId: EbayMarketplaceId,
+  options?: { requireVariations?: boolean },
 ): Promise<string> {
-  if (listing.categoryId) return listing.categoryId;
+  const requireVariations = options?.requireVariations ?? false;
+
+  if (!requireVariations) {
+    if (listing.categoryId) return listing.categoryId;
+
+    const suggestions = await getCategorySuggestions(
+      token,
+      listing.categorySuggestion || listing.seoTitle,
+      marketplaceId,
+    );
+
+    const categoryId = suggestions[0]?.categoryId;
+    if (!categoryId) {
+      throw new Error("Could not resolve an eBay category for this product.");
+    }
+
+    return categoryId;
+  }
 
   const suggestions = await getCategorySuggestions(
     token,
@@ -1167,12 +1281,42 @@ async function resolveCategoryId(
     marketplaceId,
   );
 
-  const categoryId = suggestions[0]?.categoryId;
-  if (!categoryId) {
+  const candidateIds: string[] = [];
+  if (listing.categoryId?.trim()) {
+    candidateIds.push(listing.categoryId.trim());
+  }
+  for (const suggestion of suggestions) {
+    if (suggestion.categoryId && !candidateIds.includes(suggestion.categoryId)) {
+      candidateIds.push(suggestion.categoryId);
+    }
+  }
+
+  if (candidateIds.length === 0) {
     throw new Error("Could not resolve an eBay category for this product.");
   }
 
-  return categoryId;
+  const supportCache = await getCategoryVariationSupport(token, candidateIds, marketplaceId);
+
+  for (const categoryId of candidateIds) {
+    const supported = await categorySupportsVariations(
+      token,
+      categoryId,
+      marketplaceId,
+      supportCache,
+    );
+    if (supported) {
+      if (listing.categoryId && listing.categoryId !== categoryId) {
+        console.log(
+          `[eBay category] Using ${categoryId} instead of ${listing.categoryId} because variations are required.`,
+        );
+      }
+      return categoryId;
+    }
+  }
+
+  throw new Error(
+    "The selected eBay category does not support multi-variation listings. Edit the category on the review page and choose one that supports variations.",
+  );
 }
 
 // eBay accepts GTINs of 8, 12, 13, or 14 digits. Anything else is rejected,
@@ -1606,15 +1750,24 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
   }
 
   const policyIds = draft.ebayPolicies;
-  const categoryId = await resolveCategoryId(token, draft.listing, marketplaceId);
+
+  const activeVariants = draft.variants.length > 0 ? draft.variants : [];
+  assertUniqueVariantSkus(activeVariants);
+  const dedupedVariants =
+    activeVariants.length > 1 ? dedupeVariantsByCombo(activeVariants) : activeVariants;
+  const isMultiVariant = dedupedVariants.length > 1;
+
+  const categoryId = await resolveCategoryId(token, draft.listing, marketplaceId, {
+    requireVariations: isMultiVariant,
+  });
   const categoryAspectNames = await getItemAspectsForCategory(token, categoryId, marketplaceId);
   const { colors, sizes } = extractColoursAndSizesFromLabels(
-    draft.variants.map((variant) => variant.label),
+    dedupedVariants.map((variant) => variant.label),
   );
   const aspectOptions: EbayAspectBuildOptions = {
     marketplaceId,
     product: draft.product,
-    variantDrafts: draft.variants,
+    variantDrafts: dedupedVariants,
     categoryAspectNames,
     aspectOverrides: {},
     extractedAspects: { colours: colors, sizes },
@@ -1635,21 +1788,12 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
 
   console.log(
     "Variant labels for aspects:",
-    draft.variants.map((variant) => variant.label),
+    dedupedVariants.map((variant) => variant.label),
   );
   console.log(
     "Preview aspects:",
     JSON.stringify(buildEbayAspects(listing, aspectOptions), null, 2),
   );
-
-  const activeVariants = draft.variants.length > 0 ? draft.variants : [];
-  assertUniqueVariantSkus(activeVariants);
-
-  // Drive the single-vs-multi decision off the post-dedupe variant set so that
-  // isMultiVariant (group path) and isMultiSkuListing (per-SKU aspect stripping)
-  // always agree, even when duplicate Colour+Size combos collapse to one.
-  const dedupedVariants =
-    activeVariants.length > 1 ? dedupeVariantsByCombo(activeVariants) : activeVariants;
 
   if (dedupedVariants.length < activeVariants.length) {
     console.log(
@@ -1657,14 +1801,6 @@ export async function listDraftOnEbay(userId: string, draft: ListingDraft): Prom
       activeVariants.length - dedupedVariants.length,
     );
   }
-
-  const { colors: dedupedColors, sizes: dedupedSizes } = extractColoursAndSizesFromLabels(
-    dedupedVariants.map((variant) => variant.label),
-  );
-  aspectOptions.variantDrafts = dedupedVariants;
-  aspectOptions.extractedAspects = { colours: dedupedColors, sizes: dedupedSizes };
-
-  const isMultiVariant = dedupedVariants.length > 1;
 
   if (!isMultiVariant) {
     const variant = dedupedVariants[0];
@@ -1944,15 +2080,24 @@ export async function reviseEbayListedProduct(
   }
 
   const policyIds = draft.ebayPolicies;
-  const categoryId = draft.listing.categoryId ?? (await resolveCategoryId(token, draft.listing, marketplaceId));
+
+  const activeVariants = draft.variants.length > 0 ? draft.variants : [];
+  assertUniqueVariantSkus(activeVariants);
+  const dedupedVariants =
+    activeVariants.length > 1 ? dedupeVariantsByCombo(activeVariants) : activeVariants;
+  const isMultiVariant = dedupedVariants.length > 1;
+
+  const categoryId = await resolveCategoryId(token, draft.listing, marketplaceId, {
+    requireVariations: isMultiVariant,
+  });
   const categoryAspectNames = await getItemAspectsForCategory(token, categoryId, marketplaceId);
   const { colors, sizes } = extractColoursAndSizesFromLabels(
-    draft.variants.map((variant) => variant.label),
+    dedupedVariants.map((variant) => variant.label),
   );
   const aspectOptions: EbayAspectBuildOptions = {
     marketplaceId,
     product: draft.product,
-    variantDrafts: draft.variants,
+    variantDrafts: dedupedVariants,
     categoryAspectNames,
     aspectOverrides: {},
     extractedAspects: { colours: colors, sizes },
@@ -1970,19 +2115,6 @@ export async function reviseEbayListedProduct(
       appOrigin,
     ),
   };
-
-  const activeVariants = draft.variants.length > 0 ? draft.variants : [];
-  assertUniqueVariantSkus(activeVariants);
-
-  const dedupedVariants =
-    activeVariants.length > 1 ? dedupeVariantsByCombo(activeVariants) : activeVariants;
-  aspectOptions.variantDrafts = dedupedVariants;
-  const { colors: dedupedColors, sizes: dedupedSizes } = extractColoursAndSizesFromLabels(
-    dedupedVariants.map((variant) => variant.label),
-  );
-  aspectOptions.extractedAspects = { colours: dedupedColors, sizes: dedupedSizes };
-
-  const isMultiVariant = dedupedVariants.length > 1;
 
   if (!isMultiVariant) {
     const variant = dedupedVariants[0];
