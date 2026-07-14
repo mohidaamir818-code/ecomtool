@@ -19,6 +19,10 @@ import { ensureDraftVariantEans } from "@/lib/listings/ensure-draft-variant-eans
 import { ensureInternalSkus } from "@/lib/listings/internal-sku-service";
 import { fetchAliExpressShippingDays } from "@/lib/listings/aliexpress-shipping-days";
 import { flagDescriptionPhotos } from "@/lib/listings/description-image-flags";
+import {
+  generateAiListingPhotos,
+  mergeAiPhotosIntoDraftPhotos,
+} from "@/lib/listings/ai-listing-photos";
 import { selectFulfillmentPolicyWithAi } from "@/lib/listings/select-fulfillment-policy-ai";
 import { saveListedProduct } from "@/lib/listings/listed-products-service";
 import { fetchListingProductSource } from "@/lib/listings/product-source";
@@ -276,9 +280,17 @@ export async function prepareEbayAutoListDraft(
     listingPrice = pricing.breakdown.recommendedPrice;
   }
 
-  const listing = await runPrepareStep("Listing generation", () =>
-    generateEbayListing(product, listingPrice),
-  );
+  const [listing, aiPhotos] = await Promise.all([
+    runPrepareStep("Listing generation", () => generateEbayListing(product, listingPrice)),
+    generateAiListingPhotos({
+      userId,
+      title: product.title,
+      count: 3,
+    }).catch((error) => {
+      console.warn("[eBay prepare] NVIDIA photo generation skipped:", error);
+      return [] as Awaited<ReturnType<typeof generateAiListingPhotos>>;
+    }),
+  ]);
 
   let draft = buildInitialDraft(product, listing, {
     pricing: pricingPrefs,
@@ -286,6 +298,13 @@ export async function prepareEbayAutoListDraft(
     manualPriceOverride: effectivePrice,
     promotions: settings.promotions,
   });
+
+  if (aiPhotos.length > 0) {
+    draft = {
+      ...draft,
+      photos: mergeAiPhotosIntoDraftPhotos(draft.photos, aiPhotos),
+    };
+  }
 
   draft = applyStockLimits(draft, settings.minStock, settings.maxStock);
 

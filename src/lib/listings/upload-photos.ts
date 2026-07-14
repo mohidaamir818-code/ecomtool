@@ -58,3 +58,39 @@ export async function uploadListingPhotos(
 
   return urls;
 }
+
+export async function uploadListingPhotoBytes(
+  userId: string,
+  bytes: Buffer,
+  options: { contentType?: string; fileName?: string },
+): Promise<string> {
+  const contentType = (options.contentType || "image/png").toLowerCase();
+  const normalizedType = contentType === "image/jpg" ? "image/jpeg" : contentType;
+  if (!ALLOWED_TYPES.has(normalizedType)) {
+    throw new Error("AI photo must be JPG, PNG, or WebP.");
+  }
+
+  const supabase = getSupabaseAdmin();
+  const safeName = sanitizeFileName(options.fileName || "ai-photo.png");
+  const path = `${userId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeName}`;
+
+  const { error } = await supabase.storage.from(BUCKET).upload(path, bytes, {
+    contentType: normalizedType,
+    upsert: false,
+  });
+
+  if (error) {
+    if (error.message.toLowerCase().includes("bucket not found")) {
+      throw new Error(
+        "Storage bucket missing. Run supabase/migrations/030_listing_photos_storage.sql in Supabase.",
+      );
+    }
+    throw new Error(error.message);
+  }
+
+  const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
+  if (!data.publicUrl) {
+    throw new Error("Failed to get public URL for AI photo.");
+  }
+  return data.publicUrl;
+}

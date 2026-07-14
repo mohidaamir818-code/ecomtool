@@ -39,6 +39,7 @@ export const serverEnv = {
     process.env.EBAY_OAUTH_REDIRECT_URL?.trim() ||
     `${origin.replace(/\/$/, "")}/api/ebay/callback`,
   anthropicApiKey: () => process.env.ANTHROPIC_API_KEY ?? "",
+  nvidiaApiKey: () => process.env.NVIDIA_API_KEY?.trim() ?? "",
   smtpHost: () => process.env.SMTP_HOST ?? "smtp.gmail.com",
   smtpPort: () => Number(process.env.SMTP_PORT ?? 587),
   smtpUser: () => requireServerEnv("SMTP_USER"),

@@ -15,6 +15,10 @@ import { normalizeAutoListingSettings } from "@/features/listings/lib/amazef-aut
 import { mergeInternalSkusIntoDraft } from "@/lib/listings/internal-sku";
 import { ensureInternalSkus } from "@/lib/listings/internal-sku-service";
 import { fetchAliExpressShippingDaysLabel } from "@/lib/listings/aliexpress-shipping-days";
+import {
+  generateAiListingPhotos,
+  mergeAiPhotosIntoDraftPhotos,
+} from "@/lib/listings/ai-listing-photos";
 import { fetchListingProductSource } from "@/lib/listings/product-source";
 import {
   buildBreakdownForPrice,
@@ -254,9 +258,17 @@ export async function prepareAmazefAutoListDraft(
     listingPrice = pricing.breakdown.recommendedPrice;
   }
 
-  const listing = await runPrepareStep("Listing generation", () =>
-    generateEbayListing(product, listingPrice),
-  );
+  const [listing, aiPhotos] = await Promise.all([
+    runPrepareStep("Listing generation", () => generateEbayListing(product, listingPrice)),
+    generateAiListingPhotos({
+      userId,
+      title: product.title,
+      count: 3,
+    }).catch((error) => {
+      console.warn("[Amazef prepare] NVIDIA photo generation skipped:", error);
+      return [] as Awaited<ReturnType<typeof generateAiListingPhotos>>;
+    }),
+  ]);
   const promotions = sellerPreferencesToPromotions(sellerPrefs);
 
   let draft = buildInitialDraft(product, listing, {
@@ -265,6 +277,13 @@ export async function prepareAmazefAutoListDraft(
     manualPriceOverride: effectivePrice,
     promotions,
   });
+
+  if (aiPhotos.length > 0) {
+    draft = {
+      ...draft,
+      photos: mergeAiPhotosIntoDraftPhotos(draft.photos, aiPhotos),
+    };
+  }
 
   draft = applyStockLimits(draft, settings.minStock, settings.maxStock);
 
