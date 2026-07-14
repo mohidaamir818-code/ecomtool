@@ -24,6 +24,7 @@ import { sellerPreferencesToPromotions, promotionsToSellerPreferences } from "@/
 import { AiListingGenerator } from "./AiListingGenerator";
 import { AmazefAutoListingPanel } from "./AmazefAutoListingPanel";
 import { AmazefAutoListingSettingsModal } from "./AmazefAutoListingSettingsModal";
+import { AmazefAutoListReviewPage } from "./AmazefAutoListReviewPage";
 import { EbayAutoListReviewPage } from "./EbayAutoListReviewPage";
 import { EbayAutoListingFulfillmentPicker } from "./EbayAutoListingFulfillmentPicker";
 import { EbayAutoListingSettingsModal } from "./EbayAutoListingSettingsModal";
@@ -152,6 +153,7 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
   );
   const [showAutoSettingsModal, setShowAutoSettingsModal] = useState(false);
   const [showEbayAutoReview, setShowEbayAutoReview] = useState(false);
+  const [showAmazefAutoReview, setShowAmazefAutoReview] = useState(false);
   const [pendingAmazefAutoList, setPendingAmazefAutoList] = useState(false);
   const [pendingEbayAutoList, setPendingEbayAutoList] = useState(false);
   const [pendingFulfillmentSelection, setPendingFulfillmentSelection] =
@@ -798,21 +800,30 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
           url: url.trim(),
           settings: amazefAutoSettings,
           acknowledgeVero,
+          mode: "prepare",
         }),
       });
       const data = await response.json();
 
-      if (!response.ok) {
+      if (!response.ok || !data.success) {
         setNotice(data.error ?? "Auto listing failed.");
         setIsError(true);
         return;
       }
 
-      setListedUrl(data.result?.listingUrl ?? null);
-      setListedProductsRefreshKey((key) => key + 1);
-      setNotice(data.message ?? "Product listed on Amazef.");
+      if (!data.draft) {
+        setNotice("Auto listing did not return a draft to review.");
+        setIsError(true);
+        return;
+      }
+
+      setDraft(data.draft as ListingDraft);
+      setListing((data.draft as ListingDraft).listing);
+      setProduct((data.draft as ListingDraft).product);
+      setShowAmazefAutoReview(true);
+      setNotice(data.message ?? "Listing ready for review.");
       setIsError(false);
-      setUrl("");
+      setListedUrl(null);
     } catch {
       setNotice("Network error during auto listing.");
       setIsError(true);
@@ -1100,6 +1111,16 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
         router.push("/dashboard/listings");
       }
     }
+    if (showAmazefAutoReview) {
+      setShowAmazefAutoReview(false);
+      setDraft(null);
+      setUrl("");
+      setNotice(url ? "Product listed on Amazef." : "Listing submitted to Amazef.");
+      setIsError(false);
+      if (isCreateMode) {
+        router.push("/dashboard/listings");
+      }
+    }
   }
 
   const busy = veroLoading || generateLoading || autoListProcessing;
@@ -1178,8 +1199,13 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
 
   return (
     <DashboardLayout>
-      <div className={`mx-auto p-6 lg:p-8 ${showEbayAutoReview ? "max-w-[1280px]" : "max-w-[960px]"}`}>
-        {showEbayAutoReview && draft && userId && !isAmazef ? null : (
+      <div
+        className={`mx-auto p-6 lg:p-8 ${showEbayAutoReview || showAmazefAutoReview ? "max-w-[1280px]" : "max-w-[960px]"}`}
+      >
+        {showEbayAutoReview && draft && userId && !isAmazef ? null : showAmazefAutoReview &&
+          draft &&
+          userId &&
+          isAmazef ? null : (
         <div className="relative mb-8 overflow-hidden rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50/80 via-white to-indigo-50/60 p-6 shadow-md shadow-violet-100/30 lg:p-8">
           <div className="pointer-events-none absolute -right-12 -top-12 h-40 w-40 rounded-full bg-gradient-to-br from-brand/10 to-indigo-200/30" />
           <div className="pointer-events-none absolute -bottom-8 -left-8 h-28 w-28 rounded-full bg-gradient-to-tr from-amber-100/50 to-transparent" />
@@ -1316,6 +1342,18 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
             onChange={updateDraft}
             onCancel={() => {
               setShowEbayAutoReview(false);
+              setNotice("");
+              setIsError(false);
+            }}
+            onListed={handleListed}
+          />
+        ) : showAmazefAutoReview && draft && userId && isAmazef ? (
+          <AmazefAutoListReviewPage
+            userId={userId}
+            draft={draft}
+            onChange={updateDraft}
+            onCancel={() => {
+              setShowAmazefAutoReview(false);
               setNotice("");
               setIsError(false);
             }}
@@ -1524,6 +1562,7 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
               draft={draft}
               disabled={isBlocked}
               refreshKey={amazefRefreshKey}
+              onChange={updateDraft}
               onConnectRequest={() => setShowAmazefConnectModal(true)}
               onListed={handleListed}
             />
@@ -1564,7 +1603,7 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
                 ? pendingFulfillmentSelection
                   ? "Continue"
                   : isAmazef
-                    ? "Auto list"
+                    ? "Prepare listing"
                     : "Prepare listing"
                 : currentStep === 0
                   ? "Check & Generate Listing"

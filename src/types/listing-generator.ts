@@ -163,6 +163,31 @@ export interface EbayBusinessPolicies {
   returnPolicyId: string;
 }
 
+export interface AmazefCustomGift {
+  id: string;
+  title: string;
+  description: string;
+  imageUrl: string;
+}
+
+export interface AmazefFlashSaleOffer {
+  enabled: boolean;
+  originalPrice: number;
+  flashSalePrice: number;
+  discountPercent: number;
+}
+
+export interface AmazefBogoOffer {
+  enabled: boolean;
+  eligibleVariantIds: string[];
+  customGifts: AmazefCustomGift[];
+}
+
+export interface AmazefListingOffers {
+  flashSale: AmazefFlashSaleOffer;
+  bogo: AmazefBogoOffer;
+}
+
 export interface EbayPoliciesResponse {
   fulfillment: EbayPolicyOption[];
   payment: EbayPolicyOption[];
@@ -184,6 +209,7 @@ export interface ListingDraft {
   pricingBreakdown?: PricingBreakdown;
   manualPriceOverride?: number | null;
   ebayPolicies?: EbayBusinessPolicies;
+  amazefOffers?: AmazefListingOffers;
   ebayTradingImport?: {
     listingId: string;
     variants: Array<{

@@ -125,6 +125,39 @@ async function getUserEmail(userId: string): Promise<string | null> {
   return data?.email?.trim() ?? null;
 }
 
+async function runPrepareStep<T>(
+  label: string,
+  run: () => Promise<T>,
+  options?: { timeoutMs?: number; maxAttempts?: number },
+): Promise<T> {
+  const timeoutMs = options?.timeoutMs ?? 45_000;
+  const maxAttempts = options?.maxAttempts ?? 2;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await Promise.race([
+        run(),
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error(`${label} timed out after ${timeoutMs / 1000}s.`)),
+            timeoutMs,
+          );
+        }),
+      ]);
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts) {
+        console.warn(`[eBay prepare] ${label} failed (attempt ${attempt}), retrying…`, error);
+      }
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`${label} failed after ${maxAttempts} attempts.`);
+}
+
 export interface EbayAutoListPrepared {
   draft: ListingDraft;
   pricingBreakdown: PricingBreakdown;
@@ -150,10 +183,27 @@ export async function prepareEbayAutoListDraft(
     throw new Error("eBay account is not connected or token expired. Reconnect eBay.");
   }
 
-  await requireConfirmedLocation(userId);
+  const [, marketplaceId] = await Promise.all([
+    requireConfirmedLocation(userId),
+    getSellerMarketplaceId(userId),
+  ]);
 
-  const product = await fetchListingProductSource(productUrl.trim());
-  const vero = await checkVeroSafety(product);
+  const product = await runPrepareStep("Product fetch", () =>
+    fetchListingProductSource(productUrl.trim()),
+  );
+
+  const currency = product.currency === "USD" ? "GBP" : product.currency;
+
+  const [vero, sellerPrefs, aliExpressShipping, policies] = await Promise.all([
+    runPrepareStep("VeRO check", () => checkVeroSafety(product)),
+    getSellerPreferences(userId, currency).then(
+      (prefs) => prefs ?? defaultSellerPreferences(currency),
+    ),
+    runPrepareStep("AliExpress shipping", () =>
+      fetchAliExpressShippingDays(product.productUrl),
+    ).catch(() => null),
+    runPrepareStep("eBay policies", () => fetchSellerPolicies(token, marketplaceId, { userId })),
+  ]);
 
   if (!vero.safe) {
     if (!settings.listVeroProducts) {
@@ -166,45 +216,34 @@ export async function prepareEbayAutoListDraft(
     }
   }
 
-  const currency = product.currency === "USD" ? "GBP" : product.currency;
-  const sellerPrefs =
-    (await getSellerPreferences(userId, currency)) ?? defaultSellerPreferences(currency);
-  // The seller-configured platform fee from auto listing settings is the source of
-  // truth: the fee is deducted from the price first, then the profit margin is
-  // applied so the resulting profit is after fees.
   const feePrefs = {
     ...sellerPreferencesToFeePrefs(sellerPrefs),
     ebayFinalValueFeePercent: settings.platformFeePercent,
   };
   const aliPrice = resolveBaseAliPrice(product);
-  const marketplaceId = await getSellerMarketplaceId(userId);
 
-  // Seller can force a fixed listing price (bulk listing). When provided, the
-  // profit-bounds search is bypassed and the product is listed at that price.
   const fixedPrice =
     options?.manualPriceOverride != null && options.manualPriceOverride > 0
       ? options.manualPriceOverride
       : null;
 
-  // Smart pricing: when enabled and no fixed price is set, look up the live eBay
-  // competitor average (1 cached Browse API call) and price just below it while
-  // staying above the seller's minimum profit. Falls back to normal profit
-  // bounds when there isn't enough market data.
   let smartPrice: number | null = null;
   if (fixedPrice == null && settings.smartPricingEnabled) {
-    const market = await getMarketAveragePrice(product.title, marketplaceId);
-    const smart = computeSmartPrice({
-      aliPrice,
-      feePrefs,
-      minProfitPercent: settings.minProfitPercent,
-      market,
-      undercutMode: settings.undercutMode,
-      undercutPercent: settings.marketUndercutPercent,
-      undercutAmount: settings.marketUndercutAmount,
-      charmPricing: settings.charmPricingEnabled,
-      charmRules: settings.charmRules,
-    });
-    if (smart) smartPrice = smart.price;
+    smartPrice = await runPrepareStep("Market price", async () => {
+      const market = await getMarketAveragePrice(product.title, marketplaceId);
+      const smart = computeSmartPrice({
+        aliPrice,
+        feePrefs,
+        minProfitPercent: settings.minProfitPercent,
+        market,
+        undercutMode: settings.undercutMode,
+        undercutPercent: settings.marketUndercutPercent,
+        undercutAmount: settings.marketUndercutAmount,
+        charmPricing: settings.charmPricingEnabled,
+        charmRules: settings.charmRules,
+      });
+      return smart?.price ?? null;
+    }).catch(() => null);
   }
 
   const effectivePrice = fixedPrice ?? smartPrice;
@@ -236,7 +275,9 @@ export async function prepareEbayAutoListDraft(
     listingPrice = pricing.breakdown.recommendedPrice;
   }
 
-  const listing = await generateEbayListing(product, listingPrice);
+  const listing = await runPrepareStep("Listing generation", () =>
+    generateEbayListing(product, listingPrice),
+  );
 
   let draft = buildInitialDraft(product, listing, {
     pricing: pricingPrefs,
@@ -245,16 +286,8 @@ export async function prepareEbayAutoListDraft(
     promotions: settings.promotions,
   });
 
-  if (draft.descriptionPhotos && draft.descriptionPhotos.length > 0) {
-    draft = {
-      ...draft,
-      descriptionPhotos: await flagDescriptionPhotos(draft.descriptionPhotos),
-    };
-  }
-
   draft = applyStockLimits(draft, settings.minStock, settings.maxStock);
 
-  const aliExpressShipping = await fetchAliExpressShippingDays(product.productUrl);
   if (aliExpressShipping) {
     draft = {
       ...draft,
@@ -264,8 +297,6 @@ export async function prepareEbayAutoListDraft(
       },
     };
   }
-
-  const policies = await fetchSellerPolicies(token, marketplaceId, { userId });
 
   if (policies.noPoliciesFound) {
     throw new Error(
@@ -287,12 +318,14 @@ export async function prepareEbayAutoListDraft(
       throw new Error("Selected shipping policy was not found on your eBay account.");
     }
   } else {
-    fulfillmentPolicy = await selectFulfillmentPolicyWithAi({
-      aliExpressLabel: aliExpressShipping?.label ?? draft.product.shippingDaysLabel ?? null,
-      aliExpressMinDays: aliExpressShipping?.minDays ?? null,
-      aliExpressMaxDays: aliExpressShipping?.maxDays ?? null,
-      policies: policies.fulfillment,
-    });
+    fulfillmentPolicy = await runPrepareStep("Shipping policy match", () =>
+      selectFulfillmentPolicyWithAi({
+        aliExpressLabel: aliExpressShipping?.label ?? draft.product.shippingDaysLabel ?? null,
+        aliExpressMinDays: aliExpressShipping?.minDays ?? null,
+        aliExpressMaxDays: aliExpressShipping?.maxDays ?? null,
+        policies: policies.fulfillment,
+      }),
+    ).catch(() => null);
 
     if (!fulfillmentPolicy && aliExpressShipping) {
       throw new EbayAutoListNeedsFulfillmentPolicyError(
@@ -330,24 +363,27 @@ export async function prepareEbayAutoListDraft(
     );
   }
 
-  draft = await assignSkusToDraft(userId, draft);
+  const draftBeforeFinalize = draft;
+  const [draftWithSkus, resolvedCategory] = await Promise.all([
+    runPrepareStep("SKU assignment", () => assignSkusToDraft(userId, draftBeforeFinalize)),
+    runPrepareStep("Category resolve", () =>
+      resolveDraftListingCategory(userId, draftBeforeFinalize.listing, draftBeforeFinalize.variants),
+    ).catch((error) => {
+      console.warn("[eBay prepare] Could not auto-resolve category:", error);
+      return null;
+    }),
+  ]);
 
-  if (draft.variants.length > 1) {
-    try {
-      const resolved = await resolveDraftListingCategory(userId, draft.listing, draft.variants);
-      if (resolved.changed || !draft.listing.categoryId) {
-        draft = {
-          ...draft,
-          listing: {
-            ...draft.listing,
-            categoryId: resolved.categoryId,
-            categorySuggestion: resolved.categoryPath,
-          },
-        };
-      }
-    } catch (error) {
-      console.warn("[eBay prepare] Could not auto-resolve variation category:", error);
-    }
+  draft = draftWithSkus;
+  if (resolvedCategory && (resolvedCategory.changed || !draft.listing.categoryId)) {
+    draft = {
+      ...draft,
+      listing: {
+        ...draft.listing,
+        categoryId: resolvedCategory.categoryId,
+        categorySuggestion: resolvedCategory.categoryPath,
+      },
+    };
   }
 
   return { draft, pricingBreakdown, settings };
@@ -363,12 +399,20 @@ export async function runEbayAutoListPipeline(
     manualPriceOverride?: number | null;
   },
 ): Promise<EbayAutoListResult> {
-  const { draft, pricingBreakdown, settings } = await prepareEbayAutoListDraft(
+  const { draft: preparedDraft, pricingBreakdown, settings } = await prepareEbayAutoListDraft(
     userId,
     productUrl,
     rawSettings,
     options,
   );
+
+  let draft = preparedDraft;
+  if (draft.descriptionPhotos && draft.descriptionPhotos.length > 0) {
+    draft = {
+      ...draft,
+      descriptionPhotos: await flagDescriptionPhotos(draft.descriptionPhotos),
+    };
+  }
 
   const listResult = await listDraftOnEbay(userId, draft);
 

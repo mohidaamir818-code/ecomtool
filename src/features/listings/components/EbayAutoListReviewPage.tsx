@@ -72,6 +72,7 @@ export function EbayAutoListReviewPage({
   const [loadingCategories, setLoadingCategories] = useState(false);
   const [editingCategory, setEditingCategory] = useState(false);
   const [categoryAutoUpdated, setCategoryAutoUpdated] = useState(false);
+  const [flaggingDescriptionPhotos, setFlaggingDescriptionPhotos] = useState(false);
   const [listingLoading, setListingLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
@@ -107,7 +108,7 @@ export function EbayAutoListReviewPage({
   }, [categoryQuery, userId, editingCategory]);
 
   useEffect(() => {
-    if (draft.variants.length < 2 || editingCategory) {
+    if (editingCategory || draft.variants.length < 2 || draft.listing.categoryId) {
       if (draft.variants.length < 2) {
         setCategoryAutoUpdated(false);
       }
@@ -166,6 +167,58 @@ export function EbayAutoListReviewPage({
     draft.listing.seoTitle,
   ]);
 
+  useEffect(() => {
+    const photos = draft.descriptionPhotos ?? [];
+    if (photos.length === 0 || !photos.some((photo) => photo.flagged === undefined)) {
+      return;
+    }
+
+    let cancelled = false;
+    setFlaggingDescriptionPhotos(true);
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/listings/flag-description-photos", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, photos }),
+        });
+        const data = (await response.json()) as { photos?: ListingPhotoDraft[] };
+        if (cancelled) return;
+        if (!response.ok || !data.photos) {
+          onChange({
+            descriptionPhotos: photos.map((photo) => ({
+              ...photo,
+              flagged: photo.flagged ?? false,
+              flagReason: photo.flagReason ?? null,
+            })),
+          });
+          return;
+        }
+        onChange({ descriptionPhotos: data.photos });
+      } catch {
+        if (!cancelled) {
+          onChange({
+            descriptionPhotos: photos.map((photo) => ({
+              ...photo,
+              flagged: photo.flagged ?? false,
+              flagReason: photo.flagReason ?? null,
+            })),
+          });
+        }
+      } finally {
+        if (!cancelled) {
+          setFlaggingDescriptionPhotos(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, draft.descriptionPhotos]);
+
   function updateListing(patch: Partial<ListingDraft["listing"]>) {
     onChange({ listing: { ...draft.listing, ...patch } });
   }
@@ -218,6 +271,13 @@ export function EbayAutoListReviewPage({
     const hasPendingLocalPhotos = draft.photos.some((photo) => photo.url.startsWith("blob:"));
     if (hasPendingLocalPhotos) {
       setMessage("Photos are still saving. Wait a second, then list again.");
+      setIsError(true);
+      setListingLoading(false);
+      return;
+    }
+
+    if (flaggingDescriptionPhotos) {
+      setMessage("Description images are still scanning. Wait a few seconds, then list again.");
       setIsError(true);
       setListingLoading(false);
       return;
@@ -293,6 +353,9 @@ export function EbayAutoListReviewPage({
           userId={userId}
         />
         <div className="mt-6">
+          {flaggingDescriptionPhotos ? (
+            <p className="mb-2 text-xs text-[#707070]">Scanning description images for restricted content…</p>
+          ) : null}
           <EbayDescriptionImagesPanel
             descriptionPhotos={draft.descriptionPhotos ?? []}
             product={draft.product}

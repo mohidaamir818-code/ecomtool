@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { buildAmazefPromotionsFromDraft } from "@/lib/amazef/build-promotions";
 import { AmazefListingError, listDraftOnAmazef } from "@/lib/amazef/listing";
 import { saveListedProduct } from "@/lib/listings/listed-products-service";
 import { assertUniqueVariantSkus, resolveVariantSkuForEbay } from "@/lib/listings/internal-sku";
@@ -62,7 +63,11 @@ export async function POST(request: NextRequest) {
     const accessDenied = await requireActiveUser(userId);
     if (accessDenied) return accessDenied;
 
-    const result = await listDraftOnAmazef(userId, body.draft);
+    const result = await listDraftOnAmazef(
+      userId,
+      body.draft,
+      buildAmazefPromotionsFromDraft(body.draft, body.draft.pricingBreakdown?.recommendedPrice),
+    );
 
     try {
       await saveListedProduct(userId, "amazef", body.draft, result);

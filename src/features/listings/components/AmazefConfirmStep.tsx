@@ -5,14 +5,16 @@ import type { AmazefConnectionStatus, ListingDraft } from "@/types/listing-gener
 import {
   formatListingPrice,
   getSelectedPhotos,
-  summarizeDeals,
 } from "@/features/listings/lib/draft-utils";
+import { ensureAmazefOffers } from "@/features/listings/lib/amazef-offers";
+import { AmazefBestOffersPanel } from "./AmazefBestOffersPanel";
 
 interface AmazefConfirmStepProps {
   userId: string;
   draft: ListingDraft;
   disabled?: boolean;
   refreshKey?: number;
+  onChange?: (patch: Partial<ListingDraft>) => void;
   onConnectRequest: () => void;
   onListed: (listingUrl: string | null) => void;
 }
@@ -22,6 +24,7 @@ export function AmazefConfirmStep({
   draft,
   disabled = false,
   refreshKey = 0,
+  onChange,
   onConnectRequest,
   onListed,
 }: AmazefConfirmStepProps) {
@@ -64,7 +67,7 @@ export function AmazefConfirmStep({
       const response = await fetch("/api/amazef/list-item", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, draft }),
+        body: JSON.stringify({ userId, draft: ensureAmazefOffers(draft) }),
       });
 
       const data = (await response.json()) as {
@@ -94,7 +97,7 @@ export function AmazefConfirmStep({
   }
 
   const selectedPhotos = getSelectedPhotos(draft).length;
-  const dealsSummary = summarizeDeals(draft.promotions);
+  const listingDraft = ensureAmazefOffers(draft);
 
   const canList = status.connected && !disabled && !listingLoading && !listingUrl;
 
@@ -126,10 +129,6 @@ export function AmazefConfirmStep({
           <div className="flex justify-between gap-4">
             <dt className="text-[#6B7280]">Photos</dt>
             <dd className="font-medium text-[#111827]">{selectedPhotos}</dd>
-          </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-[#6B7280]">Deals</dt>
-            <dd className="text-right font-medium text-[#111827]">{dealsSummary}</dd>
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-[#6B7280]">Product SKU</dt>
@@ -179,6 +178,17 @@ export function AmazefConfirmStep({
           ) : null}
         </div>
       </div>
+
+      {onChange ? (
+        <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
+          <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#111827]">Best offer</h3>
+          <AmazefBestOffersPanel
+            userId={userId}
+            draft={listingDraft}
+            onChange={onChange}
+          />
+        </div>
+      ) : null}
 
       <button
         type="button"

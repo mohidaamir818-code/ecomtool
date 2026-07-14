@@ -1,6 +1,7 @@
 import "server-only";
 
-import { listDraftOnAmazef, type AmazefPromotionPayload } from "@/lib/amazef/listing";
+import { buildAmazefPromotionsFromDraft } from "@/lib/amazef/build-promotions";
+import { listDraftOnAmazef } from "@/lib/amazef/listing";
 import { saveListedProduct } from "@/lib/listings/listed-products-service";
 import { sendEmail } from "@/lib/email/send-email";
 import { generateEbayListing } from "@/lib/gemini/generate-listing";
@@ -8,6 +9,7 @@ import { checkVeroSafety } from "@/lib/gemini/vero-check";
 import { VeroAckRequiredError } from "@/lib/listings/vero-ack-error";
 import { computeListingQualityScore } from "@/features/listings/lib/listing-quality";
 import { buildInitialDraft, getSelectedPhotos } from "@/features/listings/lib/draft-utils";
+import { ensureAmazefOffers } from "@/features/listings/lib/amazef-offers";
 import type { AmazefAutoListingSettings } from "@/features/listings/lib/amazef-auto-listing";
 import { normalizeAutoListingSettings } from "@/features/listings/lib/amazef-auto-listing";
 import { mergeInternalSkusIntoDraft } from "@/lib/listings/internal-sku";
@@ -71,7 +73,6 @@ function resolvePricingWithinProfitBounds(
   return bestInRange ?? bestAboveMin;
 }
 
-/** Lowest price that still keeps the seller's minimum profit — a safety floor for promotions. */
 function priceFloorAtMinProfit(
   aliPrice: number,
   basePrefs: ListingPricingPreferences,
@@ -86,37 +87,6 @@ function priceFloorAtMinProfit(
     if (breakdown.profitPercent >= minProfitPercent) return breakdown.recommendedPrice;
   }
   return fallback;
-}
-
-/**
- * Builds the promotion payload for the Amazef agent from the seller's AI-configured
- * rules. BOGO / flash sale are only attached when the per-item profit clears the
- * seller's threshold, and a safety floor price is always included.
- */
-function buildAmazefPromotions(
-  settings: AmazefAutoListingSettings,
-  itemProfit: number,
-  floorPrice: number,
-): AmazefPromotionPayload | undefined {
-  const payload: AmazefPromotionPayload = {};
-
-  if (settings.bogoEnabled && itemProfit >= settings.bogoMinProfit) {
-    payload.bogo = { enabled: true, rule: settings.bogoRule };
-  }
-
-  if (settings.flashSaleEnabled && itemProfit >= settings.flashSaleMinProfit) {
-    payload.flashSale = {
-      enabled: true,
-      keepPrice: settings.flashSaleKeepPrice,
-      discountPercent: settings.flashSaleDiscountPercent,
-      rule: settings.flashSaleRule,
-    };
-  }
-
-  if (!payload.bogo && !payload.flashSale) return undefined;
-
-  payload.floorPrice = Number(floorPrice.toFixed(2));
-  return payload;
 }
 
 function applyStockLimits(draft: ListingDraft, minStock: number, maxStock: number): ListingDraft {
@@ -150,17 +120,69 @@ async function getUserEmail(userId: string): Promise<string | null> {
   return data?.email?.trim() ?? null;
 }
 
-export async function runAmazefAutoListPipeline(
+async function runPrepareStep<T>(
+  label: string,
+  run: () => Promise<T>,
+  options?: { timeoutMs?: number; maxAttempts?: number },
+): Promise<T> {
+  const timeoutMs = options?.timeoutMs ?? 45_000;
+  const maxAttempts = options?.maxAttempts ?? 2;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await Promise.race([
+        run(),
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error(`${label} timed out after ${timeoutMs / 1000}s.`)),
+            timeoutMs,
+          );
+        }),
+      ]);
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts) {
+        console.warn(`[Amazef prepare] ${label} failed (attempt ${attempt}), retrying…`, error);
+      }
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`${label} failed after ${maxAttempts} attempts.`);
+}
+
+export interface AmazefAutoListPrepared {
+  draft: ListingDraft;
+  pricingBreakdown: PricingBreakdown;
+  settings: AmazefAutoListingSettings;
+}
+
+export async function prepareAmazefAutoListDraft(
   userId: string,
   productUrl: string,
   rawSettings: Partial<AmazefAutoListingSettings>,
   options?: { acknowledgeVero?: boolean; manualPriceOverride?: number | null },
-): Promise<AmazefAutoListResult> {
+): Promise<AmazefAutoListPrepared> {
   const settings = normalizeAutoListingSettings(rawSettings);
   const acknowledgeVero = Boolean(options?.acknowledgeVero);
 
-  const product = await fetchListingProductSource(productUrl.trim());
-  const vero = await checkVeroSafety(product);
+  const product = await runPrepareStep("Product fetch", () =>
+    fetchListingProductSource(productUrl.trim()),
+  );
+
+  const currency = product.currency === "USD" ? "GBP" : product.currency;
+
+  const [vero, sellerPrefs, shippingDaysLabel] = await Promise.all([
+    runPrepareStep("VeRO check", () => checkVeroSafety(product)),
+    getSellerPreferences(userId, currency).then(
+      (prefs) => prefs ?? defaultSellerPreferences(currency),
+    ),
+    runPrepareStep("AliExpress shipping", () =>
+      fetchAliExpressShippingDaysLabel(product.productUrl),
+    ).catch(() => null),
+  ]);
 
   if (!vero.safe) {
     if (!settings.listVeroProducts) {
@@ -173,44 +195,34 @@ export async function runAmazefAutoListPipeline(
     }
   }
 
-  const currency = product.currency === "USD" ? "GBP" : product.currency;
-  const sellerPrefs =
-    (await getSellerPreferences(userId, currency)) ?? defaultSellerPreferences(currency);
-  // The seller-configured Amazef platform fee from auto listing settings is the
-  // source of truth: the fee is deducted from the price first, then the profit
-  // margin is applied so the resulting profit is after fees.
   const feePrefs = {
     ...sellerPreferencesToFeePrefs(sellerPrefs),
     ebayFinalValueFeePercent: settings.platformFeePercent,
   };
   const aliPrice = resolveBaseAliPrice(product);
 
-  // Seller can force a fixed listing price (bulk listing). When provided, the
-  // profit-bounds search is bypassed and the product is listed at that price.
   const fixedPrice =
     options?.manualPriceOverride != null && options.manualPriceOverride > 0
       ? options.manualPriceOverride
       : null;
 
-  // Smart pricing: when enabled and no fixed price is set, look up the live
-  // market average (1 cached Browse API call, eBay used as the price reference)
-  // and price just below it while staying above the seller's minimum profit.
-  // Falls back to normal profit bounds when there isn't enough market data.
   let smartPrice: number | null = null;
   if (fixedPrice == null && settings.smartPricingEnabled) {
-    const market = await getMarketAveragePrice(product.title, "EBAY_GB");
-    const smart = computeSmartPrice({
-      aliPrice,
-      feePrefs,
-      minProfitPercent: settings.minProfitPercent,
-      market,
-      undercutMode: settings.undercutMode,
-      undercutPercent: settings.marketUndercutPercent,
-      undercutAmount: settings.marketUndercutAmount,
-      charmPricing: settings.charmPricingEnabled,
-      charmRules: settings.charmRules,
-    });
-    if (smart) smartPrice = smart.price;
+    smartPrice = await runPrepareStep("Market price", async () => {
+      const market = await getMarketAveragePrice(product.title, "EBAY_GB");
+      const smart = computeSmartPrice({
+        aliPrice,
+        feePrefs,
+        minProfitPercent: settings.minProfitPercent,
+        market,
+        undercutMode: settings.undercutMode,
+        undercutPercent: settings.marketUndercutPercent,
+        undercutAmount: settings.marketUndercutAmount,
+        charmPricing: settings.charmPricingEnabled,
+        charmRules: settings.charmRules,
+      });
+      return smart?.price ?? null;
+    }).catch(() => null);
   }
 
   const effectivePrice = fixedPrice ?? smartPrice;
@@ -242,7 +254,9 @@ export async function runAmazefAutoListPipeline(
     listingPrice = pricing.breakdown.recommendedPrice;
   }
 
-  const listing = await generateEbayListing(product, listingPrice);
+  const listing = await runPrepareStep("Listing generation", () =>
+    generateEbayListing(product, listingPrice),
+  );
   const promotions = sellerPreferencesToPromotions(sellerPrefs);
 
   let draft = buildInitialDraft(product, listing, {
@@ -254,14 +268,10 @@ export async function runAmazefAutoListPipeline(
 
   draft = applyStockLimits(draft, settings.minStock, settings.maxStock);
 
-  const shippingDaysLabel = await fetchAliExpressShippingDaysLabel(product.productUrl);
   if (shippingDaysLabel) {
     draft = {
       ...draft,
-      product: {
-        ...draft.product,
-        shippingDaysLabel,
-      },
+      product: { ...draft.product, shippingDaysLabel },
     };
   }
 
@@ -277,22 +287,30 @@ export async function runAmazefAutoListPipeline(
     );
   }
 
-  draft = await assignSkusToDraft(userId, draft);
+  draft = await runPrepareStep("SKU assignment", () => assignSkusToDraft(userId, draft));
+  draft = ensureAmazefOffers(draft);
 
-  // Seller-configured BOGO / flash sale rules, attached only when this product's
-  // profit clears the seller's threshold. The Amazef agent applies them and must
-  // not drop the real price below the included floor price.
+  return { draft, pricingBreakdown, settings };
+}
+
+export async function runAmazefAutoListPipeline(
+  userId: string,
+  productUrl: string,
+  rawSettings: Partial<AmazefAutoListingSettings>,
+  options?: { acknowledgeVero?: boolean; manualPriceOverride?: number | null },
+): Promise<AmazefAutoListResult> {
+  const settings = normalizeAutoListingSettings(rawSettings);
+  const { draft } = await prepareAmazefAutoListDraft(userId, productUrl, rawSettings, options);
+
+  const feePrefs =
+    draft.pricing ?? sellerPreferencesToFeePrefs(defaultSellerPreferences(draft.listing.currency));
   const promotionFloor = priceFloorAtMinProfit(
-    aliPrice,
+    resolveBaseAliPrice(draft.product),
     feePrefs,
     settings.minProfitPercent,
-    listingPrice,
+    draft.listing.suggestedPrice,
   );
-  const amazefPromotions = buildAmazefPromotions(
-    settings,
-    pricingBreakdown.profit,
-    promotionFloor,
-  );
+  const amazefPromotions = buildAmazefPromotionsFromDraft(draft, promotionFloor);
 
   const listResult = await listDraftOnAmazef(userId, draft, amazefPromotions);
 

@@ -29,27 +29,31 @@ interface AmazefCreateResponse {
 }
 
 /**
- * Promotions the Amazef agent should apply after creating the listing. Built by
- * the auto-list pipeline from the seller's AI-configured rules. The agent is
- * responsible for actually applying BOGO / flash sale on amazef.com and must
- * never let the real selling price drop below `floorPrice`.
+ * Promotions the Amazef agent should apply after creating the listing. Built from
+ * the seller's review-page Flash Sale / BOGO settings.
  */
 export interface AmazefPromotionPayload {
   /** Lowest price (in the listing currency) that still keeps the seller's minimum profit. */
   floorPrice?: number;
   bogo?: {
     enabled: true;
-    /** The seller's own plain-language description of how BOGO should work. */
-    rule: string;
+    rule?: string;
+    eligibleVariantIds?: string[];
+    eligibleVariants?: Array<{ id: string; label: string }>;
+    customGifts?: Array<{
+      id: string;
+      title: string;
+      description: string;
+      imageUrl: string;
+    }>;
   };
   flashSale?: {
     enabled: true;
-    /** When true, keep the real price the same and only SHOW a discount/“was” price. */
-    keepPrice: boolean;
-    /** The discount % to show (keepPrice) or apply (real, clamped to floorPrice). */
+    rule?: string;
+    keepPrice?: boolean;
+    originalPrice?: number;
+    flashSalePrice?: number;
     discountPercent: number;
-    /** The seller's own plain-language description of how the flash sale should work. */
-    rule: string;
   };
 }
 

@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { runAmazefAutoListPipeline } from "@/lib/amazef/auto-list-pipeline";
+import {
+  prepareAmazefAutoListDraft,
+  runAmazefAutoListPipeline,
+} from "@/lib/amazef/auto-list-pipeline";
 import { AmazefListingError } from "@/lib/amazef/listing";
 import type { AmazefAutoListingSettings } from "@/features/listings/lib/amazef-auto-listing";
 import { logUserApiRequest } from "@/lib/requests/tracker";
@@ -14,10 +17,13 @@ export async function POST(request: NextRequest) {
       url?: string;
       settings?: Partial<AmazefAutoListingSettings>;
       acknowledgeVero?: boolean;
+      /** prepare = return draft for review; publish = list immediately */
+      mode?: "prepare" | "publish";
     };
 
     userId = body.userId?.trim() ?? null;
     const url = body.url?.trim() ?? "";
+    const mode = body.mode === "prepare" ? "prepare" : "publish";
 
     if (!userId) {
       return NextResponse.json({ error: "userId is required." }, { status: 400 });
@@ -33,6 +39,26 @@ export async function POST(request: NextRequest) {
 
     const accessDenied = await requireActiveUser(userId);
     if (accessDenied) return accessDenied;
+
+    if (mode === "prepare") {
+      const prepared = await prepareAmazefAutoListDraft(userId, url, body.settings, {
+        acknowledgeVero: body.acknowledgeVero,
+      });
+
+      void logUserApiRequest({
+        userId,
+        endpoint: "/api/amazef/auto-list",
+        method: "POST",
+        status: "success",
+      });
+
+      return NextResponse.json({
+        success: true,
+        mode: "prepare",
+        message: "Listing ready for review. Check everything below, then list on Amazef.",
+        draft: prepared.draft,
+      });
+    }
 
     const result = await runAmazefAutoListPipeline(userId, url, body.settings, {
       acknowledgeVero: body.acknowledgeVero,
