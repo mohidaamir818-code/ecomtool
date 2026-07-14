@@ -6,7 +6,6 @@ import type {
   ListingDraft,
   ListingPhotoDraft,
   ListingVariantDraft,
-  VariationPhotoAttribute,
   VolumePromotionTier,
 } from "@/types/listing-generator";
 import type { EbayConditionOption } from "@/lib/listings/item-specifics";
@@ -15,6 +14,7 @@ import { EbayConditionSelector } from "./EbayConditionSelector";
 import { EbayDescriptionImagesPanel } from "./EbayDescriptionImagesPanel";
 import { EbayItemSpecificsForm } from "./EbayItemSpecificsForm";
 import { EbayPhotosPanel } from "./EbayPhotosPanel";
+import { EbayVariationPhotosPanel } from "./EbayVariationPhotosPanel";
 import { EbayVariationsTable } from "./EbayVariationsTable";
 import { ListingDescriptionEditor } from "./ListingDescriptionEditor";
 import { ListingShippingReturnsStep } from "./ListingShippingReturnsStep";
@@ -46,7 +46,6 @@ export function EbayAutoListReviewPage({
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
 
-  const variationPhotoAttribute = draft.variationPhotoAttribute ?? "default";
   const offersEnabled = draft.promotions.some((tier) => tier.enabled);
 
   useEffect(() => {
@@ -348,31 +347,15 @@ export function EbayAutoListReviewPage({
       {/* 6. Variations */}
       <section className="border-b border-[#E5E5E5] py-8">
         <h2 className="text-xl font-bold text-[#191919]">Variations</h2>
-        <div className="mt-4 rounded-lg border border-[#E5E5E5] bg-white px-4 py-4">
-          <h3 className="text-sm font-semibold text-[#191919]">Add variation photos</h3>
-          <p className="mt-1 text-sm text-[#707070]">
-            Change photos in your listing based on this attribute. Buyers see these photos when they
-            select a variation option.
-          </p>
-          <select
-            value={variationPhotoAttribute}
-            onChange={(event) =>
-              onChange({
-                variationPhotoAttribute: event.target.value as VariationPhotoAttribute,
-              })
-            }
-            className="mt-3 w-full max-w-xs rounded border border-[#C5C5C5] bg-white px-3 py-2 text-sm text-[#191919] outline-none focus:border-[#3665F3]"
-          >
-            <option value="default">Use default photos</option>
-            <option value="color">Color</option>
-          </select>
+        <div className="mt-4">
+          <EbayVariationPhotosPanel draft={draft} onChange={onChange} />
         </div>
 
         <div className="mt-4">
           <EbayVariationsTable
             draft={draft}
             onChange={handleVariantsChange}
-            allowVariantPhotos={variationPhotoAttribute === "color"}
+            allowVariantPhotos={(draft.variationPhotoAttribute ?? "default") === "color"}
           />
         </div>
       </section>

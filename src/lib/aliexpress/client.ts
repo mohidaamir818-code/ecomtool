@@ -1222,8 +1222,17 @@ async function enrichGalleryImages(product: HandlingProductData): Promise<Handli
   };
 }
 
-async function enrichDescriptionImages(product: HandlingProductData): Promise<HandlingProductData> {
-  const gallery = product.images?.filter(Boolean) ?? (product.imageUrl ? [product.imageUrl] : []);
+async function enrichDescriptionImages(
+  product: HandlingProductData,
+  galleryForExclusion?: string[],
+): Promise<HandlingProductData> {
+  // Exclude only against the original multimedia gallery — not the page-scraped
+  // gallery expansion. Scraped "imageUrl" hits often include description images,
+  // which would wipe every description photo if used for exclusion.
+  const gallery =
+    galleryForExclusion ??
+    product.images?.filter(Boolean) ??
+    (product.imageUrl ? [product.imageUrl] : []);
   const pageHtml = await fetchDescriptionHtmlFromPage(product.productUrl);
   const pageImages = pageHtml ? extractImagesFromHtml(pageHtml) : [];
 
@@ -1535,12 +1544,17 @@ export async function fetchAliExpressProduct(url: string): Promise<HandlingProdu
       resolvedUrl,
     ]);
 
+    const baseGallery = [
+      ...(openPlatformProduct.images?.filter(Boolean) ?? []),
+      ...(openPlatformProduct.imageUrl ? [openPlatformProduct.imageUrl] : []),
+    ];
+
     const withGallery = await enrichGalleryImages({
       ...openPlatformProduct,
       productUrl: canonicalUrl,
     });
 
-    const enriched = await enrichDescriptionImages(withGallery);
+    const enriched = await enrichDescriptionImages(withGallery, baseGallery);
 
     console.log("[AliExpress Fetch Debug] Final source selected", {
       source: "open-platform",

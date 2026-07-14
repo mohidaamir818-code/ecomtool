@@ -160,8 +160,12 @@ export function proxyImageUrl(originalUrl: string, appOrigin = ""): string {
 }
 
 function descriptionImageSrc(url: string, appOrigin: string): string {
-  if (/^https:\/\//i.test(url.trim())) return url.trim();
-  return proxyImageUrl(url, appOrigin);
+  const trimmed = url.trim();
+  if (!trimmed) return "";
+  // Always proxy when we have an origin so description images render in the
+  // review preview (supplier CDNs often block hotlinking) and stay reachable for eBay.
+  if (appOrigin) return proxyImageUrl(trimmed, appOrigin);
+  return trimmed;
 }
 
 export function getSelectedDescriptionPhotos(

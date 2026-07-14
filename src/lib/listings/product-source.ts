@@ -86,11 +86,21 @@ export async function fetchListingProductSource(
   const images = galleryFilter.allowed;
   const imageUrl = images[0] ?? null;
 
-  const rawDescriptionImages = [
-    ...(product.descriptionImages ?? []),
-    ...(descriptionPayload.html ? extractImagesFromHtml(descriptionPayload.html) : []),
-  ];
-  const descriptionFilter = await finalizeDescriptionImages(rawDescriptionImages, images);
+  // Prefer description images already finalized by fetchAliExpressProduct.
+  // Re-running finalize against the expanded gallery (page scrapes) removes them.
+  let descriptionImages = product.descriptionImages ?? [];
+  let descriptionRemoved = 0;
+
+  if (descriptionImages.length === 0) {
+    const rawDescriptionImages = descriptionPayload.html
+      ? extractImagesFromHtml(descriptionPayload.html)
+      : [];
+    if (rawDescriptionImages.length > 0) {
+      const descriptionFilter = await finalizeDescriptionImages(rawDescriptionImages, images);
+      descriptionImages = descriptionFilter.allowed;
+      descriptionRemoved = descriptionFilter.removedCount;
+    }
+  }
 
   const shippingDaysLabel = await fetchAliExpressShippingDaysLabel(product.productUrl);
 
@@ -125,10 +135,10 @@ export async function fetchListingProductSource(
     title: sanitizeListingText(product.title),
     imageUrl,
     images,
-    descriptionImages: descriptionFilter.allowed,
+    descriptionImages,
     imageFilterMeta: {
       galleryRemoved: galleryFilter.removedCount,
-      descriptionRemoved: descriptionFilter.removedCount,
+      descriptionRemoved,
     },
     price: product.price,
     currency: product.currency,
