@@ -1178,7 +1178,7 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
 
   return (
     <DashboardLayout>
-      <div className={`mx-auto p-6 lg:p-8 ${showEbayAutoReview ? "max-w-[960px]" : "max-w-[960px]"}`}>
+      <div className={`mx-auto p-6 lg:p-8 ${showEbayAutoReview ? "max-w-[1280px]" : "max-w-[960px]"}`}>
         {showEbayAutoReview && draft && userId && !isAmazef ? null : (
         <div className="relative mb-8 overflow-hidden rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50/80 via-white to-indigo-50/60 p-6 shadow-md shadow-violet-100/30 lg:p-8">
           <div className="pointer-events-none absolute -right-12 -top-12 h-40 w-40 rounded-full bg-gradient-to-br from-brand/10 to-indigo-200/30" />

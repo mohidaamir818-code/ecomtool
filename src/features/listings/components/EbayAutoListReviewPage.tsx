@@ -168,7 +168,7 @@ export function EbayAutoListReviewPage({
   const skuValue = draft.product.internalProductSku ?? "";
 
   return (
-    <div className="mx-auto max-w-[920px] space-y-0 bg-white">
+    <div className="mx-auto w-full max-w-[1180px] space-y-0 bg-white px-2 sm:px-4 lg:px-6">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3 border-b border-[#E5E5E5] pb-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-[#707070]">
@@ -192,6 +192,7 @@ export function EbayAutoListReviewPage({
           variants={draft.variants}
           removedCount={draft.product.imageFilterMeta?.galleryRemoved ?? 0}
           onChange={handlePhotosChange}
+          userId={userId}
         />
         <div className="mt-6">
           <EbayDescriptionImagesPanel

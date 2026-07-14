@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ListingPhotoDraft, ListingProductSource, ListingVariantDraft } from "@/types/listing-generator";
 import { ebayTextButtonClass } from "@/features/listings/lib/ebay-ui";
 import { isRestrictedImageUrl } from "@/lib/listings/listing-sanitize";
@@ -14,6 +14,7 @@ interface EbayPhotosPanelProps {
   variants: ListingVariantDraft[];
   removedCount?: number;
   onChange: (photos: ListingPhotoDraft[]) => void;
+  userId?: string;
 }
 
 export function EbayPhotosPanel({
@@ -22,14 +23,17 @@ export function EbayPhotosPanel({
   variants,
   removedCount = 0,
   onChange,
+  userId,
 }: EbayPhotosPanelProps) {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [showOptions, setShowOptions] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [addUrl, setAddUrl] = useState("");
   const [addError, setAddError] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [fileDragOver, setFileDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const mainPhoto = photos[0];
   const gridPhotos = photos.slice(1);
@@ -70,18 +74,75 @@ export function EbayPhotosPanel({
     setSelectMode(false);
   }
 
+  function addPhotoUrls(urls: string[]) {
+    const next = [...photos];
+    for (const url of urls) {
+      const trimmed = url.trim();
+      if (!trimmed || next.length >= MAX_PHOTOS) break;
+      if (next.some((photo) => photo.url === trimmed)) continue;
+      if (isRestrictedImageUrl(trimmed)) continue;
+      next.push({ url: trimmed, selected: true });
+    }
+    onChange(next);
+  }
+
   function addPhoto(url: string) {
-    const trimmed = url.trim();
-    if (!trimmed || photos.length >= MAX_PHOTOS) return;
-    if (photos.some((photo) => photo.url === trimmed)) return;
-    if (isRestrictedImageUrl(trimmed)) {
-      setAddError("This image URL contains restricted content and cannot be added.");
+    setAddError("");
+    if (isRestrictedImageUrl(url.trim())) {
+      setAddError("This image contains restricted content and cannot be added.");
       return;
     }
-    setAddError("");
-    onChange([...photos, { url: trimmed, selected: true }]);
-    setAddUrl("");
+    addPhotoUrls([url]);
     setShowAddModal(false);
+  }
+
+  async function uploadFiles(fileList: FileList | File[]) {
+    const files = Array.from(fileList).filter((file) => file.type.startsWith("image/"));
+    if (files.length === 0) {
+      setAddError("Please drop image files (JPG, PNG, or WebP).");
+      return;
+    }
+
+    if (!userId) {
+      setAddError("Sign in required to upload photos.");
+      return;
+    }
+
+    const remaining = MAX_PHOTOS - photos.length;
+    if (remaining <= 0) {
+      setAddError("You already have 24 photos.");
+      return;
+    }
+
+    setUploading(true);
+    setAddError("");
+
+    try {
+      const form = new FormData();
+      form.set("userId", userId);
+      for (const file of files.slice(0, remaining)) {
+        form.append("files", file);
+      }
+
+      const response = await fetch("/api/listings/upload-photos", {
+        method: "POST",
+        body: form,
+      });
+      const data = (await response.json()) as { error?: string; urls?: string[] };
+
+      if (!response.ok || !data.urls?.length) {
+        setAddError(data.error ?? "Failed to upload photos.");
+        return;
+      }
+
+      addPhotoUrls(data.urls);
+      setShowAddModal(false);
+    } catch {
+      setAddError("Network error while uploading photos.");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
   }
 
   function toggleSelectIndex(index: number) {
@@ -189,7 +250,7 @@ export function EbayPhotosPanel({
       <div className="p-4">
         <h3 className="text-sm font-semibold text-[#191919]">Product Photos</h3>
         <p className="mt-1 mb-4 text-sm text-[#707070]">
-          You can add up to 24 photos. Buyers want to see all details and angles.
+          You can add up to 24 photos. Drag and drop images or click Add.
         </p>
         {removedCount > 0 ? (
           <p className="mb-4 text-xs text-[#707070]">
@@ -247,17 +308,32 @@ export function EbayPhotosPanel({
               {photos.length < MAX_PHOTOS ? (
                 <button
                   type="button"
-                  onClick={() => setShowAddModal(true)}
-                  className="flex aspect-square flex-col items-center justify-center border border-dashed border-[#C5C5C5] bg-[#FAFAFA] text-[#3665F3] hover:border-[#3665F3] hover:bg-[#F0F5FF]"
+                  disabled={uploading}
+                  onClick={() => {
+                    setAddError("");
+                    setShowAddModal(true);
+                  }}
+                  className="flex aspect-square flex-col items-center justify-center border border-dashed border-[#C5C5C5] bg-[#FAFAFA] text-[#3665F3] hover:border-[#3665F3] hover:bg-[#F0F5FF] disabled:opacity-60"
                 >
                   <span className="text-2xl leading-none">+</span>
-                  <span className="mt-1 text-xs font-semibold">Add</span>
+                  <span className="mt-1 text-xs font-semibold">{uploading ? "..." : "Add"}</span>
                 </button>
               ) : null}
             </div>
           </div>
         </div>
       </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          if (event.target.files?.length) void uploadFiles(event.target.files);
+        }}
+      />
 
       {showOptions ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -267,8 +343,8 @@ export function EbayPhotosPanel({
               <li>The first photo is your main listing image.</li>
               <li>Click any thumbnail to set it as the main photo.</li>
               <li>Drag photos to reorder them.</li>
+              <li>Drag and drop image files to add new photos.</li>
               <li>Add up to 24 photos total.</li>
-              <li>Use clear, well-lit images showing all angles.</li>
             </ul>
             <button
               type="button"
@@ -285,7 +361,7 @@ export function EbayPhotosPanel({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-5 shadow-xl">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-base font-semibold text-[#191919]">Add photo</h3>
+              <h3 className="text-base font-semibold text-[#191919]">Add photos</h3>
               <button
                 type="button"
                 onClick={() => setShowAddModal(false)}
@@ -295,36 +371,72 @@ export function EbayPhotosPanel({
               </button>
             </div>
 
-            <label className="block text-sm font-medium text-[#191919]">
-              Image URL
-              <input
-                type="url"
-                value={addUrl}
-                onChange={(event) => setAddUrl(event.target.value)}
-                placeholder="https://..."
-                className="mt-2 w-full rounded border border-[#C5C5C5] px-3 py-2 text-sm outline-none focus:border-[#3665F3]"
-              />
-            </label>
-            {addError ? <p className="mt-2 text-xs text-red-600">{addError}</p> : null}
+            <div
+              onDragEnter={(event) => {
+                event.preventDefault();
+                setFileDragOver(true);
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setFileDragOver(true);
+              }}
+              onDragLeave={(event) => {
+                event.preventDefault();
+                setFileDragOver(false);
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                setFileDragOver(false);
+                if (event.dataTransfer.files?.length) {
+                  void uploadFiles(event.dataTransfer.files);
+                }
+              }}
+              className={`flex min-h-[180px] cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-4 py-8 text-center transition ${
+                fileDragOver
+                  ? "border-[#3665F3] bg-[#F0F5FF]"
+                  : "border-[#C5C5C5] bg-[#FAFAFA] hover:border-[#3665F3]"
+              }`}
+              onClick={() => fileInputRef.current?.click()}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
+            >
+              <span className="text-3xl text-[#3665F3]" aria-hidden>
+                ↑
+              </span>
+              <p className="mt-3 text-sm font-semibold text-[#191919]">
+                {uploading ? "Uploading…" : "Drag & drop photos here"}
+              </p>
+              <p className="mt-1 text-xs text-[#707070]">or click to browse · JPG, PNG, WebP · max 8MB each</p>
+            </div>
+
+            {addError ? <p className="mt-3 text-xs text-red-600">{addError}</p> : null}
+
             <button
               type="button"
-              disabled={!addUrl.trim()}
-              onClick={() => addPhoto(addUrl)}
-              className="mt-3 rounded-full bg-[#3665F3] px-4 py-2 text-sm font-semibold text-white hover:bg-[#2850D4] disabled:opacity-50"
+              disabled={uploading}
+              onClick={() => fileInputRef.current?.click()}
+              className="mt-4 rounded-full bg-[#3665F3] px-4 py-2 text-sm font-semibold text-white hover:bg-[#2850D4] disabled:opacity-50"
             >
-              Add URL
+              {uploading ? "Uploading…" : "Choose files"}
             </button>
 
             {unusedAliImages.length > 0 ? (
               <div className="mt-6">
-                <p className="mb-2 text-sm font-medium text-[#191919]">From AliExpress gallery</p>
+                <p className="mb-2 text-sm font-medium text-[#191919]">From product gallery</p>
                 <div className="grid grid-cols-4 gap-2">
                   {unusedAliImages.map((url) => (
                     <button
                       key={url}
                       type="button"
+                      disabled={uploading}
                       onClick={() => addPhoto(url)}
-                      className="overflow-hidden border border-[#E5E5E5] hover:border-[#3665F3]"
+                      className="overflow-hidden border border-[#E5E5E5] hover:border-[#3665F3] disabled:opacity-50"
                     >
                       <ProxiedImage src={url} alt="" className="aspect-square w-full object-cover" />
                     </button>

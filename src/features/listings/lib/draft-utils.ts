@@ -162,8 +162,19 @@ export function proxyImageUrl(originalUrl: string, appOrigin = ""): string {
 function descriptionImageSrc(url: string, appOrigin: string): string {
   const trimmed = url.trim();
   if (!trimmed) return "";
-  // Always proxy when we have an origin so description images render in the
-  // review preview (supplier CDNs often block hotlinking) and stay reachable for eBay.
+
+  try {
+    const host = new URL(trimmed).hostname.toLowerCase();
+    const needsProxy =
+      host.includes("alicdn.com") ||
+      host.includes("aliexpress-media.com") ||
+      host.includes("aliexpress.com");
+    if (!needsProxy) return trimmed;
+  } catch {
+    // Relative / invalid — fall through to proxy helper when origin exists
+  }
+
+  // AliExpress CDNs: proxy through APP_URL so eBay / browser can load them.
   if (appOrigin) return proxyImageUrl(trimmed, appOrigin);
   return trimmed;
 }

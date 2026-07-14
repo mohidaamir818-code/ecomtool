@@ -103,8 +103,8 @@ export function EbayVariationPhotosPanel({ draft, onChange }: EbayVariationPhoto
 
       {variationPhotoAttribute === "color" && groups.length > 0 ? (
         <div className="flex flex-col md:flex-row">
-          <aside className="w-full shrink-0 border-b border-[#E5E5E5] md:w-52 md:border-b-0 md:border-r">
-            <ul className="max-h-80 overflow-y-auto py-2">
+          <aside className="w-full shrink-0 border-b border-[#E5E5E5] md:w-64 lg:w-72 md:border-b-0 md:border-r">
+            <ul className="max-h-[420px] overflow-y-auto py-2">
               {groups.map((group) => {
                 const selected = group.color === activeColor;
                 const count = group.imageUrl ? 1 : 0;
@@ -136,7 +136,7 @@ export function EbayVariationPhotosPanel({ draft, onChange }: EbayVariationPhoto
           <div className="flex-1 p-4">
             {activeGroup ? (
               <div className="flex flex-col gap-4 sm:flex-row">
-                <div className="w-full max-w-[220px]">
+                <div className="w-full max-w-[260px] lg:max-w-[280px]">
                   <div className="relative aspect-[3/4] overflow-hidden rounded-lg border border-[#E5E5E5] bg-[#F7F7F7]">
                     {activeGroup.imageUrl ? (
                       <>
@@ -169,7 +169,7 @@ export function EbayVariationPhotosPanel({ draft, onChange }: EbayVariationPhoto
                   <p className="mt-2 text-center text-xs font-semibold text-[#191919]">Main</p>
                 </div>
 
-                <div className="grid flex-1 grid-cols-3 gap-2 sm:grid-cols-4">
+                <div className="grid flex-1 grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-5">
                   <button
                     type="button"
                     onClick={() => setShowPicker(true)}

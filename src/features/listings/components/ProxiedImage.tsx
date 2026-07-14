@@ -9,6 +9,19 @@ interface ProxiedImageProps {
 export function proxyImageSrc(originalUrl: string): string {
   if (!originalUrl) return "";
   if (originalUrl.startsWith("/api/proxy-image")) return originalUrl;
+  if (originalUrl.startsWith("blob:") || originalUrl.startsWith("data:")) return originalUrl;
+
+  try {
+    const host = new URL(originalUrl).hostname.toLowerCase();
+    const needsProxy =
+      host.includes("alicdn.com") ||
+      host.includes("aliexpress-media.com") ||
+      host.includes("aliexpress.com");
+    if (!needsProxy) return originalUrl;
+  } catch {
+    return originalUrl;
+  }
+
   return `/api/proxy-image?url=${encodeURIComponent(originalUrl)}`;
 }
 
