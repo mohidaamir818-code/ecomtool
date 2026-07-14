@@ -4,13 +4,12 @@ import { editNvidiaListingPhoto } from "@/lib/nvidia/image-generate";
 import { uploadListingPhotoBytes } from "@/lib/listings/upload-photos";
 import type { ListingPhotoDraft } from "@/types/listing-generator";
 
-const MAX_EDIT_PHOTOS = 3;
-/** Soft budget so prepare stays inside ~30–55s even if NVIDIA is slow. */
-const EDIT_BUDGET_MS = 18_000;
+const MAX_AI_PHOTOS = 3;
 
 /**
- * Edit up to 3 AliExpress photos with the seller prompt (parallel).
- * Failures / timeout → empty result; originals stay on the draft.
+ * Generate up to 3 AI listing photos from seller prompt + product title.
+ * Runs in parallel. Always attempts generation even if AliExpress URL download
+ * would fail (Klein does not need the source file on NVIDIA trial keys).
  */
 export async function editAliExpressListingPhotos(input: {
   userId: string;
@@ -22,44 +21,39 @@ export async function editAliExpressListingPhotos(input: {
   const prompt = input.sellerPrompt.trim();
   if (!prompt) return [];
 
-  const urls = [...new Set(input.photoUrls.map((url) => url.trim()).filter(Boolean))].slice(
-    0,
-    Math.min(MAX_EDIT_PHOTOS, Math.max(1, input.count ?? MAX_EDIT_PHOTOS)),
-  );
-  if (urls.length === 0) return [];
+  const urls = [...new Set(input.photoUrls.map((url) => url.trim()).filter(Boolean))];
+  const count = Math.min(MAX_AI_PHOTOS, Math.max(1, input.count ?? MAX_AI_PHOTOS));
 
-  const work = Promise.allSettled(
-    urls.map(async (imageUrl, index) => {
+  const settled = await Promise.allSettled(
+    Array.from({ length: count }, async (_, index) => {
       const edited = await editNvidiaListingPhoto({
-        imageUrl,
+        imageUrl: urls[index] ?? urls[0] ?? "",
         sellerPrompt: prompt,
         productTitle: input.productTitle,
+        variantIndex: index,
       });
       const buffer = Buffer.from(edited.base64, "base64");
       const url = await uploadListingPhotoBytes(input.userId, buffer, {
         contentType: edited.mimeType,
-        fileName: `ai-edit-${index + 1}.${edited.mimeType.includes("png") ? "png" : "jpg"}`,
+        fileName: `ai-photo-${index + 1}.png`,
       });
       const photo: ListingPhotoDraft = { url, selected: true };
       return photo;
     }),
   );
 
-  const settled = await Promise.race([
-    work,
-    new Promise<PromiseSettledResult<ListingPhotoDraft>[]>((resolve) => {
-      setTimeout(() => resolve([]), EDIT_BUDGET_MS);
-    }),
-  ]);
-
   const photos: ListingPhotoDraft[] = [];
   for (const result of settled) {
-    if (result.status === "fulfilled") photos.push(result.value);
+    if (result.status === "fulfilled") {
+      photos.push(result.value);
+    } else {
+      console.warn("[AI photos] one photo failed:", result.reason);
+    }
   }
   return photos;
 }
 
-/** Replace the first N selected/draft photos with AI-edited versions; keep originals after. */
+/** Put AI photos first (selected); keep originals after as backups. */
 export function mergeEditedPhotosIntoDraftPhotos(
   existing: ListingPhotoDraft[],
   editedPhotos: ListingPhotoDraft[],
