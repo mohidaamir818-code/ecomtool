@@ -1,5 +1,5 @@
 export interface ParsedSupplierNote {
-  supplierOrderId: string;
+  supplierOrderId: string | null;
   costPrice: number;
 }
 
@@ -11,7 +11,22 @@ function isPriceLine(line: string): boolean {
   return /^\d+(?:\.\d+)?$/.test(line) && !isSupplierIdLine(line);
 }
 
-/** Parse seller "My note" — same line, two lines, or multiple IDs/prices. */
+function extractLoose(trimmed: string): ParsedSupplierNote {
+  const longId = trimmed.match(/\d{10,}/)?.[0] ?? null;
+  const priceMatch = trimmed.match(/(?<!\d)(\d{1,6}\.\d{1,2})(?!\d)/) ?? trimmed.match(/(?<!\d)(\d{1,4})(?!\d)/);
+  const costRaw = priceMatch ? Number.parseFloat(priceMatch[1]) : NaN;
+  const costPrice =
+    Number.isFinite(costRaw) && costRaw >= 0 && !(longId && priceMatch?.[1] === longId)
+      ? Math.round(costRaw * 100) / 100
+      : 0;
+
+  return {
+    supplierOrderId: longId ?? trimmed.slice(0, 120),
+    costPrice,
+  };
+}
+
+/** Parse seller "My note" — accepts any note; extracts id/price when present. */
 export function parseSupplierNote(raw: string | null | undefined): ParsedSupplierNote | null {
   const trimmed = raw?.trim();
   if (!trimmed) return null;
@@ -51,5 +66,5 @@ export function parseSupplierNote(raw: string | null | undefined): ParsedSupplie
     }
   }
 
-  return null;
+  return extractLoose(trimmed);
 }

@@ -66,6 +66,15 @@ function registerNote(notes: Map<string, string>, orderId: string | null | undef
   notes.set(normalizeOrderId(trimmed), note);
 }
 
+function extractNoteText(block: string): string | null {
+  return (
+    xmlTagValue(block, "PrivateNotes") ??
+    xmlTagValue(block, "SellerNotes") ??
+    xmlTagValue(block, "Notes") ??
+    null
+  );
+}
+
 function registerTransactionNote(
   notes: Map<string, string>,
   transactionBlock: string,
@@ -85,6 +94,7 @@ function registerTransactionNote(
   registerNote(notes, extendedOrderId, note);
   registerNote(notes, lineItemId, note);
   registerNote(notes, salesRecord, note);
+  registerNote(notes, itemId, note);
 
   if (itemId && transactionId != null) {
     registerNote(notes, `${itemId}-${transactionId}`, note);
@@ -105,7 +115,7 @@ function parseOrderTransactionNotes(xml: string, notes: Map<string, string>): vo
     const transactionBlocks = orderTransaction.match(/<Transaction>[\s\S]*?<\/Transaction>/gi) ?? [];
     for (const transactionBlock of transactionBlocks) {
       const itemBlock = transactionBlock.match(/<Item>[\s\S]*?<\/Item>/i)?.[0] ?? transactionBlock;
-      const note = xmlTagValue(itemBlock, "PrivateNotes") ?? xmlTagValue(transactionBlock, "PrivateNotes");
+      const note = extractNoteText(itemBlock) ?? extractNoteText(transactionBlock);
       if (!note) continue;
       registerTransactionNote(notes, transactionBlock, orderId, note);
     }
@@ -117,11 +127,14 @@ function parseOrderNotes(xml: string, notes: Map<string, string>): void {
 
   for (const orderBlock of orders) {
     const orderId = xmlTagValue(orderBlock, "OrderID") ?? xmlTagValue(orderBlock, "ExtendedOrderID");
+    const orderLevelNote = extractNoteText(orderBlock);
+    if (orderLevelNote) registerNote(notes, orderId, orderLevelNote);
+
     const transactionBlocks = orderBlock.match(/<Transaction>[\s\S]*?<\/Transaction>/gi) ?? [];
 
     for (const transactionBlock of transactionBlocks) {
       const itemBlock = transactionBlock.match(/<Item>[\s\S]*?<\/Item>/i)?.[0] ?? transactionBlock;
-      const note = xmlTagValue(itemBlock, "PrivateNotes") ?? xmlTagValue(transactionBlock, "PrivateNotes");
+      const note = extractNoteText(itemBlock) ?? extractNoteText(transactionBlock) ?? orderLevelNote;
       if (!note) continue;
       registerTransactionNote(notes, transactionBlock, orderId, note);
     }
@@ -133,7 +146,7 @@ function parseStandaloneTransactionNotes(xml: string, notes: Map<string, string>
 
   for (const transactionBlock of transactions) {
     const itemBlock = transactionBlock.match(/<Item>[\s\S]*?<\/Item>/i)?.[0] ?? transactionBlock;
-    const note = xmlTagValue(itemBlock, "PrivateNotes") ?? xmlTagValue(transactionBlock, "PrivateNotes");
+    const note = extractNoteText(itemBlock) ?? extractNoteText(transactionBlock);
     if (!note) continue;
 
     registerTransactionNote(
@@ -305,6 +318,7 @@ export interface OrderNoteLookup {
   orderId: string;
   salesRecordReference?: string | null;
   lineItemIds?: string[];
+  legacyItemIds?: string[];
 }
 
 function lookupNote(notesMap: Map<string, string>, key: string): string | null {
@@ -327,11 +341,22 @@ export function resolveOrderNote(notesMap: Map<string, string>, order: OrderNote
     order.orderId,
     order.salesRecordReference ?? undefined,
     ...(order.lineItemIds ?? []),
+    ...(order.legacyItemIds ?? []),
   ].filter((key): key is string => Boolean(key));
 
   for (const key of keys) {
     const hit = lookupNote(notesMap, key);
     if (hit) return hit;
+  }
+
+  // Loose fallback: map key contained in order id (or reverse)
+  const normalizedOrder = normalizeOrderId(order.orderId);
+  for (const [mapKey, value] of notesMap) {
+    const normalizedKey = normalizeOrderId(mapKey);
+    if (!normalizedKey || normalizedKey.length < 6) continue;
+    if (normalizedOrder.includes(normalizedKey) || normalizedKey.includes(normalizedOrder)) {
+      return value;
+    }
   }
 
   return null;

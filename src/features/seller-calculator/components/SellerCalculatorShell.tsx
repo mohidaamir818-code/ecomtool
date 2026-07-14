@@ -180,10 +180,9 @@ export function SellerCalculatorShell() {
           </span>
           <h1 className="mt-3 text-2xl font-bold text-[#111827] lg:text-3xl">Monthly Profit Sheet</h1>
           <p className="mt-1 max-w-3xl text-sm leading-relaxed text-[#6B7280]">
-            Pulls eBay order earnings and supplier cost from your order notes (e.g.{" "}
-            <code className="rounded bg-gray-100 px-1">3074386016281530 2.79</code> or supplier ID and
-            cost on separate lines). Orders without a note are skipped. Already imported orders are never
-            duplicated.
+            Pulls eBay order earnings plus whatever note is on the order. If the note has a supplier ID
+            and cost, profit uses that; otherwise cost is 0. Orders without any note are skipped.
+            Already imported orders are never duplicated.
           </p>
         </header>
 
@@ -354,7 +353,7 @@ export function SellerCalculatorShell() {
             </div>
             {sheet.orders.length === 0 ? (
               <p className="text-center text-sm text-[#6B7280]">
-                No orders with supplier notes yet. Add notes on eBay orders, then click Sync new orders.
+                No orders with notes yet. Add any note on eBay orders, then click Sync new orders.
               </p>
             ) : null}
           </div>

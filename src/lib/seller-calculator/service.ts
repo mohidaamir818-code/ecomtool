@@ -202,9 +202,12 @@ export async function syncSellerCalculatorMonth(
       lineItemIds: (order.lineItems ?? [])
         .map((lineItem) => lineItem.lineItemId)
         .filter((lineItemId): lineItemId is string => Boolean(lineItemId)),
+      legacyItemIds: (order.lineItems ?? [])
+        .map((lineItem) => lineItem.legacyItemId)
+        .filter((legacyItemId): legacyItemId is string => Boolean(legacyItemId)),
     });
     const parsedNote = parseSupplierNote(noteText);
-    if (!parsedNote) {
+    if (!noteText?.trim() || !parsedNote) {
       skippedNoNote += 1;
       continue;
     }
@@ -258,13 +261,13 @@ export async function syncSellerCalculatorMonth(
 
   const message =
     addedCount > 0
-      ? `Added ${addedCount} new order${addedCount === 1 ? "" : "s"} with supplier notes.`
+      ? `Added ${addedCount} new order${addedCount === 1 ? "" : "s"} with notes.`
       : ebayOrders.length > 0 && skippedNoNote > 0
         ? notesMap.size > 0
-          ? `Found ${ebayOrders.length} eBay orders but could not match supplier notes to them. Try syncing again after a minute, or reconnect eBay.`
-          : `Found ${ebayOrders.length} eBay order${ebayOrders.length === 1 ? "" : "s"} for this month, but eBay did not return My notes yet. Add notes on eBay (e.g. 3074386016281530 2.79) then sync again.`
+          ? `Found ${ebayOrders.length} eBay orders but could not match notes to them. Try syncing again after a minute, or reconnect eBay.`
+          : `Found ${ebayOrders.length} eBay order${ebayOrders.length === 1 ? "" : "s"} for this month, but eBay did not return any notes yet. Add a note on eBay then sync again.`
         : skippedNoNote > 0
-          ? "No new orders with supplier notes found."
+          ? "No new orders with notes found."
           : "No new orders to add.";
 
   return { month: refreshed, addedCount, skippedNoNote, ebayOrdersFound: ebayOrders.length, message };
