@@ -11,6 +11,7 @@ import {
   getHandlingProducts,
 } from "@/lib/handling/service";
 import { getSellerPreferences, sellerPreferencesToFeePrefs } from "@/lib/listings/seller-preferences";
+import { getAutoSyncSettings } from "@/lib/listings/auto-sync-settings";
 import { calculatePricingBreakdown } from "@/lib/listings/pricing";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type { HandlingProductVariant } from "@/types/handling";
@@ -490,6 +491,7 @@ export async function syncListedProductsForAliVariants(
   if (!listedVariants?.length) return;
 
   const productsById = new Map(products.map((row) => [String(row.id), row]));
+  const syncSettings = await getAutoSyncSettings(userId);
 
   const email = await getUserEmail(userId);
   const emailUpdates: SyncEmailUpdate[] = [];
@@ -508,83 +510,104 @@ export async function syncListedProductsForAliVariants(
     const platform = String(listedProduct.platform) as ListingPlatform;
     const currency = String(listedProduct.currency ?? "GBP");
     const draft = listedProduct.draft_json as ListingDraft;
+
     let nextPrice = listedPrice;
     let nextQuantity = listedQuantity;
-    let priceChanged = false;
-    let stockChanged = false;
+    let priceEvent = false;
+    let stockEvent = false;
 
     if (previousAli.price < currentAli.price) {
       const delta = currentAli.price - previousAli.price;
       nextPrice = Number((listedPrice + delta).toFixed(2));
       if (nextPrice !== listedPrice) {
-        priceChanged = true;
+        priceEvent = true;
       }
     }
 
     if ((currentAli.stock ?? 0) === 0 && (previousAli.stock ?? 0) > 0) {
       nextQuantity = 0;
-      stockChanged = true;
+      stockEvent = true;
     }
 
-    if (!priceChanged && !stockChanged) continue;
+    if (!priceEvent && !stockEvent) continue;
 
-    const tradingImport = draft.ebayTradingImport;
-    const tradingVariant = tradingImport?.variants.find((variant) => variant.label === label);
+    const applyPriceSync = priceEvent && syncSettings.autoSyncPrice;
+    const applyStockSync = stockEvent && syncSettings.autoSyncStock;
 
-    try {
-      if (platform === "ebay" && tradingImport?.listingId) {
-        await reviseEbayTradingListing(userId, tradingImport.listingId, {
-          price: priceChanged ? nextPrice : undefined,
-          quantity: stockChanged ? nextQuantity : undefined,
-          label,
-          sku: String(row.sku),
-          variationSpecifics: tradingVariant?.variationSpecifics,
-        });
-      } else if (platform === "ebay" && row.offer_id && draft.ebayPolicies && draft.listing.categoryId) {
-        await reviseEbayListedVariant(userId, draft, {
-          sku: String(row.sku),
-          offerId: String(row.offer_id),
-          price: priceChanged ? nextPrice : listedPrice,
-          quantity: stockChanged ? nextQuantity : listedQuantity,
-          label,
-          ean: draft.variants.find((variant) => variant.id === aliVariantId)?.ean,
-        });
-      } else if (platform === "amazef" && listedProduct.listing_id) {
-        await reviseAmazefListedVariants(userId, draft, String(listedProduct.listing_id), [
-          {
-            aliVariantId,
-            price: priceChanged ? nextPrice : listedPrice,
-            quantity: stockChanged ? nextQuantity : listedQuantity,
-          },
-        ]);
+    if (applyPriceSync || applyStockSync) {
+      const tradingImport = draft.ebayTradingImport;
+      const tradingVariant = tradingImport?.variants.find((variant) => variant.label === label);
+
+      try {
+        if (platform === "ebay" && tradingImport?.listingId) {
+          await reviseEbayTradingListing(userId, tradingImport.listingId, {
+            price: applyPriceSync ? nextPrice : undefined,
+            quantity: applyStockSync ? nextQuantity : undefined,
+            label,
+            sku: String(row.sku),
+            variationSpecifics: tradingVariant?.variationSpecifics,
+          });
+        } else if (platform === "ebay" && row.offer_id && draft.ebayPolicies && draft.listing.categoryId) {
+          await reviseEbayListedVariant(userId, draft, {
+            sku: String(row.sku),
+            offerId: String(row.offer_id),
+            price: applyPriceSync ? nextPrice : listedPrice,
+            quantity: applyStockSync ? nextQuantity : listedQuantity,
+            label,
+            ean: draft.variants.find((variant) => variant.id === aliVariantId)?.ean,
+          });
+        } else if (platform === "amazef" && listedProduct.listing_id) {
+          await reviseAmazefListedVariants(userId, draft, String(listedProduct.listing_id), [
+            {
+              aliVariantId,
+              price: applyPriceSync ? nextPrice : listedPrice,
+              quantity: applyStockSync ? nextQuantity : listedQuantity,
+            },
+          ]);
+        }
+      } catch {
+        continue;
       }
-    } catch {
-      continue;
     }
 
+    // Always advance Ali tracking so we don't re-alert the same change forever.
     await supabase
       .from("listed_product_variants")
       .update({
-        listed_price: nextPrice,
-        listed_quantity: nextQuantity,
+        listed_price: applyPriceSync ? nextPrice : listedPrice,
+        listed_quantity: applyStockSync ? nextQuantity : listedQuantity,
         ali_price: currentAli.price,
         ali_stock: currentAli.stock,
         updated_at: new Date().toISOString(),
       })
       .eq("id", row.id);
 
+    if (!syncSettings.autoSyncNotify) continue;
+
     const platformLabel = platform === "amazef" ? "Amazef" : "eBay";
     const updateLines: string[] = [];
 
-    if (priceChanged) {
-      updateLines.push(
-        `AliExpress price: ${formatMoney(previousAli.price, currentAli.currency)} → ${formatMoney(currentAli.price, currentAli.currency)}. Your ${platformLabel} price: ${formatMoney(listedPrice, currency)} → ${formatMoney(nextPrice, currency)}.`,
-      );
+    if (priceEvent) {
+      if (applyPriceSync) {
+        updateLines.push(
+          `AliExpress price: ${formatMoney(previousAli.price, currentAli.currency)} → ${formatMoney(currentAli.price, currentAli.currency)}. Your ${platformLabel} price: ${formatMoney(listedPrice, currency)} → ${formatMoney(nextPrice, currency)}.`,
+        );
+      } else {
+        updateLines.push(
+          `AliExpress price rose: ${formatMoney(previousAli.price, currentAli.currency)} → ${formatMoney(currentAli.price, currentAli.currency)}. Your ${platformLabel} price was NOT changed (Auto sync price is OFF). Suggested: ${formatMoney(listedPrice, currency)} → ${formatMoney(nextPrice, currency)}.`,
+        );
+      }
     }
-    if (stockChanged) {
-      updateLines.push(
-        `AliExpress stock reached 0. Your ${platformLabel} quantity for this variant was set to 0.`,
-      );
+    if (stockEvent) {
+      if (applyStockSync) {
+        updateLines.push(
+          `AliExpress stock reached 0. Your ${platformLabel} quantity for this variant was set to 0.`,
+        );
+      } else {
+        updateLines.push(
+          `AliExpress stock reached 0. Your ${platformLabel} quantity was NOT changed (Auto sync stock is OFF).`,
+        );
+      }
     }
 
     if (updateLines.length > 0) {
@@ -604,9 +627,14 @@ export async function syncListedProductsForAliVariants(
 
   if (email && emailUpdates.length > 0) {
     const primaryTitle = emailUpdates[0]?.title ?? "Your listing";
+    const anySynced = emailUpdates.some((update) =>
+      update.lines.some((line) => !line.includes("NOT changed")),
+    );
     await sendEmail({
       to: email,
-      subject: `Auto-sync update: ${primaryTitle}`,
+      subject: anySynced
+        ? `Auto-sync update: ${primaryTitle}`
+        : `Marketplace alert (not synced): ${primaryTitle}`,
       text: emailUpdates
         .map(
           (update) =>

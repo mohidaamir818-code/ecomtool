@@ -24,6 +24,12 @@ export function SettingsShell() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordBusy, setPasswordBusy] = useState(false);
 
+  const [autoSyncStock, setAutoSyncStock] = useState(false);
+  const [autoSyncPrice, setAutoSyncPrice] = useState(false);
+  const [autoSyncNotify, setAutoSyncNotify] = useState(true);
+  const [autoSyncBusy, setAutoSyncBusy] = useState(false);
+  const [autoSyncLoaded, setAutoSyncLoaded] = useState(false);
+
   useEffect(() => {
     const id = sessionStorage.getItem("ecomtools_user_id");
     if (!id) {
@@ -59,10 +65,75 @@ export function SettingsShell() {
       .finally(() => setLoading(false));
   }, [userId]);
 
+  useEffect(() => {
+    if (!userId) return;
+    void fetch(`/api/listings/auto-sync-settings?userId=${encodeURIComponent(userId)}`)
+      .then(async (response) => {
+        const data = (await response.json()) as {
+          error?: string;
+          settings?: {
+            autoSyncStock?: boolean;
+            autoSyncPrice?: boolean;
+            autoSyncNotify?: boolean;
+          };
+        };
+        if (!response.ok) return;
+        setAutoSyncStock(Boolean(data.settings?.autoSyncStock));
+        setAutoSyncPrice(Boolean(data.settings?.autoSyncPrice));
+        setAutoSyncNotify(
+          data.settings?.autoSyncNotify === undefined ? true : Boolean(data.settings.autoSyncNotify),
+        );
+        setAutoSyncLoaded(true);
+      })
+      .catch(() => {
+        setAutoSyncLoaded(true);
+      });
+  }, [userId]);
+
   const usagePercent = useMemo(() => {
     if (!dailyLimit || dailyLimit <= 0) return 0;
     return Math.min(100, Math.round((dailyUsed / dailyLimit) * 100));
   }, [dailyLimit, dailyUsed]);
+
+  async function handleSaveAutoSync() {
+    if (!userId) return;
+    setAutoSyncBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/listings/auto-sync-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          settings: {
+            autoSyncStock,
+            autoSyncPrice,
+            autoSyncNotify,
+          },
+        }),
+      });
+      const data = (await response.json()) as {
+        error?: string;
+        settings?: {
+          autoSyncStock?: boolean;
+          autoSyncPrice?: boolean;
+          autoSyncNotify?: boolean;
+        };
+      };
+      if (!response.ok) throw new Error(data.error ?? "Failed to save auto-sync settings.");
+      setAutoSyncStock(Boolean(data.settings?.autoSyncStock));
+      setAutoSyncPrice(Boolean(data.settings?.autoSyncPrice));
+      setAutoSyncNotify(
+        data.settings?.autoSyncNotify === undefined ? true : Boolean(data.settings.autoSyncNotify),
+      );
+      setNotice("Auto-sync settings saved.");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Failed to save auto-sync settings.");
+    } finally {
+      setAutoSyncBusy(false);
+    }
+  }
 
   async function postSettings(body: Record<string, unknown>) {
     if (!userId) throw new Error("User session missing.");
@@ -371,6 +442,77 @@ export function SettingsShell() {
               </p>
             </div>
           </div>
+        </section>
+
+        <section className="mt-6 rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
+          <div className="mb-2 flex items-center gap-2">
+            <DashboardIcon name="settings" className="h-5 w-5 text-brand" />
+            <h2 className="text-lg font-semibold text-[#111827]">Marketplace auto sync</h2>
+          </div>
+          <p className="mb-5 text-sm text-[#6B7280]">
+            Controls price/stock updates for auto listing, bulk listing, and imported store products.
+            Default is OFF — turn on only what you want.
+          </p>
+
+          <div className="space-y-3">
+            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-100 bg-gray-50/70 px-4 py-3">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
+                checked={autoSyncStock}
+                disabled={!autoSyncLoaded || autoSyncBusy}
+                onChange={(event) => setAutoSyncStock(event.target.checked)}
+              />
+              <span>
+                <span className="block text-sm font-semibold text-[#111827]">Auto sync stock</span>
+                <span className="mt-1 block text-xs text-[#6B7280]">
+                  When ON, marketplace stock is set to 0 when AliExpress stock hits 0.
+                </span>
+              </span>
+            </label>
+
+            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-100 bg-gray-50/70 px-4 py-3">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
+                checked={autoSyncPrice}
+                disabled={!autoSyncLoaded || autoSyncBusy}
+                onChange={(event) => setAutoSyncPrice(event.target.checked)}
+              />
+              <span>
+                <span className="block text-sm font-semibold text-[#111827]">Auto sync price</span>
+                <span className="mt-1 block text-xs text-[#6B7280]">
+                  When ON, marketplace price is raised when AliExpress price rises.
+                </span>
+              </span>
+            </label>
+
+            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-violet-100 bg-violet-50/50 px-4 py-3">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
+                checked={autoSyncNotify}
+                disabled={!autoSyncLoaded || autoSyncBusy}
+                onChange={(event) => setAutoSyncNotify(event.target.checked)}
+              />
+              <span>
+                <span className="block text-sm font-semibold text-[#111827]">Only notification (email)</span>
+                <span className="mt-1 block text-xs text-[#6B7280]">
+                  Email you when stock/price changes — even if sync is OFF for that change. If OFF,
+                  no sync emails are sent.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void handleSaveAutoSync()}
+            disabled={!autoSyncLoaded || autoSyncBusy}
+            className="mt-5 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-60"
+          >
+            {autoSyncBusy ? "Saving…" : "Save auto-sync settings"}
+          </button>
         </section>
       </div>
     </DashboardLayout>
