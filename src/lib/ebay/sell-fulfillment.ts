@@ -13,9 +13,11 @@ interface EbayMoney {
 export interface EbayFulfillmentOrder {
   orderId: string;
   creationDate: string;
+  salesRecordReference?: string;
   orderFulfillmentStatus?: string;
   cancelStatus?: { cancelState?: string };
   buyer?: { username?: string };
+  lineItems?: Array<{ lineItemId?: string; legacyItemId?: string }>;
   pricingSummary?: {
     total?: EbayMoney;
     priceSubtotal?: EbayMoney;
@@ -87,6 +89,48 @@ export async function fetchEbayOrdersForRange(
   }
 
   return orders;
+}
+
+async function enrichFulfillmentOrder(
+  token: string,
+  marketplaceId: string,
+  order: EbayFulfillmentOrder,
+): Promise<EbayFulfillmentOrder> {
+  if (order.lineItems?.some((lineItem) => lineItem.lineItemId)) {
+    return order;
+  }
+
+  const response = await fetch(
+    `${EBAY_API_BASE}/sell/fulfillment/v1/order/${encodeURIComponent(order.orderId)}`,
+    {
+      headers: ebayHeaders(token, marketplaceId),
+      cache: "no-store",
+    },
+  );
+
+  if (!response.ok) return order;
+
+  const data = (await response.json()) as EbayFulfillmentOrder;
+  return {
+    ...order,
+    salesRecordReference: data.salesRecordReference ?? order.salesRecordReference,
+    lineItems: data.lineItems ?? order.lineItems,
+  };
+}
+
+export async function fetchEbayOrdersForRangeWithDetails(
+  userId: string,
+  fromIso: string,
+  toIso: string,
+): Promise<EbayFulfillmentOrder[]> {
+  const token = await getEbayUserAccessToken(userId);
+  if (!token) {
+    throw new Error("Connect your eBay account first.");
+  }
+
+  const marketplaceId = await getSellerMarketplaceId(userId);
+  const orders = await fetchEbayOrdersForRange(userId, fromIso, toIso);
+  return Promise.all(orders.map((order) => enrichFulfillmentOrder(token, marketplaceId, order)));
 }
 
 export function extractOrderFinancials(order: EbayFulfillmentOrder): {

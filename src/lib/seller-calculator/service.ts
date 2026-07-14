@@ -2,7 +2,7 @@ import "server-only";
 
 import {
   extractOrderFinancials,
-  fetchEbayOrdersForRange,
+  fetchEbayOrdersForRangeWithDetails,
 } from "@/lib/ebay/sell-fulfillment";
 import { fetchSellerOrderNotesMap, resolveOrderNote } from "@/lib/ebay/seller-order-notes";
 import { getEbayConnectionStatus } from "@/lib/ebay/oauth-user";
@@ -185,7 +185,7 @@ export async function syncSellerCalculatorMonth(
 
   const { from, to } = getMonthDateRange(year, month);
   const [ebayOrders, notesMap] = await Promise.all([
-    fetchEbayOrdersForRange(userId, from, to),
+    fetchEbayOrdersForRangeWithDetails(userId, from, to),
     fetchSellerOrderNotesMap(userId, from, to),
   ]);
 
@@ -196,7 +196,13 @@ export async function syncSellerCalculatorMonth(
   for (const order of ebayOrders) {
     if (!order.orderId || existingIds.has(order.orderId)) continue;
 
-    const noteText = resolveOrderNote(notesMap, order.orderId);
+    const noteText = resolveOrderNote(notesMap, {
+      orderId: order.orderId,
+      salesRecordReference: order.salesRecordReference,
+      lineItemIds: (order.lineItems ?? [])
+        .map((lineItem) => lineItem.lineItemId)
+        .filter((lineItemId): lineItemId is string => Boolean(lineItemId)),
+    });
     const parsedNote = parseSupplierNote(noteText);
     if (!parsedNote) {
       skippedNoNote += 1;
@@ -254,7 +260,9 @@ export async function syncSellerCalculatorMonth(
     addedCount > 0
       ? `Added ${addedCount} new order${addedCount === 1 ? "" : "s"} with supplier notes.`
       : ebayOrders.length > 0 && skippedNoNote > 0
-        ? `Found ${ebayOrders.length} eBay order${ebayOrders.length === 1 ? "" : "s"} for this month, but none had supplier notes yet. Add notes on eBay (e.g. 3074386016281530 2.79) then sync again.`
+        ? notesMap.size > 0
+          ? `Found ${ebayOrders.length} eBay orders but could not match supplier notes to them. Try syncing again after a minute, or reconnect eBay.`
+          : `Found ${ebayOrders.length} eBay order${ebayOrders.length === 1 ? "" : "s"} for this month, but eBay did not return My notes yet. Add notes on eBay (e.g. 3074386016281530 2.79) then sync again.`
         : skippedNoNote > 0
           ? "No new orders with supplier notes found."
           : "No new orders to add.";

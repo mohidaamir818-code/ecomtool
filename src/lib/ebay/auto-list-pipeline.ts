@@ -124,7 +124,14 @@ async function getUserEmail(userId: string): Promise<string | null> {
   return data?.email?.trim() ?? null;
 }
 
-export async function runEbayAutoListPipeline(
+export interface EbayAutoListPrepared {
+  draft: ListingDraft;
+  pricingBreakdown: PricingBreakdown;
+  settings: EbayAutoListingSettings;
+}
+
+/** Build the full listing draft (no publish). Used by review UI and by full auto-list. */
+export async function prepareEbayAutoListDraft(
   userId: string,
   productUrl: string,
   rawSettings: Partial<EbayAutoListingSettings>,
@@ -133,7 +140,7 @@ export async function runEbayAutoListPipeline(
     fulfillmentPolicyId?: string;
     manualPriceOverride?: number | null;
   },
-): Promise<EbayAutoListResult> {
+): Promise<EbayAutoListPrepared> {
   const settings = normalizeEbayAutoListingSettings(rawSettings);
   const acknowledgeVero = Boolean(options?.acknowledgeVero);
 
@@ -316,6 +323,26 @@ export async function runEbayAutoListPipeline(
   }
 
   draft = await assignSkusToDraft(userId, draft);
+
+  return { draft, pricingBreakdown, settings };
+}
+
+export async function runEbayAutoListPipeline(
+  userId: string,
+  productUrl: string,
+  rawSettings: Partial<EbayAutoListingSettings>,
+  options?: {
+    acknowledgeVero?: boolean;
+    fulfillmentPolicyId?: string;
+    manualPriceOverride?: number | null;
+  },
+): Promise<EbayAutoListResult> {
+  const { draft, pricingBreakdown, settings } = await prepareEbayAutoListDraft(
+    userId,
+    productUrl,
+    rawSettings,
+    options,
+  );
 
   const listResult = await listDraftOnEbay(userId, draft);
 

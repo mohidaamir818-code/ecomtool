@@ -3,8 +3,8 @@ import { Suspense } from "react";
 import { ListingsShell } from "@/features/listings/components/ListingsShell";
 
 export const metadata: Metadata = {
-  title: "Create New Listing — EcomTools",
-  description: "Paste an AliExpress URL and create an optimized eBay listing with AI.",
+  title: "Auto List — EcomTools",
+  description: "Paste an AliExpress URL, review your listing, then publish to eBay.",
 };
 
 export default function NewListingPage() {

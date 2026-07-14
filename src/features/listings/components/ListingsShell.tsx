@@ -24,6 +24,7 @@ import { sellerPreferencesToPromotions, promotionsToSellerPreferences } from "@/
 import { AiListingGenerator } from "./AiListingGenerator";
 import { AmazefAutoListingPanel } from "./AmazefAutoListingPanel";
 import { AmazefAutoListingSettingsModal } from "./AmazefAutoListingSettingsModal";
+import { EbayAutoListReviewPage } from "./EbayAutoListReviewPage";
 import { EbayAutoListingFulfillmentPicker } from "./EbayAutoListingFulfillmentPicker";
 import { EbayAutoListingSettingsModal } from "./EbayAutoListingSettingsModal";
 import { AmazefConfirmStep } from "./AmazefConfirmStep";
@@ -150,6 +151,7 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
     normalizeEbayAutoListingSettings(null),
   );
   const [showAutoSettingsModal, setShowAutoSettingsModal] = useState(false);
+  const [showEbayAutoReview, setShowEbayAutoReview] = useState(false);
   const [pendingAmazefAutoList, setPendingAmazefAutoList] = useState(false);
   const [pendingEbayAutoList, setPendingEbayAutoList] = useState(false);
   const [pendingFulfillmentSelection, setPendingFulfillmentSelection] =
@@ -447,6 +449,7 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
     setIsError(false);
     setPricingPrefs(null);
     setPricingBreakdown(null);
+    setShowEbayAutoReview(false);
     setManualPriceOverride(null);
     generateStarted.current = false;
     setAutoListProcessing(false);
@@ -862,6 +865,7 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
           settings: ebayAutoSettings,
           acknowledgeVero,
           fulfillmentPolicyId,
+          mode: "prepare",
         }),
       });
       const data = await response.json();
@@ -886,12 +890,20 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
         return;
       }
 
+      if (!data.draft) {
+        setNotice("Auto listing did not return a draft to review.");
+        setIsError(true);
+        return;
+      }
+
       setPendingFulfillmentSelection(null);
-      setListedUrl(data.result?.listingUrl ?? null);
-      setListedProductsRefreshKey((key) => key + 1);
-      setNotice(data.message ?? "Product listed on eBay.");
+      setDraft(data.draft as ListingDraft);
+      setListing((data.draft as ListingDraft).listing);
+      setProduct((data.draft as ListingDraft).product);
+      setShowEbayAutoReview(true);
+      setNotice(data.message ?? "Listing ready for review.");
       setIsError(false);
-      setUrl("");
+      setListedUrl(null);
     } catch {
       setNotice("Network error during auto listing.");
       setIsError(true);
@@ -954,11 +966,21 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
         await runAmazefAutoList();
         return;
       }
-      if (activePlatform === "ebay" && ebayAutoSettings.enabled) {
+      if (activePlatform === "ebay") {
+        if (!ebayAutoSettings.enabled) {
+          setNotice("Turn on auto listing first.");
+          setIsError(true);
+          return;
+        }
         await runEbayAutoList(
           pendingFulfillmentSelection?.acknowledgeVero ?? false,
           pendingFulfillmentSelection?.selectedFulfillmentPolicyId || undefined,
         );
+        return;
+      }
+      if (isCreateMode) {
+        setNotice("Turn on auto listing first.");
+        setIsError(true);
         return;
       }
       setCurrentStep(1);
@@ -1068,12 +1090,23 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
     if (url) {
       setListedProductsRefreshKey((key) => key + 1);
     }
+    if (showEbayAutoReview) {
+      setShowEbayAutoReview(false);
+      setDraft(null);
+      setUrl("");
+      setNotice(url ? "Product listed on eBay." : "Listing submitted to eBay.");
+      setIsError(false);
+      if (isCreateMode) {
+        router.push("/dashboard/listings");
+      }
+    }
   }
 
   const busy = veroLoading || generateLoading || autoListProcessing;
   const wizardStarted = currentStep > 0 || Boolean(vero) || Boolean(draft);
   const isAmazef = activePlatform === "amazef";
   const showAutoUrlOnly =
+    isCreateMode ||
     (isAmazef && amazefAutoSettings.enabled && currentStep === 0) ||
     (!isAmazef && ebayAutoSettings.enabled && currentStep === 0);
   const autoListingEnabled = isAmazef ? amazefAutoSettings.enabled : ebayAutoSettings.enabled;
@@ -1145,7 +1178,8 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
 
   return (
     <DashboardLayout>
-      <div className="mx-auto max-w-[960px] p-6 lg:p-8">
+      <div className={`mx-auto p-6 lg:p-8 ${showEbayAutoReview ? "max-w-[960px]" : "max-w-[960px]"}`}>
+        {showEbayAutoReview && draft && userId && !isAmazef ? null : (
         <div className="relative mb-8 overflow-hidden rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50/80 via-white to-indigo-50/60 p-6 shadow-md shadow-violet-100/30 lg:p-8">
           <div className="pointer-events-none absolute -right-12 -top-12 h-40 w-40 rounded-full bg-gradient-to-br from-brand/10 to-indigo-200/30" />
           <div className="pointer-events-none absolute -bottom-8 -left-8 h-28 w-28 rounded-full bg-gradient-to-tr from-amber-100/50 to-transparent" />
@@ -1164,12 +1198,12 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
                 <span aria-hidden>✨</span> AI Powered
               </p>
               <h1 className="mt-3 bg-gradient-to-r from-[#111827] via-brand to-indigo-600 bg-clip-text text-2xl font-bold text-transparent lg:text-3xl">
-                {isCreateMode ? "Create New Listing" : "AI Listing Generator"}
+                {isCreateMode ? "Auto List" : "AI Listing Generator"}
               </h1>
               <p className="mt-2 max-w-xl text-sm leading-relaxed text-[#6B7280]">
                 {isCreateMode ? (
                   <>
-                    Paste an AliExpress URL, adjust auto listing settings, and publish to{" "}
+                    Paste an AliExpress URL. We prepare the full listing, then you review and publish to{" "}
                     <span className="font-semibold text-brand">{isAmazef ? "Amazef" : "eBay"}</span>.
                   </>
                 ) : (
@@ -1207,6 +1241,7 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
             </div>
           </div>
         </div>
+        )}
 
         {showEbaySpinner || showAmazefSpinner ? (
           <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50/50 to-white py-16">
@@ -1255,33 +1290,13 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
           </div>
         ) : isListMode ? (
           <>
-            {resumeOffer ? (
-              <div className="mb-6 overflow-hidden rounded-2xl border border-amber-200/80 bg-gradient-to-r from-amber-50 via-orange-50/50 to-yellow-50 p-5 shadow-sm">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-lg">
-                      ⏸
-                    </span>
-                    <p className="text-sm font-semibold text-amber-900">You have a listing in progress.</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => router.push("/dashboard/listings/new?resume=1")}
-                    className="rounded-xl bg-gradient-to-r from-brand to-indigo-600 px-5 py-2 text-sm font-semibold text-white shadow-md shadow-brand/20 transition hover:shadow-lg"
-                  >
-                    Resume listing
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
             <div className="mb-4 flex justify-end">
               <Link
                 href="/dashboard/listings/new"
                 className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-brand to-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-brand/20 transition hover:shadow-lg hover:shadow-brand/30"
               >
                 <span aria-hidden>+</span>
-                Create new listing
+                List product
               </Link>
             </div>
 
@@ -1293,6 +1308,19 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
               />
             ) : null}
           </>
+        ) : showEbayAutoReview && draft && userId && !isAmazef ? (
+          <EbayAutoListReviewPage
+            userId={userId}
+            draft={draft}
+            addressConfirmed={ebayStatus.addressConfirmed}
+            onChange={updateDraft}
+            onCancel={() => {
+              setShowEbayAutoReview(false);
+              setNotice("");
+              setIsError(false);
+            }}
+            onListed={handleListed}
+          />
         ) : (
           <>
             {!isAmazef && ebayStatus.connected && userId ? (
@@ -1331,7 +1359,7 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
               </div>
             ) : null}
 
-            {resumeOffer && !wizardStarted ? (
+            {resumeOffer && !wizardStarted && !isCreateMode ? (
           <div className="mb-6 overflow-hidden rounded-2xl border border-amber-200/80 bg-gradient-to-r from-amber-50 via-orange-50/50 to-yellow-50 p-5 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
@@ -1534,8 +1562,10 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
             nextLabel={
               currentStep === 0 && autoListingEnabled
                 ? pendingFulfillmentSelection
-                  ? "Continue listing"
-                  : "Auto list"
+                  ? "Continue"
+                  : isAmazef
+                    ? "Auto list"
+                    : "Prepare listing"
                 : currentStep === 0
                   ? "Check & Generate Listing"
                   : "Next"

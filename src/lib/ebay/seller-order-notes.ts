@@ -11,7 +11,8 @@ const TRADING_SITE_ID: Record<string, string> = {
 
 const ENTRIES_PER_PAGE = 200;
 const MAX_PAGES = 25;
-const DURATION_IN_DAYS = 120;
+/** eBay caps SoldList.DurationInDays at 60 — higher values can fail the whole call. */
+const DURATION_IN_DAYS = 60;
 
 function tradingSiteId(marketplaceId: string): string {
   return TRADING_SITE_ID[marketplaceId] ?? TRADING_SITE_ID.EBAY_GB;
@@ -26,7 +27,7 @@ function xmlTagValue(block: string, tag: string): string | null {
 }
 
 function normalizeOrderId(id: string): string {
-  return id.replace(/[^\dA-Za-z]/g, "").toLowerCase();
+  return id.replace(/[^\dA-Za-z-]/g, "").toLowerCase();
 }
 
 async function tradingApiRequest(
@@ -58,43 +59,100 @@ async function tradingApiRequest(
   }
 }
 
-function registerNote(notes: Map<string, string>, orderId: string | null, note: string): void {
+function registerNote(notes: Map<string, string>, orderId: string | null | undefined, note: string): void {
   if (!orderId || !note.trim()) return;
-  notes.set(orderId, note);
-  notes.set(normalizeOrderId(orderId), note);
+  const trimmed = orderId.trim();
+  notes.set(trimmed, note);
+  notes.set(normalizeOrderId(trimmed), note);
 }
 
-function registerNoteFromBlock(block: string, note: string, notes: Map<string, string>): void {
-  registerNote(notes, xmlTagValue(block, "ExtendedOrderID"), note);
-  registerNote(notes, xmlTagValue(block, "OrderID"), note);
-  registerNote(notes, xmlTagValue(block, "OrderLineItemID"), note);
+function registerTransactionNote(
+  notes: Map<string, string>,
+  transactionBlock: string,
+  orderId: string | null,
+  note: string,
+): void {
+  const lineItemId = xmlTagValue(transactionBlock, "OrderLineItemID");
+  const transactionId = xmlTagValue(transactionBlock, "TransactionID");
+  const itemBlock = transactionBlock.match(/<Item>[\s\S]*?<\/Item>/i)?.[0] ?? transactionBlock;
+  const itemId = xmlTagValue(itemBlock, "ItemID");
+  const extendedOrderId = xmlTagValue(transactionBlock, "ExtendedOrderID");
+  const salesRecord =
+    xmlTagValue(transactionBlock, "SellingManagerSalesRecordNumber") ??
+    xmlTagValue(transactionBlock, "SalesRecordNumber");
 
-  const transactionBlocks = block.match(/<Transaction>[\s\S]*?<\/Transaction>/gi) ?? [];
-  for (const transactionBlock of transactionBlocks) {
-    registerNote(notes, xmlTagValue(transactionBlock, "ExtendedOrderID"), note);
-    registerNote(notes, xmlTagValue(transactionBlock, "OrderID"), note);
-    registerNote(notes, xmlTagValue(transactionBlock, "OrderLineItemID"), note);
+  registerNote(notes, orderId, note);
+  registerNote(notes, extendedOrderId, note);
+  registerNote(notes, lineItemId, note);
+  registerNote(notes, salesRecord, note);
+
+  if (itemId && transactionId != null) {
+    registerNote(notes, `${itemId}-${transactionId}`, note);
+  }
+}
+
+function parseOrderTransactionNotes(xml: string, notes: Map<string, string>): void {
+  const orderTransactions = xml.match(/<OrderTransaction>[\s\S]*?<\/OrderTransaction>/gi) ?? [];
+
+  for (const orderTransaction of orderTransactions) {
+    const orderBlock = orderTransaction.match(/<Order>[\s\S]*?<\/Order>/i)?.[0] ?? "";
+    const orderId =
+      xmlTagValue(orderBlock, "OrderID") ??
+      xmlTagValue(orderBlock, "ExtendedOrderID") ??
+      xmlTagValue(orderTransaction, "OrderID") ??
+      xmlTagValue(orderTransaction, "ExtendedOrderID");
+
+    const transactionBlocks = orderTransaction.match(/<Transaction>[\s\S]*?<\/Transaction>/gi) ?? [];
+    for (const transactionBlock of transactionBlocks) {
+      const itemBlock = transactionBlock.match(/<Item>[\s\S]*?<\/Item>/i)?.[0] ?? transactionBlock;
+      const note = xmlTagValue(itemBlock, "PrivateNotes") ?? xmlTagValue(transactionBlock, "PrivateNotes");
+      if (!note) continue;
+      registerTransactionNote(notes, transactionBlock, orderId, note);
+    }
+  }
+}
+
+function parseOrderNotes(xml: string, notes: Map<string, string>): void {
+  const orders = xml.match(/<Order>[\s\S]*?<\/Order>/gi) ?? [];
+
+  for (const orderBlock of orders) {
+    const orderId = xmlTagValue(orderBlock, "OrderID") ?? xmlTagValue(orderBlock, "ExtendedOrderID");
+    const transactionBlocks = orderBlock.match(/<Transaction>[\s\S]*?<\/Transaction>/gi) ?? [];
+
+    for (const transactionBlock of transactionBlocks) {
+      const itemBlock = transactionBlock.match(/<Item>[\s\S]*?<\/Item>/i)?.[0] ?? transactionBlock;
+      const note = xmlTagValue(itemBlock, "PrivateNotes") ?? xmlTagValue(transactionBlock, "PrivateNotes");
+      if (!note) continue;
+      registerTransactionNote(notes, transactionBlock, orderId, note);
+    }
+  }
+}
+
+function parseStandaloneTransactionNotes(xml: string, notes: Map<string, string>): void {
+  const transactions = xml.match(/<Transaction>[\s\S]*?<\/Transaction>/gi) ?? [];
+
+  for (const transactionBlock of transactions) {
+    const itemBlock = transactionBlock.match(/<Item>[\s\S]*?<\/Item>/i)?.[0] ?? transactionBlock;
+    const note = xmlTagValue(itemBlock, "PrivateNotes") ?? xmlTagValue(transactionBlock, "PrivateNotes");
+    if (!note) continue;
+
+    registerTransactionNote(
+      notes,
+      transactionBlock,
+      xmlTagValue(transactionBlock, "ExtendedOrderID") ?? xmlTagValue(transactionBlock, "OrderID"),
+      note,
+    );
   }
 }
 
 function parseNotesFromXml(xml: string, notes: Map<string, string>): void {
-  const blocks = [
-    ...(xml.match(/<OrderTransaction>[\s\S]*?<\/OrderTransaction>/gi) ?? []),
-    ...(xml.match(/<Item>[\s\S]*?<\/Item>/gi) ?? []),
-    ...(xml.match(/<Transaction>[\s\S]*?<\/Transaction>/gi) ?? []),
-    ...(xml.match(/<Order>[\s\S]*?<\/Order>/gi) ?? []),
-  ];
+  parseOrderTransactionNotes(xml, notes);
+  parseOrderNotes(xml, notes);
+  parseStandaloneTransactionNotes(xml, notes);
+}
 
-  for (const block of blocks) {
-    const noteMatches = block.matchAll(/<PrivateNotes>([\s\S]*?)<\/PrivateNotes>/gi);
-    for (const match of noteMatches) {
-      const note = match[1]
-        ?.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/i, "$1")
-        .trim();
-      if (!note) continue;
-      registerNoteFromBlock(block, note, notes);
-    }
-  }
+function responseHasData(xml: string): boolean {
+  return /Ack>(Success|Warning|PartialFailure)</i.test(xml);
 }
 
 async function fetchMyEbaySellingListNotes(
@@ -128,7 +186,7 @@ async function fetchMyEbaySellingListNotes(
       break;
     }
 
-    if (/Ack>Failure</i.test(xml)) break;
+    if (!responseHasData(xml)) break;
 
     parseNotesFromXml(xml, notes);
 
@@ -169,7 +227,46 @@ async function fetchTradingGetOrdersNotes(
       break;
     }
 
-    if (/Ack>Failure</i.test(xml)) break;
+    if (!responseHasData(xml)) break;
+
+    parseNotesFromXml(xml, notes);
+
+    const totalPages = Number(xmlTagValue(xml, "TotalNumberOfPages") ?? "1");
+    if (page >= totalPages) break;
+  }
+}
+
+async function fetchSellerTransactionsNotes(
+  token: string,
+  siteId: string,
+  fromIso: string,
+  toIso: string,
+  notes: Map<string, string>,
+): Promise<void> {
+  for (let page = 1; page <= MAX_PAGES; page += 1) {
+    let xml = "";
+    try {
+      xml = await tradingApiRequest(
+        token,
+        siteId,
+        "GetSellerTransactions",
+        `<?xml version="1.0" encoding="utf-8"?>
+<GetSellerTransactionsRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <DetailLevel>ReturnAll</DetailLevel>
+  <IncludeContainingOrder>true</IncludeContainingOrder>
+  <ModTimeFrom>${fromIso}</ModTimeFrom>
+  <ModTimeTo>${toIso}</ModTimeTo>
+  <Pagination>
+    <EntriesPerPage>${ENTRIES_PER_PAGE}</EntriesPerPage>
+    <PageNumber>${page}</PageNumber>
+  </Pagination>
+</GetSellerTransactionsRequest>`,
+      );
+    } catch {
+      break;
+    }
+
+    if (!responseHasData(xml)) break;
 
     parseNotesFromXml(xml, notes);
 
@@ -195,25 +292,46 @@ export async function fetchSellerOrderNotesMap(
   await fetchMyEbaySellingListNotes(token, siteId, "DeletedFromSoldList", notes);
 
   if (fromIso && toIso) {
-    await fetchTradingGetOrdersNotes(token, siteId, fromIso, toIso, notes);
+    await Promise.all([
+      fetchTradingGetOrdersNotes(token, siteId, fromIso, toIso, notes),
+      fetchSellerTransactionsNotes(token, siteId, fromIso, toIso, notes),
+    ]);
   }
 
   return notes;
 }
 
-export function resolveOrderNote(
-  notesMap: Map<string, string>,
-  orderId: string,
-): string | null {
-  const direct = notesMap.get(orderId);
+export interface OrderNoteLookup {
+  orderId: string;
+  salesRecordReference?: string | null;
+  lineItemIds?: string[];
+}
+
+function lookupNote(notesMap: Map<string, string>, key: string): string | null {
+  const direct = notesMap.get(key);
   if (direct) return direct;
 
-  const normalized = normalizeOrderId(orderId);
+  const normalized = normalizeOrderId(key);
   const normalizedHit = notesMap.get(normalized);
   if (normalizedHit) return normalizedHit;
 
-  for (const [key, value] of notesMap) {
-    if (normalizeOrderId(key) === normalized) return value;
+  for (const [mapKey, value] of notesMap) {
+    if (normalizeOrderId(mapKey) === normalized) return value;
+  }
+
+  return null;
+}
+
+export function resolveOrderNote(notesMap: Map<string, string>, order: OrderNoteLookup): string | null {
+  const keys = [
+    order.orderId,
+    order.salesRecordReference ?? undefined,
+    ...(order.lineItemIds ?? []),
+  ].filter((key): key is string => Boolean(key));
+
+  for (const key of keys) {
+    const hit = lookupNote(notesMap, key);
+    if (hit) return hit;
   }
 
   return null;

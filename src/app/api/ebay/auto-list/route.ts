@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   EbayAutoListNeedsFulfillmentPolicyError,
+  prepareEbayAutoListDraft,
   runEbayAutoListPipeline,
 } from "@/lib/ebay/auto-list-pipeline";
 import { EbayApiError } from "@/lib/ebay/sell-inventory";
@@ -18,10 +19,13 @@ export async function POST(request: NextRequest) {
       settings?: Partial<EbayAutoListingSettings>;
       acknowledgeVero?: boolean;
       fulfillmentPolicyId?: string;
+      /** prepare = return draft for review; publish = list immediately (bulk / legacy) */
+      mode?: "prepare" | "publish";
     };
 
     userId = body.userId?.trim() ?? null;
     const url = body.url?.trim() ?? "";
+    const mode = body.mode === "prepare" ? "prepare" : "publish";
 
     if (!userId) {
       return NextResponse.json({ error: "userId is required." }, { status: 400 });
@@ -38,10 +42,30 @@ export async function POST(request: NextRequest) {
     const accessDenied = await requireActiveUser(userId);
     if (accessDenied) return accessDenied;
 
-    const result = await runEbayAutoListPipeline(userId, url, body.settings, {
+    const options = {
       acknowledgeVero: body.acknowledgeVero,
       fulfillmentPolicyId: body.fulfillmentPolicyId?.trim() || undefined,
-    });
+    };
+
+    if (mode === "prepare") {
+      const prepared = await prepareEbayAutoListDraft(userId, url, body.settings, options);
+
+      void logUserApiRequest({
+        userId,
+        endpoint: "/api/ebay/auto-list",
+        method: "POST",
+        status: "success",
+      });
+
+      return NextResponse.json({
+        success: true,
+        mode: "prepare",
+        message: "Listing ready for review. Check everything below, then list on eBay.",
+        draft: prepared.draft,
+      });
+    }
+
+    const result = await runEbayAutoListPipeline(userId, url, body.settings, options);
 
     void logUserApiRequest({
       userId,
