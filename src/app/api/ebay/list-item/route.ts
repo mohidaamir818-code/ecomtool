@@ -89,11 +89,9 @@ export async function POST(request: NextRequest) {
 
     const result = await listDraftOnEbay(userId, body.draft);
 
-    try {
-      await saveListedProduct(userId, "ebay", body.draft, result);
-    } catch (error) {
+    void saveListedProduct(userId, "ebay", body.draft, result).catch((error) => {
       console.error("[eBay list-item] Failed to save listed product:", error);
-    }
+    });
 
     void logUserApiRequest({
       userId,

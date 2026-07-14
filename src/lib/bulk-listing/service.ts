@@ -9,11 +9,13 @@ import {
   normalizeEbayAutoListingSettings,
   type EbayAutoListingSettings,
 } from "@/features/listings/lib/ebay-auto-listing";
-import { runAmazefAutoListPipeline } from "@/lib/amazef/auto-list-pipeline";
+import { prepareAmazefAutoListDraft } from "@/lib/amazef/auto-list-pipeline";
 import {
   EbayAutoListNeedsFulfillmentPolicyError,
-  runEbayAutoListPipeline,
+  prepareEbayAutoListDraft,
 } from "@/lib/ebay/auto-list-pipeline";
+import { getAppOrigin } from "@/lib/env";
+import { sendEmail } from "@/lib/email/send-email";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type {
   BulkListingJob,
@@ -22,6 +24,7 @@ import type {
 } from "@/types/bulk-listing";
 import { isVeroAckRequiredError, serializeVeroHoldMessage } from "@/lib/listings/vero-ack-error";
 import type { ListingPlatform } from "@/types/listing-generator";
+import type { ListingDraft } from "@/types/listing-generator";
 
 const MAX_ROWS_PER_BATCH = 50;
 const ALIEXPRESS_URL_PATTERN = /aliexpress\./i;
@@ -48,6 +51,43 @@ function mapJobRow(row: Record<string, unknown>): BulkListingJob {
     startedAt: row.started_at ? String(row.started_at) : null,
     finishedAt: row.finished_at ? String(row.finished_at) : null,
   };
+}
+
+async function getUserEmail(userId: string): Promise<string | null> {
+  const supabase = getSupabaseAdmin();
+  const { data } = await supabase.from("profiles").select("email").eq("id", userId).maybeSingle();
+  return data?.email?.trim() ?? null;
+}
+
+async function sendBulkPreparedEmail(input: {
+  userId: string;
+  platform: ListingPlatform;
+  title: string;
+  price: number;
+  currency: string;
+}): Promise<void> {
+  const email = await getUserEmail(input.userId);
+  if (!email) return;
+
+  const platformLabel = input.platform === "amazef" ? "Amazef" : "eBay";
+  const reviewUrl = `${getAppOrigin()}/dashboard/bulk-listing`;
+
+  try {
+    await sendEmail({
+      to: email,
+      subject: `Ready to list on ${platformLabel}: ${input.title.slice(0, 60)}`,
+      text: [
+        `Your bulk listing is prepared and ready to review on ${platformLabel}.`,
+        "",
+        `Title: ${input.title}`,
+        `Price: ${input.currency} ${input.price.toFixed(2)}`,
+        "",
+        `Open bulk listing to review and publish: ${reviewUrl}`,
+      ].join("\n"),
+    });
+  } catch {
+    // Prepare succeeded; email is best-effort.
+  }
 }
 
 function normalizePlatform(value: unknown): ListingPlatform {
@@ -194,6 +234,7 @@ export async function resetJobForRetry(jobId: string, userId: string): Promise<B
       listed_title: null,
       listed_price: null,
       currency: null,
+      draft_json: null,
       started_at: null,
       finished_at: null,
       updated_at: new Date().toISOString(),
@@ -213,7 +254,7 @@ export async function processNextBulkListingJob(input: {
 }): Promise<{ processed: boolean; job: BulkListingJob | null; jobs: BulkListingJob[] }> {
   const supabase = getSupabaseAdmin();
 
-  // Non-VeRO products are listed first; VeRO products are parked as 'vero_hold'
+  // Non-VeRO products are prepared first; VeRO products are parked as 'vero_hold'
   // and only resume once the seller approves them, so they naturally go last.
   const { data: nextRow, error: fetchError } = await supabase
     .from("bulk_listing_jobs")
@@ -243,10 +284,16 @@ export async function processNextBulkListingJob(input: {
     | null;
   const startedAt = new Date().toISOString();
 
-  // Atomically claim the job so a concurrent worker (client + cron) can't double-list.
+  // Atomically claim the job so a concurrent worker (client + cron) can't double-prepare.
   const { data: claimed } = await supabase
     .from("bulk_listing_jobs")
-    .update({ status: "listing", started_at: startedAt, error_message: null, updated_at: startedAt })
+    .update({
+      status: "preparing",
+      started_at: startedAt,
+      error_message: null,
+      draft_json: null,
+      updated_at: startedAt,
+    })
     .eq("id", job.id)
     .eq("status", "queued")
     .select("id");
@@ -257,12 +304,12 @@ export async function processNextBulkListingJob(input: {
     return { processed: true, job: null, jobs };
   }
 
-  let listingUrl: string | null = null;
+  let draftJson: ListingDraft | null = null;
   let listedTitle: string | null = null;
   let listedPrice: number | null = null;
   let currency: string | null = null;
   let errorMessage: string | null = null;
-  let finalStatus: BulkListingJobStatus = "listed";
+  let finalStatus: BulkListingJobStatus = "prepared";
 
   try {
     // A fixed price takes precedence over a profit % override.
@@ -279,15 +326,15 @@ export async function processNextBulkListingJob(input: {
         throw new Error("Amazef auto listing is not enabled. Turn it on in AI Listing settings.");
       }
 
-      const result = await runAmazefAutoListPipeline(input.userId, job.productUrl, settings, {
+      const prepared = await prepareAmazefAutoListDraft(input.userId, job.productUrl, settings, {
         acknowledgeVero: job.veroAck,
         manualPriceOverride: useFixedPrice ? job.fixedPrice : null,
       });
 
-      listingUrl = result.listingUrl;
-      listedTitle = result.title;
-      listedPrice = result.price;
-      currency = result.currency;
+      draftJson = prepared.draft;
+      listedTitle = prepared.draft.listing.seoTitle;
+      listedPrice = prepared.draft.listing.suggestedPrice;
+      currency = prepared.draft.listing.currency;
     } else {
       const settings = applyProfitOverride(
         normalizeEbayAutoListingSettings(storedSettings ?? input.ebaySettings ?? null),
@@ -298,15 +345,15 @@ export async function processNextBulkListingJob(input: {
         throw new Error("eBay auto listing is not enabled. Turn it on in AI Listing settings.");
       }
 
-      const result = await runEbayAutoListPipeline(input.userId, job.productUrl, settings, {
+      const prepared = await prepareEbayAutoListDraft(input.userId, job.productUrl, settings, {
         acknowledgeVero: job.veroAck,
         manualPriceOverride: useFixedPrice ? job.fixedPrice : null,
       });
 
-      listingUrl = result.listingUrl;
-      listedTitle = result.title;
-      listedPrice = result.price;
-      currency = result.currency;
+      draftJson = prepared.draft;
+      listedTitle = prepared.draft.listing.seoTitle;
+      listedPrice = prepared.draft.listing.suggestedPrice;
+      currency = prepared.draft.listing.currency;
     }
   } catch (error) {
     if (isVeroAckRequiredError(error)) {
@@ -315,10 +362,10 @@ export async function processNextBulkListingJob(input: {
     } else if (error instanceof EbayAutoListNeedsFulfillmentPolicyError) {
       finalStatus = "failed";
       errorMessage =
-        "Shipping policy selection required. List this product manually on the AI Listing page.";
+        "Shipping policy selection required. Prepare this product manually on the AI Listing page.";
     } else {
       finalStatus = "failed";
-      errorMessage = error instanceof Error ? error.message : "Listing failed.";
+      errorMessage = error instanceof Error ? error.message : "Prepare failed.";
     }
   }
 
@@ -327,12 +374,22 @@ export async function processNextBulkListingJob(input: {
   await updateJob(job.id, {
     status: finalStatus,
     error_message: errorMessage,
-    listing_url: listingUrl,
+    draft_json: draftJson,
     listed_title: listedTitle,
     listed_price: listedPrice,
     currency,
     finished_at: finishedAt,
   });
+
+  if (finalStatus === "prepared" && draftJson && listedTitle && listedPrice != null && currency) {
+    void sendBulkPreparedEmail({
+      userId: input.userId,
+      platform: job.platform,
+      title: listedTitle,
+      price: listedPrice,
+      currency,
+    });
+  }
 
   const jobs = await getUserBulkListingJobs(input.userId);
   const updatedJob = jobs.find((item) => item.id === job.id) ?? null;
@@ -341,7 +398,7 @@ export async function processNextBulkListingJob(input: {
 }
 
 /**
- * Resolves all parked VeRO products for a user: approve lists them (with the
+ * Resolves all parked VeRO products for a user: approve re-prepares them (with the
  * seller's acknowledgement), decline marks them failed.
  */
 export async function resolveVeroHold(
@@ -406,7 +463,7 @@ export async function resolveVeroHolds(
 }
 
 /**
- * Server-side batch processor used by the cron so listings continue even after
+ * Server-side batch processor used by the cron so preparations continue even after
  * the seller closes the tab. Uses each job's stored settings snapshot.
  */
 export async function processDueBulkListingJobs(maxJobs = 15): Promise<number> {
@@ -486,4 +543,67 @@ export async function runBulkListingWave(
 
   const remaining = await countQueuedBulkListingJobs();
   return { processed, remaining };
+}
+
+export async function getBulkListingJobDraft(
+  userId: string,
+  jobId: string,
+): Promise<ListingDraft | null> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("bulk_listing_jobs")
+    .select("draft_json, status")
+    .eq("user_id", userId)
+    .eq("id", jobId)
+    .maybeSingle();
+
+  if (error) {
+    if (error.message.includes("does not exist")) return null;
+    throw new Error(error.message);
+  }
+
+  if (!data || data.status !== "prepared" || !data.draft_json) return null;
+  return data.draft_json as ListingDraft;
+}
+
+export async function markBulkJobListed(input: {
+  userId: string;
+  jobId: string;
+  listingUrl: string | null;
+  listedTitle: string;
+  listedPrice: number;
+  currency: string;
+}): Promise<BulkListingJob[]> {
+  const supabase = getSupabaseAdmin();
+  const now = new Date().toISOString();
+
+  const { data: existing } = await supabase
+    .from("bulk_listing_jobs")
+    .select("id, status")
+    .eq("user_id", input.userId)
+    .eq("id", input.jobId)
+    .maybeSingle();
+
+  if (!existing || existing.status !== "prepared") {
+    throw new Error("This bulk listing is not ready to mark as listed.");
+  }
+
+  const { error } = await supabase
+    .from("bulk_listing_jobs")
+    .update({
+      status: "listed",
+      listing_url: input.listingUrl,
+      listed_title: input.listedTitle,
+      listed_price: input.listedPrice,
+      currency: input.currency,
+      finished_at: now,
+      updated_at: now,
+    })
+    .eq("user_id", input.userId)
+    .eq("id", input.jobId)
+    .eq("status", "prepared");
+
+  if (error) throw new Error(error.message);
+
+  return getUserBulkListingJobs(input.userId);
 }

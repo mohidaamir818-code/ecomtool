@@ -15,6 +15,7 @@ import { buildInitialDraft, getSelectedPhotos } from "@/features/listings/lib/dr
 import type { EbayAutoListingSettings } from "@/features/listings/lib/ebay-auto-listing";
 import { normalizeEbayAutoListingSettings } from "@/features/listings/lib/ebay-auto-listing";
 import { mergeInternalSkusIntoDraft } from "@/lib/listings/internal-sku";
+import { ensureDraftVariantEans } from "@/lib/listings/ensure-draft-variant-eans";
 import { ensureInternalSkus } from "@/lib/listings/internal-sku-service";
 import { fetchAliExpressShippingDays } from "@/lib/listings/aliexpress-shipping-days";
 import { flagDescriptionPhotos } from "@/lib/listings/description-image-flags";
@@ -385,6 +386,8 @@ export async function prepareEbayAutoListDraft(
       },
     };
   }
+
+  draft = await ensureDraftVariantEans(draft);
 
   return { draft, pricingBreakdown, settings };
 }

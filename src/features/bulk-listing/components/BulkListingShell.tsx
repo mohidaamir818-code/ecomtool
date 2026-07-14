@@ -16,8 +16,10 @@ import {
   saveEbayAutoListingSettings,
   type EbayAutoListingSettings,
 } from "@/features/listings/lib/ebay-auto-listing";
+import { AmazefAutoListReviewPage } from "@/features/listings/components/AmazefAutoListReviewPage";
+import { EbayAutoListReviewPage } from "@/features/listings/components/EbayAutoListReviewPage";
 import type { BulkListingJob } from "@/types/bulk-listing";
-import type { ListingPlatform } from "@/types/listing-generator";
+import type { ListingDraft, ListingPlatform } from "@/types/listing-generator";
 import { listingPlatformLabel, localizeVeroText } from "@/features/listings/lib/vero-platform";
 import { parseVeroHoldMessage, VERO_HOLD_PREFIX } from "@/lib/listings/vero-ack-error";
 
@@ -45,6 +47,10 @@ function formatStatus(status: BulkListingJob["status"]): string {
   switch (status) {
     case "queued":
       return "Queued";
+    case "preparing":
+      return "Preparing…";
+    case "prepared":
+      return "Ready to list";
     case "listing":
       return "Listing…";
     case "listed":
@@ -62,8 +68,11 @@ function statusClass(status: BulkListingJob["status"]): string {
   switch (status) {
     case "queued":
       return "bg-amber-100 text-amber-700";
+    case "preparing":
     case "listing":
       return "bg-sky-100 text-sky-700";
+    case "prepared":
+      return "bg-violet-100 text-violet-700";
     case "listed":
       return "bg-emerald-100 text-emerald-700";
     case "failed":
@@ -91,11 +100,16 @@ function jobDetailReason(job: BulkListingJob): string {
   if (job.status === "listed") {
     return job.listedTitle ? `Listed: ${job.listedTitle}` : "Listed successfully.";
   }
-  if (job.status === "failed") {
-    return job.errorMessage ?? "Listing failed.";
+  if (job.status === "prepared") {
+    return job.listedTitle
+      ? `Ready to list: ${job.listedTitle}. Click View to review and publish.`
+      : "Ready to review and list.";
   }
-  if (job.status === "listing") {
-    return "Auto listing in progress…";
+  if (job.status === "failed") {
+    return job.errorMessage ?? "Prepare failed.";
+  }
+  if (job.status === "preparing" || job.status === "listing") {
+    return "Preparing listing draft…";
   }
   return "Waiting in queue…";
 }
@@ -217,11 +231,25 @@ export function BulkListingShell() {
   const processingRef = useRef(false);
   const resumedRef = useRef(false);
   const aliPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [reviewJob, setReviewJob] = useState<BulkListingJob | null>(null);
+  const [reviewDraft, setReviewDraft] = useState<ListingDraft | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [ebayAddressConfirmed, setEbayAddressConfirmed] = useState(false);
 
   useEffect(() => {
     if (!userId) return;
     setEbaySettings(loadEbayAutoListingSettings(userId));
     setAmazefSettings(loadAutoListingSettings(userId));
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId) return;
+    void fetch(`/api/ebay/status?userId=${encodeURIComponent(userId)}`)
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.addressConfirmed) setEbayAddressConfirmed(true);
+      })
+      .catch(() => {});
   }, [userId]);
 
   const validRows = useMemo(
@@ -276,10 +304,11 @@ export function BulkListingShell() {
   }, [jobs, activeBatchId]);
 
   const stats = useMemo(() => {
-    const base = { total: 0, listed: 0, failed: 0, pending: 0 };
+    const base = { total: 0, listed: 0, prepared: 0, failed: 0, pending: 0 };
     for (const job of activeBatchJobs) {
       base.total += 1;
       if (job.status === "listed") base.listed += 1;
+      else if (job.status === "prepared") base.prepared += 1;
       else if (job.status === "failed") base.failed += 1;
       else base.pending += 1;
     }
@@ -374,6 +403,61 @@ export function BulkListingShell() {
     });
   }
 
+  async function openReview(job: BulkListingJob) {
+    if (!userId) return;
+    if (job.status !== "prepared") {
+      setSelectedJobId(job.id);
+      return;
+    }
+
+    setReviewLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/bulk-listing/draft?userId=${encodeURIComponent(userId)}&jobId=${encodeURIComponent(job.id)}`,
+      );
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error ?? "Failed to load draft.");
+      setReviewJob(job);
+      setReviewDraft(data.draft as ListingDraft);
+      setSelectedJobId(null);
+    } catch (reviewError) {
+      setError(reviewError instanceof Error ? reviewError.message : "Failed to load draft.");
+    } finally {
+      setReviewLoading(false);
+    }
+  }
+
+  function closeReview() {
+    setReviewJob(null);
+    setReviewDraft(null);
+  }
+
+  async function handleBulkListed(listingUrl: string | null) {
+    if (!userId || !reviewJob || !reviewDraft) return;
+    try {
+      const response = await fetch("/api/bulk-listing/mark-listed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          jobId: reviewJob.id,
+          listingUrl,
+          listedTitle: reviewDraft.listing.seoTitle,
+          listedPrice: reviewDraft.listing.suggestedPrice,
+          currency: reviewDraft.listing.currency,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error ?? "Failed to update job.");
+      setJobs(data.jobs ?? []);
+      setNotice(listingUrl ? "Product listed successfully." : "Listing submitted.");
+      closeReview();
+    } catch (markError) {
+      setError(markError instanceof Error ? markError.message : "Failed to update job.");
+    }
+  }
+
   const handleListAll = useCallback(async () => {
     if (!userId) return;
 
@@ -432,7 +516,7 @@ export function BulkListingShell() {
 
       setJobs(data.jobs ?? []);
       setDraftRows(createDraftRows(DEFAULT_ROW_COUNT));
-      setNotice(`${rowsToSubmit.length} URL(s) saved. Listing started…`);
+      setNotice(`${rowsToSubmit.length} URL(s) saved. Preparing listings…`);
 
       const refresh = await fetch(`/api/bulk-listing?userId=${encodeURIComponent(userId)}`);
       const refreshData = await refresh.json();
@@ -474,7 +558,7 @@ export function BulkListingShell() {
 
       setJobs(data.jobs ?? []);
       if (approve) {
-        setNotice("Listing approved VeRO product…");
+        setNotice("Approved — preparing VeRO product…");
         setSelectedJobId(null);
         await runProcessor();
       } else {
@@ -566,6 +650,40 @@ export function BulkListingShell() {
     }
   }
 
+  if (reviewJob && reviewDraft && userId) {
+    return (
+      <DashboardLayout>
+        <div className="mx-auto max-w-[1280px] p-4 lg:p-8">
+          <button
+            type="button"
+            onClick={closeReview}
+            className="mb-4 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-[#374151] hover:bg-gray-50"
+          >
+            ← Back to bulk listing
+          </button>
+          {reviewJob.platform === "ebay" ? (
+            <EbayAutoListReviewPage
+              userId={userId}
+              draft={reviewDraft}
+              addressConfirmed={ebayAddressConfirmed}
+              onChange={(patch) => setReviewDraft((current) => (current ? { ...current, ...patch } : current))}
+              onCancel={closeReview}
+              onListed={(url) => void handleBulkListed(url)}
+            />
+          ) : (
+            <AmazefAutoListReviewPage
+              userId={userId}
+              draft={reviewDraft}
+              onChange={(patch) => setReviewDraft((current) => (current ? { ...current, ...patch } : current))}
+              onCancel={closeReview}
+              onListed={(url) => void handleBulkListed(url)}
+            />
+          )}
+        </div>
+      </DashboardLayout>
+    );
+  }
+
   if (!userId && !loading) {
     return (
       <DashboardLayout>
@@ -590,11 +708,16 @@ export function BulkListingShell() {
             </span>
             <h1 className="mt-3 text-3xl font-bold tracking-tight">List your whole store at once</h1>
             <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/80">
-              Pick your platform, paste all your AliExpress URLs into the sheet, and set a price next
-              to any product if you want. Leave price empty to use your auto listing settings.
+              Pick your platform, paste up to 50 AliExpress URLs, and we prepare each listing for
+              review. When a row is ready, open it, check everything, and list — while others keep
+              preparing in the background.
             </p>
 
             <div className="mt-5 flex flex-wrap gap-3">
+              <div className="rounded-xl bg-white/10 px-4 py-2.5 backdrop-blur">
+                <p className="text-[11px] uppercase tracking-wide text-white/60">Ready</p>
+                <p className="text-lg font-bold">{stats.prepared}</p>
+              </div>
               <div className="rounded-xl bg-white/10 px-4 py-2.5 backdrop-blur">
                 <p className="text-[11px] uppercase tracking-wide text-white/60">Listed</p>
                 <p className="text-lg font-bold">{stats.listed}</p>
@@ -774,11 +897,11 @@ export function BulkListingShell() {
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                     </svg>
-                    Listing…
+                    Preparing…
                   </>
                 ) : (
                   <>
-                    List {validRows.length > 0 ? validRows.length : "all"} on{" "}
+                    Prepare {validRows.length > 0 ? validRows.length : "all"} on{" "}
                     {platform === "ebay" ? "eBay" : "Amazef"}
                   </>
                 )}
@@ -786,8 +909,8 @@ export function BulkListingShell() {
             </div>
             <p className="mt-2 text-xs text-[#9CA3AF]">
               Price is optional — leave it as <span className="font-medium">Auto</span> to use your
-              auto listing profit settings, or type a price to list that product at exactly that
-              amount.
+              auto listing profit settings. We prepare each product first; you list from the review
+              screen when ready.
             </p>
           </div>
         </div>
@@ -795,10 +918,10 @@ export function BulkListingShell() {
         {/* Live results */}
         <div className="mt-6 overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
-            <h2 className="text-sm font-bold text-[#111827]">Listing progress</h2>
+            <h2 className="text-sm font-bold text-[#111827]">Prepare progress</h2>
             {stats.total > 0 ? (
               <span className="text-xs text-[#6B7280]">
-                {stats.listed}/{stats.total} listed
+                {stats.prepared} ready · {stats.listed} listed · {stats.total} total
               </span>
             ) : null}
           </div>
@@ -807,7 +930,9 @@ export function BulkListingShell() {
             <div className="h-1.5 w-full bg-gray-100">
               <div
                 className="h-full bg-emerald-500 transition-all"
-                style={{ width: `${Math.round((stats.listed / stats.total) * 100)}%` }}
+                style={{
+                  width: `${Math.round(((stats.prepared + stats.listed) / stats.total) * 100)}%`,
+                }}
               />
             </div>
           ) : null}
@@ -835,9 +960,9 @@ export function BulkListingShell() {
                 ) : activeBatchJobs.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="px-5 py-12 text-center">
-                      <p className="text-sm font-medium text-[#374151]">No products listed yet</p>
+                      <p className="text-sm font-medium text-[#374151]">No products prepared yet</p>
                       <p className="mt-1 text-xs text-[#9CA3AF]">
-                        Paste your AliExpress URLs above and click List to get started.
+                        Paste your AliExpress URLs above and click Prepare to get started.
                       </p>
                     </td>
                   </tr>
@@ -864,7 +989,7 @@ export function BulkListingShell() {
                           onClick={() => setSelectedJobId(job.id)}
                           className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition hover:opacity-80 ${statusClass(job.status)}`}
                         >
-                          {job.status === "listing" ? (
+                          {job.status === "preparing" || job.status === "listing" ? (
                             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-sky-500" />
                           ) : null}
                           {formatStatus(job.status)}
@@ -880,6 +1005,15 @@ export function BulkListingShell() {
                           >
                             {job.listedTitle ?? "View listing"}
                           </a>
+                        ) : job.status === "prepared" ? (
+                          <button
+                            type="button"
+                            disabled={reviewLoading}
+                            onClick={() => void openReview(job)}
+                            className="rounded-lg bg-brand px-3 py-1.5 text-xs font-bold text-white hover:bg-brand/90 disabled:opacity-60"
+                          >
+                            {reviewLoading ? "Loading…" : "View & list"}
+                          </button>
                         ) : (
                           <button
                             type="button"
@@ -950,7 +1084,9 @@ export function BulkListingShell() {
                     ? "border-red-200 bg-red-50 text-red-800"
                     : selectedJob.status === "listed"
                       ? "border-emerald-100 bg-emerald-50 text-emerald-800"
-                      : "border-gray-100 bg-gray-50 text-[#374151]"
+                      : selectedJob.status === "prepared"
+                        ? "border-violet-100 bg-violet-50 text-violet-800"
+                        : "border-gray-100 bg-gray-50 text-[#374151]"
               }`}
             >
               {selectedJob.status === "vero_hold" && userId ? (
@@ -971,6 +1107,17 @@ export function BulkListingShell() {
               </a>
             ) : null}
 
+            {selectedJob.status === "prepared" ? (
+              <button
+                type="button"
+                disabled={reviewLoading}
+                onClick={() => void openReview(selectedJob)}
+                className="mt-4 inline-flex rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand/90 disabled:opacity-60"
+              >
+                {reviewLoading ? "Loading…" : "View & list"}
+              </button>
+            ) : null}
+
             <div className="mt-6 flex flex-wrap justify-end gap-3">
               {selectedJob.status === "vero_hold" ? (
                 <>
@@ -988,7 +1135,7 @@ export function BulkListingShell() {
                     onClick={() => void resolveJobVero(selectedJob.id, true)}
                     className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand/90 disabled:opacity-60"
                   >
-                    {jobResolving ? "Working…" : "Approve & list"}
+                    {jobResolving ? "Working…" : "Approve & prepare"}
                   </button>
                 </>
               ) : selectedJob.status === "failed" && isAliOAuthFailure(selectedJob.errorMessage) ? (

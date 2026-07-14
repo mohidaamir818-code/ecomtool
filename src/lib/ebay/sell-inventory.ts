@@ -1276,6 +1276,12 @@ async function resolveCategoryId(
     return categoryId;
   }
 
+  if (listing.categoryId?.trim()) {
+    const presetId = listing.categoryId.trim();
+    const supported = await categorySupportsVariations(token, presetId, marketplaceId);
+    if (supported) return presetId;
+  }
+
   const suggestions = await getCategorySuggestions(
     token,
     listing.categorySuggestion || listing.seoTitle,

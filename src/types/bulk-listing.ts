@@ -2,6 +2,8 @@ import type { ListingPlatform } from "@/types/listing-generator";
 
 export type BulkListingJobStatus =
   | "queued"
+  | "preparing"
+  | "prepared"
   | "listing"
   | "listed"
   | "failed"
