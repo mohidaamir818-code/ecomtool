@@ -80,23 +80,18 @@ function resolvePricingWithinProfitBounds(
   maxProfitPercent: number,
 ): { prefs: ListingPricingPreferences; breakdown: PricingBreakdown } | null {
   let bestInRange: { prefs: ListingPricingPreferences; breakdown: PricingBreakdown } | null = null;
-  let bestAboveMin: { prefs: ListingPricingPreferences; breakdown: PricingBreakdown } | null = null;
 
   for (let margin = 0; margin <= 85; margin += 0.5) {
     const prefs = { ...basePrefs, profitMarginPercent: margin };
     const breakdown = calculatePricingBreakdown(aliPrice, prefs);
 
+    // Stay strictly inside the seller's min/max — never ignore max.
     if (breakdown.profitPercent >= minProfitPercent && breakdown.profitPercent <= maxProfitPercent) {
       bestInRange = { prefs, breakdown };
-      break;
-    }
-
-    if (breakdown.profitPercent >= minProfitPercent) {
-      bestAboveMin = { prefs, breakdown };
     }
   }
 
-  return bestInRange ?? bestAboveMin;
+  return bestInRange;
 }
 
 function applyStockLimits(draft: ListingDraft, minStock: number, maxStock: number): ListingDraft {
@@ -240,6 +235,7 @@ export async function prepareEbayAutoListDraft(
         aliPrice,
         feePrefs,
         minProfitPercent: settings.minProfitPercent,
+        maxProfitPercent: settings.maxProfitPercent,
         market,
         undercutMode: settings.undercutMode,
         undercutPercent: settings.marketUndercutPercent,
@@ -261,6 +257,21 @@ export async function prepareEbayAutoListDraft(
     pricingPrefs = { ...feePrefs };
     pricingBreakdown = buildBreakdownForPrice(aliPrice, pricingPrefs, effectivePrice);
     listingPrice = effectivePrice;
+
+    // Fixed price is seller-intent; smart price must still respect max profit %.
+    if (fixedPrice == null && pricingBreakdown.profitPercent > settings.maxProfitPercent) {
+      const capped = resolvePricingWithinProfitBounds(
+        aliPrice,
+        feePrefs,
+        settings.minProfitPercent,
+        settings.maxProfitPercent,
+      );
+      if (capped) {
+        pricingPrefs = capped.prefs;
+        pricingBreakdown = capped.breakdown;
+        listingPrice = capped.breakdown.recommendedPrice;
+      }
+    }
   } else {
     const pricing = resolvePricingWithinProfitBounds(
       aliPrice,
@@ -271,7 +282,7 @@ export async function prepareEbayAutoListDraft(
 
     if (!pricing) {
       throw new Error(
-        `Could not reach your minimum profit of ${settings.minProfitPercent}% for this product.`,
+        `Could not price within your profit range of ${settings.minProfitPercent}%–${settings.maxProfitPercent}%.`,
       );
     }
 

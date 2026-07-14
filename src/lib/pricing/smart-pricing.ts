@@ -27,6 +27,8 @@ export interface SmartPriceInput {
   aliPrice: number;
   feePrefs: ListingPricingPreferences;
   minProfitPercent: number;
+  /** Cap profit % — market undercut is never allowed to exceed this. */
+  maxProfitPercent: number;
   market: MarketAverage | null;
   undercutMode: UndercutMode;
   undercutPercent: number;
@@ -83,8 +85,9 @@ export interface SmartPriceResult {
    * - market-undercut: priced just below the competitor average (good margin + competitive)
    * - min-profit-floor: market too cheap to undercut profitably, so listed at the
    *   lowest price that still hits the seller's minimum profit
+   * - max-profit-ceiling: market undercut would exceed seller's max profit %, so capped
    */
-  source: "market-undercut" | "min-profit-floor";
+  source: "market-undercut" | "min-profit-floor" | "max-profit-ceiling";
 }
 
 /** The lowest price that still yields the seller's minimum profit %. */
@@ -100,10 +103,37 @@ function priceAtMinProfit(
   return breakdown.recommendedPrice;
 }
 
+/** Highest price that still keeps profit % at or under the seller's max. */
+function priceAtMaxProfit(
+  aliPrice: number,
+  prefs: ListingPricingPreferences,
+  maxProfitPercent: number,
+): number {
+  let best = calculatePricingBreakdown(aliPrice, {
+    ...prefs,
+    profitMarginPercent: 0,
+  }).recommendedPrice;
+
+  for (let margin = 0; margin <= 85; margin += 0.5) {
+    const breakdown = calculatePricingBreakdown(aliPrice, {
+      ...prefs,
+      profitMarginPercent: margin,
+    });
+    if (breakdown.profitPercent <= maxProfitPercent) {
+      best = breakdown.recommendedPrice;
+    } else {
+      break;
+    }
+  }
+
+  return best;
+}
+
 /**
- * Prices like an experienced seller:
+ * Prices like an experienced seller, but never outside the seller's min/max profit %.
  *  - If AliExpress is cheap and the eBay competitor average is higher, list a bit
  *    BELOW the market average so it sells fast while keeping a healthy profit.
+ *  - If the market undercut would exceed max profit %, cap at the max-profit price.
  *  - If the market is too cheap to undercut profitably, fall back to the lowest
  *    price that still meets the seller's minimum profit.
  *
@@ -111,11 +141,12 @@ function priceAtMinProfit(
  * normal profit-bounds pricing instead.
  */
 export function computeSmartPrice(input: SmartPriceInput): SmartPriceResult | null {
-  const { aliPrice, feePrefs, minProfitPercent, market, undercutMode } = input;
+  const { aliPrice, feePrefs, minProfitPercent, maxProfitPercent, market, undercutMode } = input;
 
   if (!market || market.average <= 0 || market.sampleSize < 3) return null;
 
   const floor = priceAtMinProfit(aliPrice, feePrefs, minProfitPercent);
+  const ceiling = priceAtMaxProfit(aliPrice, feePrefs, maxProfitPercent);
 
   let rawTarget: number;
   if (input.charmPricing) {
@@ -135,23 +166,27 @@ export function computeSmartPrice(input: SmartPriceInput): SmartPriceResult | nu
     rawTarget = market.average * (1 - AUTO_UNDERCUT_PERCENT / 100);
   }
 
-  const target = Number(rawTarget.toFixed(2));
+  let target = Number(rawTarget.toFixed(2));
+  let source: SmartPriceResult["source"] = "market-undercut";
 
-  // Charm price only applies when it stays above the min-profit floor — otherwise
-  // we fall back to the floor so the seller never takes a loss.
-  if (target >= floor) {
-    return {
-      price: target,
-      marketAverage: market.average,
-      sampleSize: market.sampleSize,
-      source: "market-undercut",
-    };
+  if (target < floor) {
+    target = floor;
+    source = "min-profit-floor";
+  } else if (target > ceiling) {
+    target = ceiling;
+    source = "max-profit-ceiling";
+  }
+
+  // If min > max settings somehow collide, prefer min floor.
+  if (floor > ceiling) {
+    target = floor;
+    source = "min-profit-floor";
   }
 
   return {
-    price: floor,
+    price: Number(target.toFixed(2)),
     marketAverage: market.average,
     sampleSize: market.sampleSize,
-    source: "min-profit-floor",
+    source,
   };
 }
