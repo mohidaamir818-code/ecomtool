@@ -44,12 +44,18 @@ function computeRoi(profit: number, costPrice: number): number | null {
 }
 
 function buildMergedTotals(orders: SellerCalculatorOrderRow[], currency: string): SellerCalculatorTotals {
-  const costPrice = orders.reduce((sum, row) => sum + row.costPrice, 0);
-  const sellingPrice = orders.reduce((sum, row) => sum + row.sellingPrice, 0);
-  const fees = orders.reduce((sum, row) => sum + row.fees, 0);
-  const netSale = orders.reduce((sum, row) => sum + row.netSale, 0);
-  const profit = orders.reduce((sum, row) => sum + row.profit, 0);
-  const refundAmount = orders.reduce((sum, row) => sum + row.refundAmount, 0);
+  const costPrice = Math.round(orders.reduce((sum, row) => sum + row.costPrice, 0) * 100) / 100;
+  const sellingPrice = Math.round(orders.reduce((sum, row) => sum + row.sellingPrice, 0) * 100) / 100;
+  const fees = Math.round(orders.reduce((sum, row) => sum + row.fees, 0) * 100) / 100;
+  const netSale = Math.round(orders.reduce((sum, row) => sum + row.netSale, 0) * 100) / 100;
+  const refundAmount = Math.round(orders.reduce((sum, row) => sum + row.refundAmount, 0) * 100) / 100;
+  // Profit = sum(payout − cost); never trust a stale stored profit alone when merging
+  const profit = Math.round(
+    orders.reduce((sum, row) => {
+      const payout = row.payoutAmount != null ? row.payoutAmount : row.netSale;
+      return sum + (payout - row.costPrice);
+    }, 0) * 100,
+  ) / 100;
   const roi = computeRoi(profit, costPrice);
 
   return {

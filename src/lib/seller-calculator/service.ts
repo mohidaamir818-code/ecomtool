@@ -25,13 +25,95 @@ function computeRoi(profit: number, costPrice: number): number | null {
   return Math.round((profit / costPrice) * 10000) / 100;
 }
 
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/** Correct sheet math: Net = Selling − Fees; Payout = seller due; Profit = Payout − Cost. */
+function deriveOrderAmounts(input: {
+  sellingPrice: number;
+  fees: number;
+  netSale: number;
+  costPrice: number;
+  refundAmount: number;
+  payoutAmount: number | null;
+  orderStatus: SellerCalculatorOrderRow["orderStatus"];
+  currency: string;
+}): Pick<
+  SellerCalculatorOrderRow,
+  | "fees"
+  | "netSale"
+  | "profit"
+  | "roi"
+  | "payoutAmount"
+  | "feesLabel"
+  | "netSaleLabel"
+  | "profitLabel"
+  | "refundAmountLabel"
+> {
+  const sellingPrice = round2(input.sellingPrice);
+  const costPrice = round2(input.costPrice);
+  const refundAmount = round2(input.refundAmount);
+  const currency = input.currency;
+
+  if (input.orderStatus === "cancelled") {
+    return {
+      fees: 0,
+      netSale: 0,
+      profit: 0,
+      roi: null,
+      payoutAmount: 0,
+      feesLabel: formatMoney(0, currency),
+      netSaleLabel: formatMoney(0, currency),
+      profitLabel: formatMoney(0, currency),
+      refundAmountLabel: formatMoney(refundAmount, currency),
+    };
+  }
+
+  let fees = round2(Math.max(0, input.fees));
+  let payout =
+    input.payoutAmount != null ? round2(Math.max(0, input.payoutAmount)) : round2(Math.max(0, input.netSale));
+
+  // Recover rows synced with the old bug: fees = selling − dueSeller, net/payout = dueSeller − refund.
+  if (
+    refundAmount > 0 &&
+    Math.abs(round2(input.netSale + refundAmount + fees) - sellingPrice) <= 0.02
+  ) {
+    payout = round2(input.netSale + refundAmount);
+    fees = round2(Math.max(0, sellingPrice - payout - refundAmount));
+  } else if (
+    refundAmount > 0 &&
+    input.payoutAmount != null &&
+    Math.abs(round2(input.payoutAmount + fees) - sellingPrice) <= 0.02
+  ) {
+    // fees still include refund; payout is already correct dueSeller
+    fees = round2(Math.max(0, fees - refundAmount));
+  }
+
+  const netSale = round2(Math.max(0, sellingPrice - fees));
+  const profit = round2(payout - costPrice);
+  const roi = computeRoi(profit, costPrice);
+
+  return {
+    fees,
+    netSale,
+    profit,
+    roi,
+    payoutAmount: payout,
+    feesLabel: formatMoney(fees, currency),
+    netSaleLabel: formatMoney(netSale, currency),
+    profitLabel: formatMoney(profit, currency),
+    refundAmountLabel: formatMoney(refundAmount, currency),
+  };
+}
+
 function buildTotals(orders: SellerCalculatorOrderRow[], currency: string): SellerCalculatorTotals {
-  const costPrice = orders.reduce((sum, row) => sum + row.costPrice, 0);
-  const sellingPrice = orders.reduce((sum, row) => sum + row.sellingPrice, 0);
-  const fees = orders.reduce((sum, row) => sum + row.fees, 0);
-  const netSale = orders.reduce((sum, row) => sum + row.netSale, 0);
-  const profit = orders.reduce((sum, row) => sum + row.profit, 0);
-  const refundAmount = orders.reduce((sum, row) => sum + row.refundAmount, 0);
+  const costPrice = round2(orders.reduce((sum, row) => sum + row.costPrice, 0));
+  const sellingPrice = round2(orders.reduce((sum, row) => sum + row.sellingPrice, 0));
+  const fees = round2(orders.reduce((sum, row) => sum + row.fees, 0));
+  const netSale = round2(orders.reduce((sum, row) => sum + row.netSale, 0));
+  const profit = round2(orders.reduce((sum, row) => sum + row.profit, 0));
+  const refundAmount = round2(orders.reduce((sum, row) => sum + row.refundAmount, 0));
   const roi = computeRoi(profit, costPrice);
 
   return {
@@ -56,12 +138,20 @@ function mapOrderRow(row: Record<string, unknown>): SellerCalculatorOrderRow {
   const currency = String(row.currency ?? "GBP");
   const costPrice = Number(row.cost_price);
   const sellingPrice = Number(row.selling_price);
-  const fees = Number(row.fees);
-  const netSale = Number(row.net_sale);
-  const profit = Number(row.profit);
   const refundAmount = Number(row.refund_amount ?? 0);
-  const roi = row.roi != null ? Number(row.roi) : null;
   const orderDate = String(row.order_date);
+  const orderStatus = String(row.order_status) as SellerCalculatorOrderRow["orderStatus"];
+
+  const derived = deriveOrderAmounts({
+    sellingPrice,
+    fees: Number(row.fees),
+    netSale: Number(row.net_sale),
+    costPrice,
+    refundAmount,
+    payoutAmount: row.payout_amount != null ? Number(row.payout_amount) : null,
+    orderStatus,
+    currency,
+  });
 
   return {
     id: String(row.id),
@@ -72,20 +162,20 @@ function mapOrderRow(row: Record<string, unknown>): SellerCalculatorOrderRow {
     buyerName: row.buyer_name ? String(row.buyer_name) : null,
     costPrice,
     sellingPrice,
-    fees,
-    netSale,
-    profit,
-    roi,
+    fees: derived.fees,
+    netSale: derived.netSale,
+    profit: derived.profit,
+    roi: derived.roi,
     refundAmount,
-    payoutAmount: row.payout_amount != null ? Number(row.payout_amount) : null,
-    orderStatus: String(row.order_status) as SellerCalculatorOrderRow["orderStatus"],
+    payoutAmount: derived.payoutAmount,
+    orderStatus,
     currency,
     costPriceLabel: formatMoney(costPrice, currency),
     sellingPriceLabel: formatMoney(sellingPrice, currency),
-    feesLabel: formatMoney(fees, currency),
-    netSaleLabel: formatMoney(netSale, currency),
-    profitLabel: formatMoney(profit, currency),
-    refundAmountLabel: formatMoney(refundAmount, currency),
+    feesLabel: derived.feesLabel,
+    netSaleLabel: derived.netSaleLabel,
+    profitLabel: derived.profitLabel,
+    refundAmountLabel: derived.refundAmountLabel,
   };
 }
 
@@ -176,12 +266,21 @@ export async function syncSellerCalculatorMonth(
 
   const { data: existingRows, error: existingError } = await supabase
     .from("seller_calculator_orders")
-    .select("ebay_order_id")
+    .select("id, ebay_order_id, cost_price, supplier_order_id")
     .eq("user_id", userId);
 
   if (existingError) throw new Error(existingError.message);
 
-  const existingIds = new Set((existingRows ?? []).map((row) => String(row.ebay_order_id)));
+  const existingByOrderId = new Map(
+    (existingRows ?? []).map((row) => [
+      String(row.ebay_order_id),
+      {
+        id: String(row.id),
+        costPrice: Number(row.cost_price),
+        supplierOrderId: row.supplier_order_id ? String(row.supplier_order_id) : null,
+      },
+    ]),
+  );
 
   const { from, to } = getMonthDateRange(year, month);
   const [ebayOrders, notesMap] = await Promise.all([
@@ -190,11 +289,13 @@ export async function syncSellerCalculatorMonth(
   ]);
 
   let addedCount = 0;
+  let updatedCount = 0;
   let skippedNoNote = 0;
   const inserts: Array<Record<string, unknown>> = [];
+  const updates: Array<Record<string, unknown>> = [];
 
   for (const order of ebayOrders) {
-    if (!order.orderId || existingIds.has(order.orderId)) continue;
+    if (!order.orderId) continue;
 
     const noteText = resolveOrderNote(notesMap, {
       orderId: order.orderId,
@@ -207,27 +308,28 @@ export async function syncSellerCalculatorMonth(
         .filter((legacyItemId): legacyItemId is string => Boolean(legacyItemId)),
     });
     const parsedNote = parseSupplierNote(noteText);
-    if (!noteText?.trim() || !parsedNote) {
+    const existing = existingByOrderId.get(order.orderId);
+
+    if (!existing && (!noteText?.trim() || !parsedNote)) {
       skippedNoNote += 1;
       continue;
     }
 
     const financials = extractOrderFinancials(order);
-    const costPrice = parsedNote.costPrice;
-    const netSale =
-      financials.orderStatus === "refunded"
-        ? 0
-        : Math.max(0, financials.netSale - financials.refundAmount);
-    const profit = Math.round((netSale - costPrice) * 100) / 100;
+    const costPrice = parsedNote?.costPrice ?? existing?.costPrice ?? 0;
+    const supplierOrderId = parsedNote?.supplierOrderId ?? existing?.supplierOrderId ?? null;
+    const payoutAmount = financials.payoutAmount;
+    const netSale = financials.netSale;
+    const profit = round2(payoutAmount - costPrice);
     const roi = computeRoi(profit, costPrice);
     const orderDate = order.creationDate.slice(0, 10);
 
-    inserts.push({
+    const payload = {
       user_id: userId,
       month_id: monthId,
       ebay_order_id: order.orderId,
       order_date: orderDate,
-      supplier_order_id: parsedNote.supplierOrderId,
+      supplier_order_id: supplierOrderId,
       buyer_name: order.buyer?.username ?? null,
       cost_price: costPrice,
       selling_price: financials.sellingPrice,
@@ -236,18 +338,38 @@ export async function syncSellerCalculatorMonth(
       profit,
       roi,
       refund_amount: financials.refundAmount,
-      payout_amount: netSale,
+      payout_amount: payoutAmount,
       order_status: financials.orderStatus,
       currency: financials.currency,
-    });
+    };
 
-    existingIds.add(order.orderId);
-    addedCount += 1;
+    if (existing) {
+      updates.push({ id: existing.id, ...payload });
+      updatedCount += 1;
+    } else {
+      inserts.push(payload);
+      existingByOrderId.set(order.orderId, {
+        id: "pending",
+        costPrice,
+        supplierOrderId,
+      });
+      addedCount += 1;
+    }
   }
 
   if (inserts.length > 0) {
     const { error: insertError } = await supabase.from("seller_calculator_orders").insert(inserts);
     if (insertError) throw new Error(insertError.message);
+  }
+
+  for (const update of updates) {
+    const { id, ...fields } = update;
+    const { error: updateError } = await supabase
+      .from("seller_calculator_orders")
+      .update(fields)
+      .eq("id", String(id))
+      .eq("user_id", userId);
+    if (updateError) throw new Error(updateError.message);
   }
 
   const now = new Date().toISOString();
@@ -260,8 +382,15 @@ export async function syncSellerCalculatorMonth(
   if (!refreshed) throw new Error("Failed to load calculator month.");
 
   const message =
-    addedCount > 0
-      ? `Added ${addedCount} new order${addedCount === 1 ? "" : "s"} with notes.`
+    addedCount > 0 || updatedCount > 0
+      ? [
+          addedCount > 0 ? `Added ${addedCount} new order${addedCount === 1 ? "" : "s"}` : null,
+          updatedCount > 0
+            ? `updated ${updatedCount} existing order${updatedCount === 1 ? "" : "s"}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(", ") + " with corrected totals."
       : ebayOrders.length > 0 && skippedNoNote > 0
         ? notesMap.size > 0
           ? `Found ${ebayOrders.length} eBay orders but could not match notes to them. Try syncing again after a minute, or reconnect eBay.`

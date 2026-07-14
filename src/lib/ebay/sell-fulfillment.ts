@@ -27,6 +27,8 @@ export interface EbayFulfillmentOrder {
     totalDueSeller?: EbayMoney;
     refunds?: Array<{ amount?: EbayMoney }>;
   };
+  /** eBay marketplace fees for the order (when returned by getOrder). */
+  totalMarketplaceFee?: EbayMoney;
 }
 
 function ebayHeaders(token: string, marketplaceId: string): HeadersInit {
@@ -96,10 +98,6 @@ async function enrichFulfillmentOrder(
   marketplaceId: string,
   order: EbayFulfillmentOrder,
 ): Promise<EbayFulfillmentOrder> {
-  if (order.lineItems?.some((lineItem) => lineItem.lineItemId)) {
-    return order;
-  }
-
   const response = await fetch(
     `${EBAY_API_BASE}/sell/fulfillment/v1/order/${encodeURIComponent(order.orderId)}`,
     {
@@ -113,8 +111,12 @@ async function enrichFulfillmentOrder(
   const data = (await response.json()) as EbayFulfillmentOrder;
   return {
     ...order,
+    ...data,
     salesRecordReference: data.salesRecordReference ?? order.salesRecordReference,
     lineItems: data.lineItems ?? order.lineItems,
+    pricingSummary: data.pricingSummary ?? order.pricingSummary,
+    paymentSummary: data.paymentSummary ?? order.paymentSummary,
+    totalMarketplaceFee: data.totalMarketplaceFee ?? order.totalMarketplaceFee,
   };
 }
 
@@ -133,10 +135,15 @@ export async function fetchEbayOrdersForRangeWithDetails(
   return Promise.all(orders.map((order) => enrichFulfillmentOrder(token, marketplaceId, order)));
 }
 
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
 export function extractOrderFinancials(order: EbayFulfillmentOrder): {
   sellingPrice: number;
   fees: number;
   netSale: number;
+  payoutAmount: number;
   refundAmount: number;
   currency: string;
   orderStatus: "completed" | "cancelled" | "refunded" | "partial_refund";
@@ -145,17 +152,17 @@ export function extractOrderFinancials(order: EbayFulfillmentOrder): {
   const subtotal = parseMoney(order.pricingSummary?.priceSubtotal);
   const delivery = parseMoney(order.pricingSummary?.deliveryCost);
   const dueSeller = parseMoney(order.paymentSummary?.totalDueSeller);
+  const marketplaceFee = parseMoney(order.totalMarketplaceFee);
 
   const sellingPrice =
-    total.amount > 0 ? total.amount : subtotal.amount + delivery.amount;
+    total.amount > 0 ? round2(total.amount) : round2(subtotal.amount + delivery.amount);
 
-  const netSale = dueSeller.amount;
-  const fees = Math.max(0, Math.round((sellingPrice - netSale) * 100) / 100);
-
-  const refundAmount = (order.paymentSummary?.refunds ?? []).reduce((sum, refund) => {
-    const amount = parseMoney(refund.amount).amount;
-    return sum + (amount > 0 ? amount : 0);
-  }, 0);
+  const refundAmount = round2(
+    (order.paymentSummary?.refunds ?? []).reduce((sum, refund) => {
+      const amount = parseMoney(refund.amount).amount;
+      return sum + (amount > 0 ? amount : 0);
+    }, 0),
+  );
 
   const cancelState = order.cancelStatus?.cancelState?.toUpperCase() ?? "";
   const fulfillmentStatus = order.orderFulfillmentStatus?.toUpperCase() ?? "";
@@ -169,12 +176,24 @@ export function extractOrderFinancials(order: EbayFulfillmentOrder): {
     orderStatus = "partial_refund";
   }
 
-  const currency = dueSeller.currency || total.currency || "GBP";
+  // totalDueSeller is already after fees + refunds. Never subtract refunds again.
+  const payoutAmount = orderStatus === "cancelled" ? 0 : round2(Math.max(0, dueSeller.amount));
+
+  const fees =
+    marketplaceFee.amount > 0
+      ? round2(marketplaceFee.amount)
+      : round2(Math.max(0, sellingPrice - payoutAmount - refundAmount));
+
+  // Net sale = selling minus fees (refund shown separately; payout ≈ net - refund).
+  const netSale = orderStatus === "cancelled" ? 0 : round2(Math.max(0, sellingPrice - fees));
+
+  const currency = dueSeller.currency || total.currency || marketplaceFee.currency || "GBP";
 
   return {
     sellingPrice,
     fees,
-    netSale: orderStatus === "cancelled" ? 0 : netSale,
+    netSale,
+    payoutAmount,
     refundAmount,
     currency,
     orderStatus,
