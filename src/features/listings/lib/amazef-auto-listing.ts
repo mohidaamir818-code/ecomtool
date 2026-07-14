@@ -107,12 +107,12 @@ export function normalizeAutoListingSettings(
   if (!input) return base;
 
   const platformFeePercent = clampNumber(input.platformFeePercent, 0, 100, base.platformFeePercent);
-  const minProfitPercent = clampNumber(input.minProfitPercent, 1, 90, base.minProfitPercent);
+  const minProfitPercent = clampNumber(input.minProfitPercent, 0, 90, base.minProfitPercent);
   const maxProfitPercent = clampNumber(
     input.maxProfitPercent,
     minProfitPercent,
     95,
-    Math.max(minProfitPercent, base.maxProfitPercent),
+    Math.max(minProfitPercent, Number(input.maxProfitPercent) || minProfitPercent),
   );
   const minStock = clampNumber(input.minStock, 1, 9999, base.minStock);
   const maxStock = clampNumber(input.maxStock, minStock, 99999, Math.max(minStock, base.maxStock));

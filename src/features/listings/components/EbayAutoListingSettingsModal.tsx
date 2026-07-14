@@ -396,7 +396,7 @@ export function EbayAutoListingSettingsModal({
             <span className="font-medium text-[#111827]">Min profit %</span>
             <input
               type="number"
-              min={1}
+              min={0}
               max={90}
               value={form.minProfitPercent}
               onChange={(event) => updateField("minProfitPercent", Number(event.target.value))}
@@ -407,7 +407,7 @@ export function EbayAutoListingSettingsModal({
             <span className="font-medium text-[#111827]">Max profit %</span>
             <input
               type="number"
-              min={1}
+              min={0}
               max={95}
               value={form.maxProfitPercent}
               onChange={(event) => updateField("maxProfitPercent", Number(event.target.value))}
@@ -680,9 +680,8 @@ export function EbayAutoListingSettingsModal({
         </div>
 
         <p className="mt-4 text-xs text-[#9CA3AF]">
-          Defaults: profit {DEFAULT_EBAY_AUTO_LISTING_SETTINGS.minProfitPercent}–
-          {DEFAULT_EBAY_AUTO_LISTING_SETTINGS.maxProfitPercent}%, stock{" "}
-          {DEFAULT_EBAY_AUTO_LISTING_SETTINGS.minStock}–{DEFAULT_EBAY_AUTO_LISTING_SETTINGS.maxStock}.
+          Your settings: profit {form.minProfitPercent}–{form.maxProfitPercent}%, stock{" "}
+          {form.minStock}–{form.maxStock}. Lower profit % is allowed (down to 0%).
         </p>
       </div>
     </div>
