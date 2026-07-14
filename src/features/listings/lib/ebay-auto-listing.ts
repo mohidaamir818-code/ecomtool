@@ -41,6 +41,10 @@ export interface EbayAutoListingSettings {
   autoPromoteEnabled: boolean;
   autoPromoteMinProfit: number;
   autoPromoteAdRatePercent: number;
+  /** When on, AliExpress photos are AI-edited with aiPhotoEditPrompt during prepare. */
+  aiPhotoEditEnabled: boolean;
+  /** Seller description of how photos should look (e.g. white background, remove logos). */
+  aiPhotoEditPrompt: string;
 }
 
 export const DEFAULT_EBAY_AUTO_LISTING_SETTINGS: EbayAutoListingSettings = {
@@ -62,6 +66,8 @@ export const DEFAULT_EBAY_AUTO_LISTING_SETTINGS: EbayAutoListingSettings = {
   autoPromoteEnabled: false,
   autoPromoteMinProfit: 5,
   autoPromoteAdRatePercent: 5,
+  aiPhotoEditEnabled: false,
+  aiPhotoEditPrompt: "",
 };
 
 export function ebayAutoListingSettingsKey(userId: string) {
@@ -165,6 +171,11 @@ export function normalizeEbayAutoListingSettings(
       100,
       base.autoPromoteAdRatePercent,
     ),
+    aiPhotoEditEnabled: Boolean(input.aiPhotoEditEnabled),
+    aiPhotoEditPrompt:
+      typeof input.aiPhotoEditPrompt === "string"
+        ? input.aiPhotoEditPrompt.trim().slice(0, 500)
+        : base.aiPhotoEditPrompt,
   };
 }
 
@@ -199,6 +210,10 @@ export function validateEbayAutoListingSettingsInput(
     if (tier.enabled && (tier.discountPercent < 1 || tier.discountPercent > 90)) {
       return `Buy ${tier.quantity} discount must be between 1% and 90%.`;
     }
+  }
+
+  if (settings.aiPhotoEditEnabled && !settings.aiPhotoEditPrompt.trim()) {
+    return "Write a photo edit prompt, or turn off AI photo edit.";
   }
 
   return null;

@@ -645,6 +645,32 @@ export function EbayAutoListingSettingsModal({
           ) : null}
         </div>
 
+        <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-lg border border-violet-100 bg-violet-50/50 px-4 py-3 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
+            checked={form.aiPhotoEditEnabled}
+            onChange={(event) => updateField("aiPhotoEditEnabled", event.target.checked)}
+          />
+          <span className="min-w-0 flex-1">
+            <span className="font-medium text-[#111827]">AI photo edit</span>
+            <span className="mt-1 block text-xs text-[#6B7280]">
+              When on, up to 3 AliExpress photos are edited with your prompt during prepare
+              (parallel — keeps listing near 30–55s).
+            </span>
+            {form.aiPhotoEditEnabled ? (
+              <textarea
+                value={form.aiPhotoEditPrompt}
+                onChange={(event) => updateField("aiPhotoEditPrompt", event.target.value)}
+                rows={3}
+                maxLength={500}
+                placeholder="e.g. Clean white background, remove Chinese text/logos, soft studio lighting"
+                className="mt-2 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-brand"
+              />
+            ) : null}
+          </span>
+        </label>
+
         <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-lg border border-amber-100 bg-amber-50/60 px-4 py-3 text-sm">
           <input
             type="checkbox"

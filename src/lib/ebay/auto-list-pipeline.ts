@@ -20,8 +20,8 @@ import { ensureInternalSkus } from "@/lib/listings/internal-sku-service";
 import { fetchAliExpressShippingDays } from "@/lib/listings/aliexpress-shipping-days";
 import { flagDescriptionPhotos } from "@/lib/listings/description-image-flags";
 import {
-  generateAiListingPhotos,
-  mergeAiPhotosIntoDraftPhotos,
+  editAliExpressListingPhotos,
+  mergeEditedPhotosIntoDraftPhotos,
 } from "@/lib/listings/ai-listing-photos";
 import { selectFulfillmentPolicyWithAi } from "@/lib/listings/select-fulfillment-policy-ai";
 import { saveListedProduct } from "@/lib/listings/listed-products-service";
@@ -280,16 +280,23 @@ export async function prepareEbayAutoListDraft(
     listingPrice = pricing.breakdown.recommendedPrice;
   }
 
-  const [listing, aiPhotos] = await Promise.all([
+  const photoEditPromise =
+    settings.aiPhotoEditEnabled && settings.aiPhotoEditPrompt.trim()
+      ? editAliExpressListingPhotos({
+          userId,
+          photoUrls: product.images ?? [],
+          sellerPrompt: settings.aiPhotoEditPrompt,
+          productTitle: product.title,
+          count: 3,
+        }).catch((error) => {
+          console.warn("[eBay prepare] AI photo edit skipped:", error);
+          return [] as Awaited<ReturnType<typeof editAliExpressListingPhotos>>;
+        })
+      : Promise.resolve([] as Awaited<ReturnType<typeof editAliExpressListingPhotos>>);
+
+  const [listing, editedPhotos] = await Promise.all([
     runPrepareStep("Listing generation", () => generateEbayListing(product, listingPrice)),
-    generateAiListingPhotos({
-      userId,
-      title: product.title,
-      count: 3,
-    }).catch((error) => {
-      console.warn("[eBay prepare] NVIDIA photo generation skipped:", error);
-      return [] as Awaited<ReturnType<typeof generateAiListingPhotos>>;
-    }),
+    photoEditPromise,
   ]);
 
   let draft = buildInitialDraft(product, listing, {
@@ -299,10 +306,10 @@ export async function prepareEbayAutoListDraft(
     promotions: settings.promotions,
   });
 
-  if (aiPhotos.length > 0) {
+  if (editedPhotos.length > 0) {
     draft = {
       ...draft,
-      photos: mergeAiPhotosIntoDraftPhotos(draft.photos, aiPhotos),
+      photos: mergeEditedPhotosIntoDraftPhotos(draft.photos, editedPhotos),
     };
   }
 

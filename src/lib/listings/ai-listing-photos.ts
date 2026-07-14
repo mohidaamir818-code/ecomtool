@@ -1,77 +1,71 @@
 import "server-only";
 
-import { generateNvidiaProductImage } from "@/lib/nvidia/image-generate";
+import { editNvidiaListingPhoto } from "@/lib/nvidia/image-generate";
 import { uploadListingPhotoBytes } from "@/lib/listings/upload-photos";
 import type { ListingPhotoDraft } from "@/types/listing-generator";
 
-const MAX_AI_PHOTOS = 3;
-
-function buildProductPhotoPrompt(title: string, index: number): string {
-  const angle =
-    index === 0
-      ? "front hero shot"
-      : index === 1
-        ? "slight 45-degree angle"
-        : "detail close-up shot";
-
-  return [
-    "Professional ecommerce product photograph for online marketplace listing.",
-    "Clean pure white background, soft studio lighting, sharp focus, no watermark, no text, no logo overlay.",
-    `Product: ${title.slice(0, 180)}.`,
-    `Camera: ${angle}.`,
-    "Photorealistic, high resolution, marketplace-ready.",
-  ].join(" ");
-}
+const MAX_EDIT_PHOTOS = 3;
+/** Soft budget so prepare stays inside ~30–55s even if NVIDIA is slow. */
+const EDIT_BUDGET_MS = 18_000;
 
 /**
- * Runs NVIDIA text→image in parallel with listing AI.
- * Failures are silent — original AliExpress photos still work for preview.
+ * Edit up to 3 AliExpress photos with the seller prompt (parallel).
+ * Failures / timeout → empty result; originals stay on the draft.
  */
-export async function generateAiListingPhotos(input: {
+export async function editAliExpressListingPhotos(input: {
   userId: string;
-  title: string;
+  photoUrls: string[];
+  sellerPrompt: string;
+  productTitle: string;
   count?: number;
 }): Promise<ListingPhotoDraft[]> {
-  const count = Math.min(MAX_AI_PHOTOS, Math.max(1, input.count ?? 3));
-  const prompts = Array.from({ length: count }, (_, index) =>
-    buildProductPhotoPrompt(input.title, index),
-  );
+  const prompt = input.sellerPrompt.trim();
+  if (!prompt) return [];
 
-  const results = await Promise.allSettled(
-    prompts.map(async (prompt, index) => {
-      const generated = await generateNvidiaProductImage(prompt);
-      const buffer = Buffer.from(generated.base64, "base64");
-      const url = await uploadListingPhotoBytes(input.userId, buffer, {
-        contentType: generated.mimeType,
-        fileName: `ai-photo-${index + 1}.png`,
+  const urls = [...new Set(input.photoUrls.map((url) => url.trim()).filter(Boolean))].slice(
+    0,
+    Math.min(MAX_EDIT_PHOTOS, Math.max(1, input.count ?? MAX_EDIT_PHOTOS)),
+  );
+  if (urls.length === 0) return [];
+
+  const work = Promise.allSettled(
+    urls.map(async (imageUrl, index) => {
+      const edited = await editNvidiaListingPhoto({
+        imageUrl,
+        sellerPrompt: prompt,
+        productTitle: input.productTitle,
       });
-      const photo: ListingPhotoDraft = {
-        url,
-        selected: true,
-      };
+      const buffer = Buffer.from(edited.base64, "base64");
+      const url = await uploadListingPhotoBytes(input.userId, buffer, {
+        contentType: edited.mimeType,
+        fileName: `ai-edit-${index + 1}.${edited.mimeType.includes("png") ? "png" : "jpg"}`,
+      });
+      const photo: ListingPhotoDraft = { url, selected: true };
       return photo;
     }),
   );
 
+  const settled = await Promise.race([
+    work,
+    new Promise<PromiseSettledResult<ListingPhotoDraft>[]>((resolve) => {
+      setTimeout(() => resolve([]), EDIT_BUDGET_MS);
+    }),
+  ]);
+
   const photos: ListingPhotoDraft[] = [];
-  for (const result of results) {
+  for (const result of settled) {
     if (result.status === "fulfilled") photos.push(result.value);
   }
   return photos;
 }
 
-export function mergeAiPhotosIntoDraftPhotos(
+/** Replace the first N selected/draft photos with AI-edited versions; keep originals after. */
+export function mergeEditedPhotosIntoDraftPhotos(
   existing: ListingPhotoDraft[],
-  aiPhotos: ListingPhotoDraft[],
+  editedPhotos: ListingPhotoDraft[],
 ): ListingPhotoDraft[] {
-  if (aiPhotos.length === 0) return existing;
+  if (editedPhotos.length === 0) return existing;
 
-  // AI photos first (selected), keep originals after so seller can still use them.
-  const originals = existing.map((photo, index) => ({
-    ...photo,
-    // Keep first few originals selected too for review flexibility
-    selected: photo.selected || index < 2,
-  }));
-
-  return [...aiPhotos, ...originals];
+  const originals = existing.map((photo) => ({ ...photo, selected: false }));
+  return [...editedPhotos, ...originals];
 }

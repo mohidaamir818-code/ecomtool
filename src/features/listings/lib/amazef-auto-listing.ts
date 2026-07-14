@@ -48,6 +48,10 @@ export interface AmazefAutoListingSettings {
   flashSaleMinProfit: number;
   // The seller's own plain-language description of how the flash sale should work.
   flashSaleRule: string;
+  /** When on, AliExpress photos are AI-edited with aiPhotoEditPrompt during prepare. */
+  aiPhotoEditEnabled: boolean;
+  /** Seller description of how photos should look (e.g. white background, remove logos). */
+  aiPhotoEditPrompt: string;
 }
 
 export const DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS: AmazefAutoListingSettings = {
@@ -73,6 +77,8 @@ export const DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS: AmazefAutoListingSettings = {
   flashSaleDiscountPercent: 0,
   flashSaleMinProfit: 0,
   flashSaleRule: "",
+  aiPhotoEditEnabled: false,
+  aiPhotoEditPrompt: "",
 };
 
 export function amazefAutoListingSettingsKey(userId: string) {
@@ -161,6 +167,8 @@ export function normalizeAutoListingSettings(
     ),
     flashSaleMinProfit: clampNumber(input.flashSaleMinProfit, 0, 100000, base.flashSaleMinProfit),
     flashSaleRule: clampString(input.flashSaleRule, base.flashSaleRule),
+    aiPhotoEditEnabled: Boolean(input.aiPhotoEditEnabled),
+    aiPhotoEditPrompt: clampString(input.aiPhotoEditPrompt, base.aiPhotoEditPrompt),
   };
 }
 
@@ -200,6 +208,9 @@ export function validateAutoListingSettingsInput(
   }
   if (settings.minStock > settings.maxStock) {
     return "Minimum stock cannot be greater than maximum stock.";
+  }
+  if (settings.aiPhotoEditEnabled && !settings.aiPhotoEditPrompt.trim()) {
+    return "Write a photo edit prompt, or turn off AI photo edit.";
   }
   return null;
 }
