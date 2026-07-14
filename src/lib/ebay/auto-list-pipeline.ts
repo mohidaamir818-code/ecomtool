@@ -4,7 +4,7 @@ import { fetchSellerPolicies } from "@/lib/ebay/business-policies";
 import { requireConfirmedLocation } from "@/lib/ebay/inventory-location";
 import { getSellerMarketplaceId } from "@/lib/ebay/marketplace";
 import { getEbayUserAccessToken } from "@/lib/ebay/oauth-user";
-import { listDraftOnEbay } from "@/lib/ebay/sell-inventory";
+import { listDraftOnEbay, resolveDraftListingCategory } from "@/lib/ebay/sell-inventory";
 import { promoteListing } from "@/lib/ebay/promoted-listings";
 import { sendEmail } from "@/lib/email/send-email";
 import { generateEbayListing } from "@/lib/gemini/generate-listing";
@@ -331,6 +331,24 @@ export async function prepareEbayAutoListDraft(
   }
 
   draft = await assignSkusToDraft(userId, draft);
+
+  if (draft.variants.length > 1) {
+    try {
+      const resolved = await resolveDraftListingCategory(userId, draft.listing, draft.variants);
+      if (resolved.changed || !draft.listing.categoryId) {
+        draft = {
+          ...draft,
+          listing: {
+            ...draft.listing,
+            categoryId: resolved.categoryId,
+            categorySuggestion: resolved.categoryPath,
+          },
+        };
+      }
+    } catch (error) {
+      console.warn("[eBay prepare] Could not auto-resolve variation category:", error);
+    }
+  }
 
   return { draft, pricingBreakdown, settings };
 }

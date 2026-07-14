@@ -35,6 +35,7 @@ import type {
   GeneratedListing,
   ListingDraft,
   ListingProductSource,
+  ListingVariantDraft,
   ListOnEbayResult,
   VolumePromotionTier,
 } from "@/types/listing-generator";
@@ -1317,6 +1318,41 @@ async function resolveCategoryId(
   throw new Error(
     "The selected eBay category does not support multi-variation listings. Edit the category on the review page and choose one that supports variations.",
   );
+}
+
+export async function resolveDraftListingCategory(
+  userId: string,
+  listing: GeneratedListing,
+  variants: ListingVariantDraft[],
+): Promise<{ categoryId: string; categoryPath: string; changed: boolean }> {
+  const token = await getEbayUserAccessToken(userId);
+  if (!token) {
+    throw new Error("eBay account is not connected. Connect your eBay account first.");
+  }
+
+  const marketplaceId = await getSellerMarketplaceId(userId);
+  const activeVariants = variants.length > 0 ? variants : [];
+  const dedupedVariants =
+    activeVariants.length > 1 ? dedupeVariantsByCombo(activeVariants) : activeVariants;
+  const requireVariations = dedupedVariants.length > 1;
+
+  const suggestions = await getCategorySuggestions(
+    token,
+    listing.categorySuggestion || listing.seoTitle,
+    marketplaceId,
+  );
+
+  const categoryId = await resolveCategoryId(token, listing, marketplaceId, {
+    requireVariations,
+  });
+
+  const match = suggestions.find((entry) => entry.categoryId === categoryId);
+  const categoryPath = match?.categoryPath ?? listing.categorySuggestion;
+  const changed =
+    listing.categoryId !== categoryId ||
+    (Boolean(match) && listing.categorySuggestion !== categoryPath);
+
+  return { categoryId, categoryPath, changed };
 }
 
 // eBay accepts GTINs of 8, 12, 13, or 14 digits. Anything else is rejected,

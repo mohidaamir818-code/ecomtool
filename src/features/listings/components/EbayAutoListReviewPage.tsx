@@ -71,6 +71,7 @@ export function EbayAutoListReviewPage({
   const [categories, setCategories] = useState<EbayCategorySuggestion[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(false);
   const [editingCategory, setEditingCategory] = useState(false);
+  const [categoryAutoUpdated, setCategoryAutoUpdated] = useState(false);
   const [listingLoading, setListingLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
@@ -104,6 +105,66 @@ export function EbayAutoListReviewPage({
 
     return () => window.clearTimeout(timer);
   }, [categoryQuery, userId, editingCategory]);
+
+  useEffect(() => {
+    if (draft.variants.length < 2 || editingCategory) {
+      if (draft.variants.length < 2) {
+        setCategoryAutoUpdated(false);
+      }
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/ebay/resolve-category", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId,
+            listing: draft.listing,
+            variants: draft.variants,
+          }),
+        });
+        const data = (await response.json()) as {
+          categoryId?: string;
+          categoryPath?: string;
+          changed?: boolean;
+        };
+        if (cancelled || !response.ok || !data.categoryId || !data.categoryPath) return;
+
+        if (data.changed || !draft.listing.categoryId) {
+          onChange({
+            listing: {
+              ...draft.listing,
+              categoryId: data.categoryId,
+              categorySuggestion: data.categoryPath,
+            },
+          });
+          setCategoryQuery(data.categoryPath);
+          if (data.changed) {
+            setCategoryAutoUpdated(true);
+          }
+        }
+      } catch {
+        // Listing still resolves category server-side if this fails.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // onChange omitted — stable enough for this one-shot category sync.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    userId,
+    editingCategory,
+    draft.variants.length,
+    draft.listing.categoryId,
+    draft.listing.categorySuggestion,
+    draft.listing.seoTitle,
+  ]);
 
   function updateListing(patch: Partial<ListingDraft["listing"]>) {
     onChange({ listing: { ...draft.listing, ...patch } });
@@ -292,7 +353,10 @@ export function EbayAutoListReviewPage({
             </h2>
             <button
               type="button"
-              onClick={() => setEditingCategory((value) => !value)}
+              onClick={() => {
+                setEditingCategory((value) => !value);
+                setCategoryAutoUpdated(false);
+              }}
               className="inline-flex items-center gap-1 text-sm font-semibold text-[#3665F3] hover:underline"
             >
               Edit
@@ -304,6 +368,11 @@ export function EbayAutoListReviewPage({
               <p className="text-sm font-semibold text-[#3665F3]">{categoryLeaf || "No category"}</p>
               {categoryParent ? (
                 <p className="mt-1 text-sm text-[#707070]">in {categoryParent}</p>
+              ) : null}
+              {categoryAutoUpdated ? (
+                <p className="mt-2 text-xs text-[#707070]">
+                  Category updated automatically to support variations.
+                </p>
               ) : null}
             </div>
           ) : (
