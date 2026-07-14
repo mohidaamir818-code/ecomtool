@@ -17,6 +17,7 @@ import { normalizeEbayAutoListingSettings } from "@/features/listings/lib/ebay-a
 import { mergeInternalSkusIntoDraft } from "@/lib/listings/internal-sku";
 import { ensureInternalSkus } from "@/lib/listings/internal-sku-service";
 import { fetchAliExpressShippingDays } from "@/lib/listings/aliexpress-shipping-days";
+import { flagDescriptionPhotos } from "@/lib/listings/description-image-flags";
 import { selectFulfillmentPolicyWithAi } from "@/lib/listings/select-fulfillment-policy-ai";
 import { saveListedProduct } from "@/lib/listings/listed-products-service";
 import { fetchListingProductSource } from "@/lib/listings/product-source";
@@ -243,6 +244,13 @@ export async function prepareEbayAutoListDraft(
     manualPriceOverride: effectivePrice,
     promotions: settings.promotions,
   });
+
+  if (draft.descriptionPhotos && draft.descriptionPhotos.length > 0) {
+    draft = {
+      ...draft,
+      descriptionPhotos: await flagDescriptionPhotos(draft.descriptionPhotos),
+    };
+  }
 
   draft = applyStockLimits(draft, settings.minStock, settings.maxStock);
 

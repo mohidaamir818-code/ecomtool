@@ -86,20 +86,20 @@ export async function fetchListingProductSource(
   const images = galleryFilter.allowed;
   const imageUrl = images[0] ?? null;
 
-  // Prefer description images already finalized by fetchAliExpressProduct.
-  // Re-running finalize against the expanded gallery (page scrapes) removes them.
-  let descriptionImages = product.descriptionImages ?? [];
+  // Prefer description images already finalized by fetchAliExpressProduct,
+  // and always merge any extra images found in the description HTML.
+  const fromProduct = product.descriptionImages ?? [];
+  const fromHtml = descriptionPayload.html ? extractImagesFromHtml(descriptionPayload.html) : [];
+  const rawDescriptionImages = Array.from(new Set([...fromProduct, ...fromHtml].filter(Boolean)));
+
+  let descriptionImages = fromProduct;
   let descriptionRemoved = 0;
 
-  if (descriptionImages.length === 0) {
-    const rawDescriptionImages = descriptionPayload.html
-      ? extractImagesFromHtml(descriptionPayload.html)
-      : [];
-    if (rawDescriptionImages.length > 0) {
-      const descriptionFilter = await finalizeDescriptionImages(rawDescriptionImages, images);
-      descriptionImages = descriptionFilter.allowed;
-      descriptionRemoved = descriptionFilter.removedCount;
-    }
+  if (rawDescriptionImages.length > 0) {
+    // Exclude only against filtered gallery thumbnails (not page-scraped extras).
+    const descriptionFilter = await finalizeDescriptionImages(rawDescriptionImages, images);
+    descriptionImages = descriptionFilter.allowed;
+    descriptionRemoved = descriptionFilter.removedCount;
   }
 
   const shippingDaysLabel = await fetchAliExpressShippingDaysLabel(product.productUrl);

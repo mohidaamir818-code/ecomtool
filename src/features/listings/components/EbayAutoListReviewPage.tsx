@@ -125,6 +125,14 @@ export function EbayAutoListReviewPage({
     setMessage("");
     setIsError(false);
 
+    const hasPendingLocalPhotos = draft.photos.some((photo) => photo.url.startsWith("blob:"));
+    if (hasPendingLocalPhotos) {
+      setMessage("Photos are still saving. Wait a second, then list again.");
+      setIsError(true);
+      setListingLoading(false);
+      return;
+    }
+
     try {
       const response = await fetch("/api/ebay/list-item", {
         method: "POST",

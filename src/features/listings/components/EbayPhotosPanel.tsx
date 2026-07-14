@@ -34,6 +34,8 @@ export function EbayPhotosPanel({
   const [uploading, setUploading] = useState(false);
   const [fileDragOver, setFileDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const photosRef = useRef(photos);
+  photosRef.current = photos;
 
   const mainPhoto = photos[0];
   const gridPhotos = photos.slice(1);
@@ -75,14 +77,22 @@ export function EbayPhotosPanel({
   }
 
   function addPhotoUrls(urls: string[]) {
-    const next = [...photos];
+    const next = [...photosRef.current];
     for (const url of urls) {
       const trimmed = url.trim();
       if (!trimmed || next.length >= MAX_PHOTOS) break;
       if (next.some((photo) => photo.url === trimmed)) continue;
-      if (isRestrictedImageUrl(trimmed)) continue;
+      // Allow local previews and already-hosted uploads; only block supplier-branded remote URLs.
+      if (
+        !trimmed.startsWith("blob:") &&
+        !trimmed.startsWith("data:") &&
+        isRestrictedImageUrl(trimmed)
+      ) {
+        continue;
+      }
       next.push({ url: trimmed, selected: true });
     }
+    photosRef.current = next;
     onChange(next);
   }
 
@@ -94,6 +104,41 @@ export function EbayPhotosPanel({
     }
     addPhotoUrls([url]);
     setShowAddModal(false);
+  }
+
+  function replacePhotoUrl(fromUrl: string, toUrl: string) {
+    const next = photosRef.current.map((photo) =>
+      photo.url === fromUrl ? { ...photo, url: toUrl, selected: true } : photo,
+    );
+    photosRef.current = next;
+    onChange(next);
+  }
+
+  async function compressForUpload(file: File): Promise<File> {
+    if (!file.type.startsWith("image/") || file.type === "image/gif") return file;
+
+    try {
+      const bitmap = await createImageBitmap(file);
+      const maxEdge = 1600;
+      const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+      const width = Math.max(1, Math.round(bitmap.width * scale));
+      const height = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return file;
+      ctx.drawImage(bitmap, 0, 0, width, height);
+      bitmap.close();
+
+      const blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob(resolve, "image/jpeg", 0.82),
+      );
+      if (!blob) return file;
+      return new File([blob], file.name.replace(/\.\w+$/, ".jpg"), { type: "image/jpeg" });
+    } catch {
+      return file;
+    }
   }
 
   async function uploadFiles(fileList: FileList | File[]) {
@@ -114,31 +159,42 @@ export function EbayPhotosPanel({
       return;
     }
 
-    setUploading(true);
+    const selected = files.slice(0, remaining);
+    const localItems = selected.map((file) => ({
+      file,
+      blobUrl: URL.createObjectURL(file),
+    }));
+
+    // Instant: show photos immediately, then swap to public URLs in background.
     setAddError("");
+    addPhotoUrls(localItems.map((item) => item.blobUrl));
+    setShowAddModal(false);
+    setUploading(true);
 
     try {
-      const form = new FormData();
-      form.set("userId", userId);
-      for (const file of files.slice(0, remaining)) {
-        form.append("files", file);
-      }
+      await Promise.all(
+        localItems.map(async (item) => {
+          const compressed = await compressForUpload(item.file);
+          const form = new FormData();
+          form.set("userId", userId);
+          form.append("files", compressed);
 
-      const response = await fetch("/api/listings/upload-photos", {
-        method: "POST",
-        body: form,
-      });
-      const data = (await response.json()) as { error?: string; urls?: string[] };
+          const response = await fetch("/api/listings/upload-photos", {
+            method: "POST",
+            body: form,
+          });
+          const data = (await response.json()) as { error?: string; urls?: string[] };
 
-      if (!response.ok || !data.urls?.length) {
-        setAddError(data.error ?? "Failed to upload photos.");
-        return;
-      }
+          if (!response.ok || !data.urls?.[0]) {
+            throw new Error(data.error ?? "Failed to upload photos.");
+          }
 
-      addPhotoUrls(data.urls);
-      setShowAddModal(false);
-    } catch {
-      setAddError("Network error while uploading photos.");
+          replacePhotoUrl(item.blobUrl, data.urls[0]);
+          URL.revokeObjectURL(item.blobUrl);
+        }),
+      );
+    } catch (error) {
+      setAddError(error instanceof Error ? error.message : "Network error while uploading photos.");
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -409,10 +465,13 @@ export function EbayPhotosPanel({
               <span className="text-3xl text-[#3665F3]" aria-hidden>
                 ↑
               </span>
-              <p className="mt-3 text-sm font-semibold text-[#191919]">
-                {uploading ? "Uploading…" : "Drag & drop photos here"}
-              </p>
-              <p className="mt-1 text-xs text-[#707070]">or click to browse · JPG, PNG, WebP · max 8MB each</p>
+            <p className="mt-3 text-sm font-semibold text-[#191919]">
+              Drag & drop photos here
+            </p>
+            <p className="mt-1 text-xs text-[#707070]">or click to browse · JPG, PNG, WebP · max 8MB each</p>
+            {uploading ? (
+              <p className="mt-2 text-xs font-medium text-[#3665F3]">Saving to server in background…</p>
+            ) : null}
             </div>
 
             {addError ? <p className="mt-3 text-xs text-red-600">{addError}</p> : null}
@@ -423,7 +482,7 @@ export function EbayPhotosPanel({
               onClick={() => fileInputRef.current?.click()}
               className="mt-4 rounded-full bg-[#3665F3] px-4 py-2 text-sm font-semibold text-white hover:bg-[#2850D4] disabled:opacity-50"
             >
-              {uploading ? "Uploading…" : "Choose files"}
+              {uploading ? "Saving…" : "Choose files"}
             </button>
 
             {unusedAliImages.length > 0 ? (

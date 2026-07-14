@@ -101,6 +101,9 @@ export type VariationPhotoAttribute = "default" | "color";
 export interface ListingPhotoDraft {
   url: string;
   selected: boolean;
+  /** True when AI/heuristics found country, platform, or dropshipping content in the image. */
+  flagged?: boolean;
+  flagReason?: string | null;
 }
 
 export type VolumePromotionQuantity = 2 | 3 | 5 | 10;

@@ -14,7 +14,7 @@ import {
   mergeInternalSkusIntoDraft,
 } from "@/lib/listings/internal-sku";
 import { buildVariantPrices, calculatePricingBreakdown } from "@/lib/listings/pricing";
-import { filterDescriptionImageUrls, filterListingImages } from "@/lib/listings/listing-sanitize";
+import { filterListingImages } from "@/lib/listings/listing-sanitize";
 
 export function normalizeVariantDraft(variant: ListingVariantDraft): ListingVariantDraft {
   return {
@@ -91,11 +91,13 @@ export function buildInitialDraft(
     selected: true,
   }));
 
-  const descriptionFilter = filterDescriptionImageUrls(product.descriptionImages ?? []);
-  const descriptionPhotos: ListingPhotoDraft[] = descriptionFilter.allowed.map((url) => ({
-    url,
-    selected: true,
-  }));
+  // Already sanitized upstream — do not re-filter (would drop CDN hosts).
+  const descriptionPhotos: ListingPhotoDraft[] = (product.descriptionImages ?? [])
+    .filter(Boolean)
+    .map((url) => ({
+      url,
+      selected: true,
+    }));
 
   const basePrice =
     options?.manualPriceOverride ??

@@ -4,10 +4,10 @@ import crypto from "crypto";
 import sharp from "sharp";
 import { serverEnv } from "@/lib/env";
 import { getAliExpressAccessToken } from "@/lib/aliexpress/oauth";
-import { cleanLabel, filterDescriptionImageUrls } from "@/lib/listings/listing-sanitize";
+import { cleanLabel } from "@/lib/listings/listing-sanitize";
 import type { HandlingProductData, HandlingProductVariant } from "@/types/handling";
 
-export const MAX_DESCRIPTION_IMAGES = 20;
+export const MAX_DESCRIPTION_IMAGES = 40;
 export const MAX_GALLERY_IMAGES = 24;
 const DESCRIPTION_IMAGE_FETCH_TIMEOUT_MS = 8000;
 
@@ -1057,49 +1057,47 @@ export async function filterDescriptionImagesByMinSize(
   urls: string[],
   minSize = 200,
 ): Promise<string[]> {
-  const kept: string[] = [];
+  const results = await Promise.all(
+    urls.map(async (url) => {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), DESCRIPTION_IMAGE_FETCH_TIMEOUT_MS);
+        const response = await fetch(url, {
+          headers: BROWSER_HEADERS,
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
 
-  for (const url of urls) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), DESCRIPTION_IMAGE_FETCH_TIMEOUT_MS);
-      const response = await fetch(url, {
-        headers: BROWSER_HEADERS,
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
+        if (!response.ok) return url;
 
-      if (!response.ok) {
-        kept.push(url);
-        continue;
+        const metadata = await sharp(Buffer.from(await response.arrayBuffer())).metadata();
+        if (
+          metadata.width != null &&
+          metadata.height != null &&
+          (metadata.width < minSize || metadata.height < minSize)
+        ) {
+          return null;
+        }
+
+        return url;
+      } catch {
+        return url;
       }
+    }),
+  );
 
-      const metadata = await sharp(Buffer.from(await response.arrayBuffer())).metadata();
-      if (
-        metadata.width != null &&
-        metadata.height != null &&
-        (metadata.width < minSize || metadata.height < minSize)
-      ) {
-        continue;
-      }
-
-      kept.push(url);
-    } catch {
-      kept.push(url);
-    }
-  }
-
-  return kept;
+  return results.filter((url): url is string => Boolean(url));
 }
 
 export async function finalizeDescriptionImages(
   rawUrls: string[],
   galleryImages: string[],
 ): Promise<{ allowed: string[]; removedCount: number }> {
+  // Keep description images (including CDN hosts). Content risks are AI-flagged
+  // later for the seller — not deleted here.
   const merged = excludeGalleryImages(dedupeUrls(rawUrls), galleryImages);
-  const urlFilter = filterDescriptionImageUrls(merged);
-  const sizeFiltered = await filterDescriptionImagesByMinSize(urlFilter.allowed);
+  const sizeFiltered = await filterDescriptionImagesByMinSize(merged);
   const allowed = sizeFiltered.slice(0, MAX_DESCRIPTION_IMAGES);
 
   return {

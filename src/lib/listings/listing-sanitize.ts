@@ -147,8 +147,28 @@ const DESCRIPTION_IMAGE_URL_KEYWORDS = [
   "wholesale",
 ];
 
+/** Image CDNs are fine — only block supplier branding in non-CDN URLs. */
+function isAllowedDescriptionImageCdn(url: string): boolean {
+  try {
+    const normalized = url.startsWith("//") ? `https:${url}` : url;
+    const host = new URL(normalized).hostname.toLowerCase();
+    return (
+      host.endsWith(".alicdn.com") ||
+      host === "alicdn.com" ||
+      host.endsWith(".aliexpress-media.com") ||
+      host === "aliexpress-media.com"
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function isDescriptionImageUrlRestricted(url: string): boolean {
   if (!url.trim()) return true;
+
+  // Keep AliExpress description CDN images (ae-pic / alicdn) — they are product
+  // photos, not supplier branding text.
+  if (isAllowedDescriptionImageCdn(url)) return false;
 
   const decoded = decodeUrlSafe(url).toLowerCase();
 
