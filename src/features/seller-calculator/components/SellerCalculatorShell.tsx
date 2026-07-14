@@ -49,11 +49,11 @@ function buildMergedTotals(orders: SellerCalculatorOrderRow[], currency: string)
   const fees = Math.round(orders.reduce((sum, row) => sum + row.fees, 0) * 100) / 100;
   const netSale = Math.round(orders.reduce((sum, row) => sum + row.netSale, 0) * 100) / 100;
   const refundAmount = Math.round(orders.reduce((sum, row) => sum + row.refundAmount, 0) * 100) / 100;
-  // Profit = sum(payout − cost); never trust a stale stored profit alone when merging
+  // Profit = Net − Cost − Refunds (same as eBay fee calculator sheet)
   const profit = Math.round(
     orders.reduce((sum, row) => {
-      const payout = row.payoutAmount != null ? row.payoutAmount : row.netSale;
-      return sum + (payout - row.costPrice);
+      const afterRefund = Math.max(0, row.netSale - row.refundAmount);
+      return sum + (afterRefund - row.costPrice);
     }, 0) * 100,
   ) / 100;
   const roi = computeRoi(profit, costPrice);

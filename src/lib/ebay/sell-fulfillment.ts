@@ -27,7 +27,9 @@ export interface EbayFulfillmentOrder {
     totalDueSeller?: EbayMoney;
     refunds?: Array<{ amount?: EbayMoney }>;
   };
-  /** eBay marketplace fees for the order (when returned by getOrder). */
+  /** Amount used to calculate marketplace fees (item + shipping, typically excludes remit tax). */
+  totalFeeBasisAmount?: EbayMoney;
+  /** eBay marketplace / final-value fees for the order (excludes promoted listing ads). */
   totalMarketplaceFee?: EbayMoney;
 }
 
@@ -117,6 +119,7 @@ async function enrichFulfillmentOrder(
     pricingSummary: data.pricingSummary ?? order.pricingSummary,
     paymentSummary: data.paymentSummary ?? order.paymentSummary,
     totalMarketplaceFee: data.totalMarketplaceFee ?? order.totalMarketplaceFee,
+    totalFeeBasisAmount: data.totalFeeBasisAmount ?? order.totalFeeBasisAmount,
   };
 }
 
@@ -148,14 +151,20 @@ export function extractOrderFinancials(order: EbayFulfillmentOrder): {
   currency: string;
   orderStatus: "completed" | "cancelled" | "refunded" | "partial_refund";
 } {
+  const feeBasis = parseMoney(order.totalFeeBasisAmount);
   const total = parseMoney(order.pricingSummary?.total);
   const subtotal = parseMoney(order.pricingSummary?.priceSubtotal);
   const delivery = parseMoney(order.pricingSummary?.deliveryCost);
   const dueSeller = parseMoney(order.paymentSummary?.totalDueSeller);
   const marketplaceFee = parseMoney(order.totalMarketplaceFee);
 
+  // Prefer fee basis (matches eBay fee calculator / order fee line). Avoid buyer tax on top.
   const sellingPrice =
-    total.amount > 0 ? round2(total.amount) : round2(subtotal.amount + delivery.amount);
+    feeBasis.amount > 0
+      ? round2(feeBasis.amount)
+      : total.amount > 0
+        ? round2(total.amount)
+        : round2(subtotal.amount + delivery.amount);
 
   const refundAmount = round2(
     (order.paymentSummary?.refunds ?? []).reduce((sum, refund) => {
@@ -176,18 +185,20 @@ export function extractOrderFinancials(order: EbayFulfillmentOrder): {
     orderStatus = "partial_refund";
   }
 
-  // totalDueSeller is already after fees + refunds. Never subtract refunds again.
+  // Actual bank/payout amount from eBay (may also deduct promoted listing fees).
   const payoutAmount = orderStatus === "cancelled" ? 0 : round2(Math.max(0, dueSeller.amount));
 
+  // Marketplace fee only — matches eBay fee / profit calculator (not ad fees).
   const fees =
     marketplaceFee.amount > 0
       ? round2(marketplaceFee.amount)
       : round2(Math.max(0, sellingPrice - payoutAmount - refundAmount));
 
-  // Net sale = selling minus fees (refund shown separately; payout ≈ net - refund).
+  // Net sale after eBay marketplace fees (before supplier cost and refunds).
   const netSale = orderStatus === "cancelled" ? 0 : round2(Math.max(0, sellingPrice - fees));
 
-  const currency = dueSeller.currency || total.currency || marketplaceFee.currency || "GBP";
+  const currency =
+    feeBasis.currency || dueSeller.currency || total.currency || marketplaceFee.currency || "GBP";
 
   return {
     sellingPrice,

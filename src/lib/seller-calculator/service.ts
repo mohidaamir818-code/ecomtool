@@ -29,7 +29,7 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-/** Correct sheet math: Net = Selling − Fees; Payout = seller due; Profit = Payout − Cost. */
+/** eBay-style sheet: Net = Selling − Fees; Profit = Net − Cost − Refunds. */
 function deriveOrderAmounts(input: {
   sellingPrice: number;
   fees: number;
@@ -70,36 +70,22 @@ function deriveOrderAmounts(input: {
     };
   }
 
-  let fees = round2(Math.max(0, input.fees));
-  let payout =
-    input.payoutAmount != null ? round2(Math.max(0, input.payoutAmount)) : round2(Math.max(0, input.netSale));
-
-  // Recover rows synced with the old bug: fees = selling − dueSeller, net/payout = dueSeller − refund.
-  if (
-    refundAmount > 0 &&
-    Math.abs(round2(input.netSale + refundAmount + fees) - sellingPrice) <= 0.02
-  ) {
-    payout = round2(input.netSale + refundAmount);
-    fees = round2(Math.max(0, sellingPrice - payout - refundAmount));
-  } else if (
-    refundAmount > 0 &&
-    input.payoutAmount != null &&
-    Math.abs(round2(input.payoutAmount + fees) - sellingPrice) <= 0.02
-  ) {
-    // fees still include refund; payout is already correct dueSeller
-    fees = round2(Math.max(0, fees - refundAmount));
-  }
-
+  const fees = round2(Math.max(0, input.fees));
   const netSale = round2(Math.max(0, sellingPrice - fees));
-  const profit = round2(payout - costPrice);
+  const afterRefund = round2(Math.max(0, netSale - refundAmount));
+  const profit = round2(afterRefund - costPrice);
   const roi = computeRoi(profit, costPrice);
+  const payoutAmount =
+    input.payoutAmount != null
+      ? round2(Math.max(0, input.payoutAmount))
+      : afterRefund;
 
   return {
     fees,
     netSale,
     profit,
     roi,
-    payoutAmount: payout,
+    payoutAmount,
     feesLabel: formatMoney(fees, currency),
     netSaleLabel: formatMoney(netSale, currency),
     profitLabel: formatMoney(profit, currency),
@@ -318,10 +304,16 @@ export async function syncSellerCalculatorMonth(
     const financials = extractOrderFinancials(order);
     const costPrice = parsedNote?.costPrice ?? existing?.costPrice ?? 0;
     const supplierOrderId = parsedNote?.supplierOrderId ?? existing?.supplierOrderId ?? null;
-    const payoutAmount = financials.payoutAmount;
-    const netSale = financials.netSale;
-    const profit = round2(payoutAmount - costPrice);
-    const roi = computeRoi(profit, costPrice);
+    const derived = deriveOrderAmounts({
+      sellingPrice: financials.sellingPrice,
+      fees: financials.fees,
+      netSale: financials.netSale,
+      costPrice,
+      refundAmount: financials.refundAmount,
+      payoutAmount: financials.payoutAmount,
+      orderStatus: financials.orderStatus,
+      currency: financials.currency,
+    });
     const orderDate = order.creationDate.slice(0, 10);
 
     const payload = {
@@ -333,12 +325,12 @@ export async function syncSellerCalculatorMonth(
       buyer_name: order.buyer?.username ?? null,
       cost_price: costPrice,
       selling_price: financials.sellingPrice,
-      fees: financials.fees,
-      net_sale: netSale,
-      profit,
-      roi,
+      fees: derived.fees,
+      net_sale: derived.netSale,
+      profit: derived.profit,
+      roi: derived.roi,
       refund_amount: financials.refundAmount,
-      payout_amount: payoutAmount,
+      payout_amount: derived.payoutAmount,
       order_status: financials.orderStatus,
       currency: financials.currency,
     };
