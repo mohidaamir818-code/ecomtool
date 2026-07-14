@@ -19,7 +19,36 @@ import { EbayVariationsTable } from "./EbayVariationsTable";
 import { ListingDescriptionEditor } from "./ListingDescriptionEditor";
 import { ListingShippingReturnsStep } from "./ListingShippingReturnsStep";
 
-const DISCOUNT_OPTIONS = [0, 2, 5, 10, 15, 20, 25, 30];
+const PROMOTION_TIER_ORDER = [2, 3, 5, 10] as const;
+
+/** 1–90% — includes 3% and every step sellers expect on eBay multi-buy. */
+const DISCOUNT_PERCENT_OPTIONS = Array.from({ length: 90 }, (_, index) => index + 1);
+
+function discountOptionsForTier(
+  tierQuantity: number,
+  promotions: VolumePromotionTier[],
+): number[] {
+  const tierIndex = PROMOTION_TIER_ORDER.indexOf(
+    tierQuantity as (typeof PROMOTION_TIER_ORDER)[number],
+  );
+  if (tierIndex < 0) return DISCOUNT_PERCENT_OPTIONS;
+
+  const current = promotions.find((tier) => tier.quantity === tierQuantity);
+  const currentValue =
+    current?.enabled && current.discountPercent > 0 ? current.discountPercent : null;
+
+  const usedByEarlier = new Set<number>();
+  for (let i = 0; i < tierIndex; i += 1) {
+    const earlier = promotions.find((tier) => tier.quantity === PROMOTION_TIER_ORDER[i]);
+    if (earlier?.enabled && earlier.discountPercent > 0) {
+      usedByEarlier.add(earlier.discountPercent);
+    }
+  }
+
+  return DISCOUNT_PERCENT_OPTIONS.filter(
+    (value) => !usedByEarlier.has(value) || value === currentValue,
+  );
+}
 
 interface EbayAutoListReviewPageProps {
   userId: string;
@@ -409,31 +438,48 @@ export function EbayAutoListReviewPage({
               </div>
 
               <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                {draft.promotions.map((tier) => (
-                  <label key={tier.quantity} className="block">
-                    <span className="text-sm font-medium text-[#191919]">
-                      Buy {tier.quantity} items or more
-                    </span>
-                    <select
-                      value={tier.enabled ? tier.discountPercent : 0}
-                      onChange={(event) => {
-                        const discountPercent = Number(event.target.value);
-                        updatePromotion(tier.quantity, {
-                          enabled: discountPercent > 0,
-                          discountPercent: discountPercent > 0 ? discountPercent : tier.discountPercent,
-                        });
-                      }}
-                      className="mt-2 w-full rounded border border-[#C5C5C5] bg-white px-3 py-2.5 text-sm text-[#191919] outline-none focus:border-[#3665F3]"
-                    >
-                      <option value={0}>Off</option>
-                      {DISCOUNT_OPTIONS.filter((value) => value > 0).map((value) => (
-                        <option key={value} value={value}>
-                          {value}%
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ))}
+                {[...draft.promotions]
+                  .sort(
+                    (a, b) =>
+                      PROMOTION_TIER_ORDER.indexOf(
+                        a.quantity as (typeof PROMOTION_TIER_ORDER)[number],
+                      ) -
+                      PROMOTION_TIER_ORDER.indexOf(
+                        b.quantity as (typeof PROMOTION_TIER_ORDER)[number],
+                      ),
+                  )
+                  .map((tier) => {
+                    const tierOptions = discountOptionsForTier(tier.quantity, draft.promotions);
+                    const selectValue =
+                      tier.enabled && tier.discountPercent > 0 ? tier.discountPercent : 0;
+
+                    return (
+                      <label key={tier.quantity} className="block">
+                        <span className="text-sm font-medium text-[#191919]">
+                          Buy {tier.quantity} items or more
+                        </span>
+                        <select
+                          value={selectValue}
+                          onChange={(event) => {
+                            const discountPercent = Number(event.target.value);
+                            updatePromotion(tier.quantity, {
+                              enabled: discountPercent > 0,
+                              discountPercent:
+                                discountPercent > 0 ? discountPercent : tier.discountPercent,
+                            });
+                          }}
+                          className="mt-2 w-full rounded border border-[#C5C5C5] bg-white px-3 py-2.5 text-sm text-[#191919] outline-none focus:border-[#3665F3]"
+                        >
+                          <option value={0}>Off</option>
+                          {tierOptions.map((value) => (
+                            <option key={value} value={value}>
+                              {value}%
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    );
+                  })}
               </div>
             </>
           ) : null}
