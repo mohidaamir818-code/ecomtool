@@ -6,7 +6,6 @@ import { DashboardLayout } from "@/features/dashboard/components/DashboardLayout
 import type { HuntProProduct, HuntProResult } from "@/types/huntpro";
 
 const POLL_INTERVAL_MS = 4000;
-const HUNT_TIMEOUT_MS = 120_000;
 
 const GRABLEY_EXTENSION_URL =
   "https://chromewebstore.google.com/detail/grabley-product-search-to/hppdgjpcbnbfapnailmeiibngpolplao";
@@ -102,7 +101,6 @@ export function HuntProShell() {
   const [resultDays, setResultDays] = useState(7);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const baselineResultIdRef = useRef<string | null>(null);
   const huntStartedAtRef = useRef<number>(0);
 
@@ -110,10 +108,6 @@ export function HuntProShell() {
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
-    }
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
     }
   }, []);
 
@@ -174,25 +168,10 @@ export function HuntProShell() {
             }
             applyHuntResult(latest);
           } catch {
-            // keep polling
+            // keep polling until results arrive — no timeout error
           }
         })();
       }, POLL_INTERVAL_MS);
-
-      timeoutRef.current = setTimeout(() => {
-        setRandomHunting(false);
-        setSearching(false);
-        setNotice("");
-        setError(
-          "Hunt timed out with no products. Reload EcomTool HuntPro extension (v1.0.2), keep Chrome open, sign into eBay.co.uk, then try again.",
-        );
-        try {
-          localStorage.removeItem(HUNT_ACTIVE_KEY);
-        } catch {
-          // ignore
-        }
-        stopPolling();
-      }, HUNT_TIMEOUT_MS);
     },
     [applyHuntResult, fetchLatest, stopPolling],
   );
@@ -213,8 +192,8 @@ export function HuntProShell() {
       const present = await detectHuntProExtension();
       setNotice(
         present
-          ? "Sending start signal to HuntPro…"
-          : "Extension ping weak — still sending hunt start. Watch for eBay tabs opening…",
+          ? "HuntPro is hunting… keep this page open or come back later. Results will appear here when ready (no time limit)."
+          : "Hunt start sent. Waiting for HuntPro results… (no time limit).",
       );
 
       try {
