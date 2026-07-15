@@ -103,21 +103,47 @@ function isValidAliExpressUrl(url: string): boolean {
   }
 }
 
+function widenProfitRange<T extends { minProfitPercent: number; maxProfitPercent: number }>(
+  settings: T,
+): T {
+  let minProfitPercent = Math.min(95, Math.max(0, Number(settings.minProfitPercent) || 0));
+  let maxProfitPercent = Math.min(95, Math.max(0, Number(settings.maxProfitPercent) || 0));
+
+  // Collapsed ranges (e.g. 1%–1%) never match calculatePricingBreakdown's actual
+  // profit % (fees make it miss the exact point), so prepare always fails.
+  if (maxProfitPercent <= minProfitPercent) {
+    maxProfitPercent = Math.min(95, minProfitPercent + 20);
+  }
+  if (maxProfitPercent <= minProfitPercent) {
+    minProfitPercent = Math.max(0, maxProfitPercent - 20);
+  }
+
+  if (
+    minProfitPercent === settings.minProfitPercent &&
+    maxProfitPercent === settings.maxProfitPercent
+  ) {
+    return settings;
+  }
+  return { ...settings, minProfitPercent, maxProfitPercent };
+}
+
 function applyProfitOverride<T extends { minProfitPercent: number; maxProfitPercent: number }>(
   settings: T,
   profitPercent: number | null | undefined,
 ): T {
-  if (profitPercent == null || !Number.isFinite(profitPercent)) return settings;
-  // Bulk % is the *minimum* target profit — never collapse min=max (e.g. 1%–1%),
-  // or smart pricing cannot resolve a sellable price.
-  const minProfitPercent = Math.min(95, Math.max(1, Number(profitPercent)));
-  const maxProfitPercent = Math.min(
-    95,
-    settings.maxProfitPercent > minProfitPercent
-      ? settings.maxProfitPercent
-      : Math.min(95, minProfitPercent + 20),
-  );
-  return { ...settings, minProfitPercent, maxProfitPercent };
+  if (profitPercent != null && Number.isFinite(profitPercent)) {
+    // Bulk % is the *minimum* target profit — keep the seller's max when wider.
+    const minProfitPercent = Math.min(95, Math.max(0, Number(profitPercent)));
+    const maxProfitPercent = Math.min(
+      95,
+      settings.maxProfitPercent > minProfitPercent
+        ? settings.maxProfitPercent
+        : minProfitPercent + 20,
+    );
+    return widenProfitRange({ ...settings, minProfitPercent, maxProfitPercent });
+  }
+
+  return widenProfitRange(settings);
 }
 
 export async function getUserBulkListingJobs(userId: string): Promise<BulkListingJob[]> {
@@ -276,12 +302,42 @@ export async function resetFailedJobsForRetry(userId: string): Promise<number> {
   return data?.length ?? 0;
 }
 
+const COLLAPSED_PROFIT_RANGE_ERROR =
+  /Could not price within your profit range of (\d+(?:\.\d+)?)%–\1%\./i;
+
+/** Re-queue jobs that failed only because min profit == max profit (not VeRo). */
+async function requeueCollapsedProfitRangeFailures(userId: string): Promise<void> {
+  const supabase = getSupabaseAdmin();
+  const { data } = await supabase
+    .from("bulk_listing_jobs")
+    .select("id, error_message")
+    .eq("user_id", userId)
+    .eq("status", "failed");
+
+  const ids = (data ?? [])
+    .filter((row) => COLLAPSED_PROFIT_RANGE_ERROR.test(String(row.error_message ?? "")))
+    .map((row) => String(row.id));
+
+  if (ids.length === 0) return;
+
+  await supabase
+    .from("bulk_listing_jobs")
+    .update({
+      ...RETRY_RESET_FIELDS,
+      updated_at: new Date().toISOString(),
+    })
+    .in("id", ids);
+}
+
 export async function processNextBulkListingJob(input: {
   userId: string;
   ebaySettings?: Partial<EbayAutoListingSettings>;
   amazefSettings?: Partial<AmazefAutoListingSettings>;
 }): Promise<{ processed: boolean; job: BulkListingJob | null; jobs: BulkListingJob[] }> {
   const supabase = getSupabaseAdmin();
+
+  // Auto-retry prior collapsed "X%–X%" profit failures (VeRO uses vero_hold, not failed).
+  await requeueCollapsedProfitRangeFailures(input.userId);
 
   // Non-VeRO products are prepared first; VeRO products are parked as 'vero_hold'
   // and only resume once the seller approves them, so they naturally go last.

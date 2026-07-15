@@ -6,6 +6,7 @@ import {
   formatListingPrice,
   getSelectedPhotos,
 } from "@/features/listings/lib/draft-utils";
+import { writeSavedAmazefHandlingTime } from "@/features/listings/lib/amazef-auto-listing";
 import { ensureAmazefOffers } from "@/features/listings/lib/amazef-offers";
 import { AmazefBestOffersPanel } from "./AmazefBestOffersPanel";
 
@@ -63,11 +64,23 @@ export function AmazefConfirmStep({
     setMessage("");
     setIsError(false);
 
+    const handlingTimeLabel = writeSavedAmazefHandlingTime(
+      userId,
+      draft.product.handlingTimeLabel,
+    );
+    const draftToList = ensureAmazefOffers({
+      ...draft,
+      product: {
+        ...draft.product,
+        handlingTimeLabel,
+      },
+    });
+
     try {
       const response = await fetch("/api/amazef/list-item", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, draft: ensureAmazefOffers(draft) }),
+        body: JSON.stringify({ userId, draft: draftToList }),
       });
 
       const data = (await response.json()) as {

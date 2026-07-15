@@ -93,6 +93,33 @@ export function amazefHandlingStorageKey(userId: string) {
   return `amazef-default-handling-time-${userId}`;
 }
 
+/** Last handling time the seller set for Amazef listings (browser localStorage). */
+export function readSavedAmazefHandlingTime(userId: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(amazefHandlingStorageKey(userId))?.trim();
+    return raw ? normalizeAmazefHandlingTimeLabel(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Persist Amazef handling time so every new listing pre-fills the same value. */
+export function writeSavedAmazefHandlingTime(
+  userId: string,
+  value: string | null | undefined,
+): string {
+  const normalized = normalizeAmazefHandlingTimeLabel(value, "1 day");
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.setItem(amazefHandlingStorageKey(userId), normalized);
+    } catch {
+      // ignore quota / private mode
+    }
+  }
+  return normalized;
+}
+
 /** Amazef seller rule: handling / processing time cannot exceed 5 days. */
 export const AMAZEF_MAX_HANDLING_DAYS = 5;
 

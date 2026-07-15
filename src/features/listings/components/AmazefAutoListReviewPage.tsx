@@ -7,9 +7,10 @@ import type {
   ListingVariantDraft,
 } from "@/types/listing-generator";
 import {
-  amazefHandlingStorageKey,
   amazefShippingStorageKey,
   normalizeAmazefHandlingTimeLabel,
+  readSavedAmazefHandlingTime,
+  writeSavedAmazefHandlingTime,
 } from "@/features/listings/lib/amazef-auto-listing";
 import { ensureAmazefOffers } from "@/features/listings/lib/amazef-offers";
 import { ebayPrimaryButtonClass, ebaySecondaryButtonClass } from "@/features/listings/lib/ebay-ui";
@@ -42,7 +43,8 @@ export function AmazefAutoListReviewPage({
   const [shippingLoading, setShippingLoading] = useState(false);
   const [detectedShippingLabel, setDetectedShippingLabel] = useState<string | null>(null);
   const shippingManuallyEdited = useRef(Boolean(draft.product.shippingDaysLabel?.trim()));
-  const handlingManuallyEdited = useRef(Boolean(draft.product.handlingTimeLabel?.trim()));
+  const handlingManuallyEdited = useRef(false);
+  const handlingPreferenceApplied = useRef(false);
   const productRef = useRef(draft.product);
 
   useEffect(() => {
@@ -56,33 +58,20 @@ export function AmazefAutoListReviewPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Always pre-fill Amazef handling from the seller's last saved value on every listing.
   useEffect(() => {
-    const savedHandling = localStorage.getItem(amazefHandlingStorageKey(userId))?.trim();
-    if (savedHandling && !draft.product.handlingTimeLabel?.trim()) {
-      handlingManuallyEdited.current = true;
+    if (handlingPreferenceApplied.current || handlingManuallyEdited.current) return;
+    handlingPreferenceApplied.current = true;
+    const next =
+      readSavedAmazefHandlingTime(userId) ??
+      normalizeAmazefHandlingTimeLabel(draft.product.handlingTimeLabel, "1 day");
+    if (next !== (productRef.current.handlingTimeLabel?.trim() ?? "")) {
       onChange({
         product: {
           ...productRef.current,
-          handlingTimeLabel: normalizeAmazefHandlingTimeLabel(savedHandling),
+          handlingTimeLabel: next,
         },
       });
-    } else if (!draft.product.handlingTimeLabel?.trim() && !handlingManuallyEdited.current) {
-      onChange({
-        product: {
-          ...productRef.current,
-          handlingTimeLabel: "1 day",
-        },
-      });
-    } else if (draft.product.handlingTimeLabel?.trim()) {
-      const normalized = normalizeAmazefHandlingTimeLabel(draft.product.handlingTimeLabel);
-      if (normalized !== draft.product.handlingTimeLabel.trim()) {
-        onChange({
-          product: {
-            ...productRef.current,
-            handlingTimeLabel: normalized,
-          },
-        });
-      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
@@ -195,12 +184,6 @@ export function AmazefAutoListReviewPage({
 
   function updateHandlingTimeLabel(value: string) {
     handlingManuallyEdited.current = true;
-    const trimmed = value.trim();
-    if (trimmed) {
-      localStorage.setItem(amazefHandlingStorageKey(userId), trimmed);
-    } else {
-      localStorage.removeItem(amazefHandlingStorageKey(userId));
-    }
     onChange({
       product: {
         ...draft.product,
@@ -210,9 +193,8 @@ export function AmazefAutoListReviewPage({
   }
 
   function commitHandlingTimeLabel() {
-    const normalized = normalizeAmazefHandlingTimeLabel(draft.product.handlingTimeLabel, "1 day");
     handlingManuallyEdited.current = true;
-    localStorage.setItem(amazefHandlingStorageKey(userId), normalized);
+    const normalized = writeSavedAmazefHandlingTime(userId, draft.product.handlingTimeLabel);
     onChange({
       product: {
         ...draft.product,
@@ -245,12 +227,16 @@ export function AmazefAutoListReviewPage({
         ? draft.photos.map((photo) => ({ ...photo, selected: true }))
         : draft.photos;
 
+    const handlingTimeLabel = writeSavedAmazefHandlingTime(
+      userId,
+      draft.product.handlingTimeLabel,
+    );
     const listingDraft = ensureAmazefOffers({
       ...draft,
       photos,
       product: {
         ...draft.product,
-        handlingTimeLabel: normalizeAmazefHandlingTimeLabel(draft.product.handlingTimeLabel, "1 day"),
+        handlingTimeLabel,
         shippingDaysLabel: draft.product.shippingDaysLabel?.trim() || draft.product.shippingDaysLabel,
       },
     });

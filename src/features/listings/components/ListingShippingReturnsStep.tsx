@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EbayBusinessPolicies, EbayPoliciesResponse, ListingDraft, ListingPlatform } from "@/types/listing-generator";
 import {
-  amazefHandlingStorageKey,
   amazefShippingStorageKey,
   normalizeAmazefHandlingTimeLabel,
+  readSavedAmazefHandlingTime,
+  writeSavedAmazefHandlingTime,
 } from "@/features/listings/lib/amazef-auto-listing";
 import { listingPlatformLabel } from "@/features/listings/lib/vero-platform";
 
@@ -40,42 +41,34 @@ export function ListingShippingReturnsStep({
   const [shippingLoading, setShippingLoading] = useState(false);
   const [detectedShippingLabel, setDetectedShippingLabel] = useState<string | null>(null);
   const shippingManuallyEdited = useRef(Boolean(draft.product.shippingDaysLabel?.trim()));
-  const handlingManuallyEdited = useRef(Boolean(draft.product.handlingTimeLabel?.trim()));
+  const handlingManuallyEdited = useRef(false);
+  const handlingPreferenceApplied = useRef(false);
 
   useEffect(() => {
     productRef.current = draft.product;
   }, [draft.product]);
 
+  // Always pre-fill Amazef handling from the seller's last saved value on every listing.
   useEffect(() => {
     if (platform !== "amazef") return;
-
-    const savedHandling = localStorage.getItem(amazefHandlingStorageKey(userId))?.trim();
-    if (savedHandling && !draft.product.handlingTimeLabel?.trim()) {
-      handlingManuallyEdited.current = true;
+    if (handlingPreferenceApplied.current || handlingManuallyEdited.current) return;
+    handlingPreferenceApplied.current = true;
+    const next =
+      readSavedAmazefHandlingTime(userId) ??
+      normalizeAmazefHandlingTimeLabel(draft.product.handlingTimeLabel, "1 day");
+    if (next !== (productRef.current.handlingTimeLabel?.trim() ?? "")) {
       onChange({
         product: {
           ...productRef.current,
-          handlingTimeLabel: normalizeAmazefHandlingTimeLabel(savedHandling),
+          handlingTimeLabel: next,
         },
       });
-    } else if (!draft.product.handlingTimeLabel?.trim() && !handlingManuallyEdited.current) {
-      onChange({
-        product: {
-          ...productRef.current,
-          handlingTimeLabel: "1 day",
-        },
-      });
-    } else if (draft.product.handlingTimeLabel?.trim()) {
-      const normalized = normalizeAmazefHandlingTimeLabel(draft.product.handlingTimeLabel);
-      if (normalized !== draft.product.handlingTimeLabel.trim()) {
-        onChange({
-          product: {
-            ...productRef.current,
-            handlingTimeLabel: normalized,
-          },
-        });
-      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [platform, userId]);
+
+  useEffect(() => {
+    if (platform !== "amazef") return;
 
     const savedLabel = localStorage.getItem(amazefShippingStorageKey(userId))?.trim();
     if (savedLabel && !draft.product.shippingDaysLabel?.trim()) {
@@ -112,7 +105,7 @@ export function ListingShippingReturnsStep({
       })
       .catch(() => undefined)
       .finally(() => setShippingLoading(false));
-  }, [platform, userId, draft.product.productUrl, draft.product.shippingDaysLabel, draft.product.handlingTimeLabel, onChange]);
+  }, [platform, userId, draft.product.productUrl, draft.product.shippingDaysLabel, onChange]);
 
   function updateShippingDaysLabel(value: string) {
     shippingManuallyEdited.current = true;
@@ -132,12 +125,6 @@ export function ListingShippingReturnsStep({
 
   function updateHandlingTimeLabel(value: string) {
     handlingManuallyEdited.current = true;
-    const trimmed = value.trim();
-    if (trimmed) {
-      localStorage.setItem(amazefHandlingStorageKey(userId), trimmed);
-    } else {
-      localStorage.removeItem(amazefHandlingStorageKey(userId));
-    }
     onChange({
       product: {
         ...draft.product,
@@ -147,9 +134,8 @@ export function ListingShippingReturnsStep({
   }
 
   function commitHandlingTimeLabel() {
-    const normalized = normalizeAmazefHandlingTimeLabel(draft.product.handlingTimeLabel, "1 day");
     handlingManuallyEdited.current = true;
-    localStorage.setItem(amazefHandlingStorageKey(userId), normalized);
+    const normalized = writeSavedAmazefHandlingTime(userId, draft.product.handlingTimeLabel);
     onChange({
       product: {
         ...draft.product,
