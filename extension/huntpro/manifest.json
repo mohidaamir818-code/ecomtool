@@ -1,16 +1,10 @@
 {
   "manifest_version": 3,
   "name": "EcomTool HuntPro",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Hunts hot eBay products for EcomTool using sold searches and Grabley history when available.",
   "permissions": ["storage", "tabs", "scripting"],
-  "host_permissions": [
-    "*://*.ebay.com/*",
-    "*://*.ebay.co.uk/*",
-    "http://localhost:3000/*",
-    "http://127.0.0.1:3000/*",
-    "https://*/*"
-  ],
+  "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background/service-worker.js"
   },
@@ -21,13 +15,10 @@
       "run_at": "document_idle"
     },
     {
-      "matches": [
-        "http://localhost:3000/*",
-        "http://127.0.0.1:3000/*",
-        "https://*/*"
-      ],
+      "matches": ["<all_urls>"],
       "js": ["content-scripts/ecomtool-bridge.js"],
-      "run_at": "document_idle"
+      "run_at": "document_start",
+      "all_frames": false
     }
   ],
   "action": {

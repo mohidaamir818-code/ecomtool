@@ -9,9 +9,64 @@ const POLL_INTERVAL_MS = 5000;
 
 const GRABLEY_EXTENSION_URL =
   "https://chromewebstore.google.com/detail/grabley-product-search-to/hppdgjpcbnbfapnailmeiibngpolplao";
-const HUNTPRO_EXTENSION_URL = "https://chromewebstore.google.com/search/HuntPro";
 const HUNTPRO_CONNECT_URL = "/api/huntpro/connect";
-const HUNTPRO_PING_TIMEOUT_MS = 2500;
+const HUNTPRO_PING_TIMEOUT_MS = 4000;
+
+function isHuntProDomReady(): boolean {
+  try {
+    return document.documentElement.getAttribute("data-ecomtool-huntpro") === "ready";
+  } catch {
+    return false;
+  }
+}
+
+/** Detect EcomTool HuntPro bridge via DOM marker, CustomEvent, and postMessage. */
+function detectHuntProExtension(): Promise<boolean> {
+  if (isHuntProDomReady()) return Promise.resolve(true);
+
+  return new Promise((resolve) => {
+    let settled = false;
+
+    function finish(ok: boolean) {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener("message", onMessage);
+      window.removeEventListener("ecomtool-huntpro-pong", onCustomPong);
+      resolve(ok);
+    }
+
+    function onMessage(event: MessageEvent) {
+      const data = event.data as { type?: string } | null;
+      if (data?.type === "HUNTPRO_PONG") finish(true);
+    }
+
+    function onCustomPong() {
+      finish(true);
+    }
+
+    window.addEventListener("message", onMessage);
+    window.addEventListener("ecomtool-huntpro-pong", onCustomPong);
+
+    // Ping multiple ways / times — SPA and late-injected bridges.
+    const ping = () => {
+      if (isHuntProDomReady()) {
+        finish(true);
+        return;
+      }
+      window.postMessage({ type: "HUNTPRO_PING", source: "ecomtool" }, "*");
+      try {
+        window.dispatchEvent(new CustomEvent("ecomtool-huntpro-ping"));
+      } catch {
+        // ignore
+      }
+    };
+
+    ping();
+    window.setTimeout(ping, 300);
+    window.setTimeout(ping, 900);
+    window.setTimeout(() => finish(false), HUNTPRO_PING_TIMEOUT_MS);
+  });
+}
 
 const GRABLEY_DONE_KEY = "ecomtools_grabley_done";
 const HUNTPRO_ONBOARDED_KEY = "huntpro_onboarded";
@@ -79,29 +134,13 @@ export function HuntProShell() {
       setError("");
       setNotice("Checking HuntPro extension…");
 
-      const present = await new Promise<boolean>((resolve) => {
-        let settled = false;
-        function onPong(event: MessageEvent) {
-          const data = event.data as { type?: string; ready?: boolean } | null;
-          if (!data || data.type !== "HUNTPRO_PONG") return;
-          settled = true;
-          window.removeEventListener("message", onPong);
-          resolve(true);
-        }
-        window.addEventListener("message", onPong);
-        window.postMessage({ type: "HUNTPRO_PING", source: "ecomtool" }, "*");
-        window.setTimeout(() => {
-          if (settled) return;
-          window.removeEventListener("message", onPong);
-          resolve(false);
-        }, HUNTPRO_PING_TIMEOUT_MS);
-      });
+      const present = await detectHuntProExtension();
 
       if (!present) {
         setRandomHunting(false);
         setNotice("");
         setError(
-          "HuntPro Chrome extension is not installed or not enabled. Load unpacked extension from folder extension/huntpro (chrome://extensions → Developer mode → Load unpacked). Then reload this page.",
+          "EcomTool HuntPro extension not detected on this site. In chrome://extensions open EcomTool HuntPro → Site access → On all sites, then Reload the extension and hard-refresh this page (Ctrl+Shift+R).",
         );
         setOnboardStep("huntpro");
         try {
@@ -531,35 +570,38 @@ export function HuntProShell() {
       {onboardStep === "huntpro" ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4">
           <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-6 text-center shadow-2xl">
-            <h3 className="text-lg font-bold text-[#111827]">Install HuntPro (required)</h3>
+            <h3 className="text-lg font-bold text-[#111827]">Install EcomTool HuntPro</h3>
             <p className="mt-2 text-left text-sm text-[#6B7280]">
-              Website alone cannot open eBay tabs. Load the local HuntPro extension:
+              Use our local extension (folder <code className="rounded bg-gray-100 px-1">extension/huntpro</code>),
+              not a random Chrome Store listing named HuntPro.
             </p>
-            <ol className="mt-3 list-decimal space-y-1 pl-5 text-left text-sm text-[#374151]">
+            <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-left text-sm text-[#374151]">
               <li>
                 Open <code className="rounded bg-gray-100 px-1">chrome://extensions</code>
               </li>
-              <li>Enable Developer mode</li>
-              <li>Click Load unpacked</li>
+              <li>Developer mode → Load unpacked → select <code className="rounded bg-gray-100 px-1">extension/huntpro</code></li>
               <li>
-                Select folder <code className="rounded bg-gray-100 px-1">extension/huntpro</code> in
-                this project
+                On <strong>EcomTool HuntPro</strong>: Details → Site access →{" "}
+                <strong>On all sites</strong>
               </li>
+              <li>Click Reload on the extension, then hard-refresh this page (Ctrl+Shift+R)</li>
             </ol>
-            <a
-              href={HUNTPRO_EXTENSION_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#374151] transition-all hover:bg-gray-50"
-            >
-              Chrome Web Store search (optional)
-            </a>
             <button
               type="button"
-              onClick={() => setOnboardStep("connect")}
-              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-brand-dark"
+              onClick={async () => {
+                const ok = await detectHuntProExtension();
+                if (ok) {
+                  setError("");
+                  setOnboardStep("connect");
+                  return;
+                }
+                setError(
+                  "Still not detected. Set Site access to On all sites, Reload the extension, then hard-refresh this page.",
+                );
+              }}
+              className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-brand-dark"
             >
-              I&apos;ve loaded HuntPro
+              Check extension & continue
             </button>
           </div>
         </div>

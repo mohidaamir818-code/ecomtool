@@ -1,6 +1,22 @@
 (function () {
   const SOURCE = "huntpro-extension";
 
+  function markPresent() {
+    try {
+      document.documentElement.setAttribute("data-ecomtool-huntpro", "ready");
+      document.documentElement.dataset.ecomtoolHuntpro = "ready";
+    } catch {
+      // Ignore.
+    }
+    try {
+      window.dispatchEvent(
+        new CustomEvent("ecomtool-huntpro-pong", { detail: { ready: true, source: SOURCE } }),
+      );
+    } catch {
+      // Ignore.
+    }
+  }
+
   function relayToBackground(payload, respondToPage) {
     try {
       chrome.runtime.sendMessage(payload, (response) => {
@@ -24,13 +40,19 @@
     }
   }
 
+  function replyPong() {
+    markPresent();
+    postToPage({ type: "HUNTPRO_PONG", ready: true, source: SOURCE });
+  }
+
   window.addEventListener("message", (event) => {
-    if (event.source !== window) return;
+    // Accept page + same-window messages (ignore other frames/windows).
+    if (event.source && event.source !== window) return;
     const data = event.data;
     if (!data || typeof data !== "object") return;
 
-    if (data.type === "HUNTPRO_PING" && (data.source === "ecomtool" || !data.source)) {
-      postToPage({ type: "HUNTPRO_PONG", ready: true });
+    if (data.type === "HUNTPRO_PING") {
+      replyPong();
       return;
     }
 
@@ -50,7 +72,10 @@
       return;
     }
 
-    if (data.type === "HUNTPRO_RANDOM_HUNT" && (data.source === "ecomtool" || data.source === "huntpro-extension")) {
+    if (
+      data.type === "HUNTPRO_RANDOM_HUNT" &&
+      (data.source === "ecomtool" || data.source === "huntpro-extension" || !data.source)
+    ) {
       postToPage({ type: "HUNTPRO_STATUS", status: "started" });
       relayToBackground(
         {
@@ -79,7 +104,10 @@
       return;
     }
 
-    if (data.type === "HUNTPRO_SEARCH" && (data.source === "ecomtool" || data.source === "huntpro-extension")) {
+    if (
+      data.type === "HUNTPRO_SEARCH" &&
+      (data.source === "ecomtool" || data.source === "huntpro-extension" || !data.source)
+    ) {
       postToPage({ type: "HUNTPRO_STATUS", status: "started" });
       relayToBackground(
         {
@@ -106,6 +134,12 @@
     }
   });
 
-  // Announce presence so EcomTool can detect HuntPro.
-  postToPage({ type: "HUNTPRO_PONG", ready: true });
+  window.addEventListener("ecomtool-huntpro-ping", () => {
+    replyPong();
+  });
+
+  // Announce presence immediately + after short delays (SPA / late listeners).
+  replyPong();
+  setTimeout(replyPong, 500);
+  setTimeout(replyPong, 1500);
 })();
