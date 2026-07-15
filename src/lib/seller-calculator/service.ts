@@ -29,7 +29,13 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-/** eBay-style sheet: Net = Selling − Fees; Profit = Net − Cost − Refunds. */
+/**
+ * Match seller Google Sheet formulas:
+ *   Net Sale = Selling Price − Fees
+ *   Profit   = Net Sale − Cost Price
+ *   ROI      = Profit / Cost Price
+ * Refunds stay as their own column and are not subtracted from profit.
+ */
 function deriveOrderAmounts(input: {
   sellingPrice: number;
   fees: number;
@@ -71,14 +77,11 @@ function deriveOrderAmounts(input: {
   }
 
   const fees = round2(Math.max(0, input.fees));
-  const netSale = round2(Math.max(0, sellingPrice - fees));
-  const afterRefund = round2(Math.max(0, netSale - refundAmount));
-  const profit = round2(afterRefund - costPrice);
+  const netSale = round2(sellingPrice - fees);
+  const profit = round2(netSale - costPrice);
   const roi = computeRoi(profit, costPrice);
   const payoutAmount =
-    input.payoutAmount != null
-      ? round2(Math.max(0, input.payoutAmount))
-      : afterRefund;
+    input.payoutAmount != null ? round2(Math.max(0, input.payoutAmount)) : netSale;
 
   return {
     fees,
