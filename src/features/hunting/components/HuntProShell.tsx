@@ -11,6 +11,7 @@ const GRABLEY_EXTENSION_URL =
   "https://chromewebstore.google.com/detail/grabley-product-search-to/hppdgjpcbnbfapnailmeiibngpolplao";
 const HUNTPRO_EXTENSION_URL = "https://chromewebstore.google.com/search/HuntPro";
 const HUNTPRO_CONNECT_URL = "/api/huntpro/connect";
+const HUNTPRO_PING_TIMEOUT_MS = 2500;
 
 const GRABLEY_DONE_KEY = "ecomtools_grabley_done";
 const HUNTPRO_ONBOARDED_KEY = "huntpro_onboarded";
@@ -74,7 +75,43 @@ export function HuntProShell() {
   );
 
   const startRandomHunt = useCallback(
-    (id: string) => {
+    async (id: string) => {
+      setError("");
+      setNotice("Checking HuntPro extension…");
+
+      const present = await new Promise<boolean>((resolve) => {
+        let settled = false;
+        function onPong(event: MessageEvent) {
+          const data = event.data as { type?: string; ready?: boolean } | null;
+          if (!data || data.type !== "HUNTPRO_PONG") return;
+          settled = true;
+          window.removeEventListener("message", onPong);
+          resolve(true);
+        }
+        window.addEventListener("message", onPong);
+        window.postMessage({ type: "HUNTPRO_PING", source: "ecomtool" }, "*");
+        window.setTimeout(() => {
+          if (settled) return;
+          window.removeEventListener("message", onPong);
+          resolve(false);
+        }, HUNTPRO_PING_TIMEOUT_MS);
+      });
+
+      if (!present) {
+        setRandomHunting(false);
+        setNotice("");
+        setError(
+          "HuntPro Chrome extension is not installed or not enabled. Load unpacked extension from folder extension/huntpro (chrome://extensions → Developer mode → Load unpacked). Then reload this page.",
+        );
+        setOnboardStep("huntpro");
+        try {
+          localStorage.removeItem(HUNT_ACTIVE_KEY);
+        } catch {
+          // ignore
+        }
+        return;
+      }
+
       try {
         localStorage.setItem(HUNT_ACTIVE_KEY, "true");
       } catch {
@@ -82,9 +119,8 @@ export function HuntProShell() {
       }
       setRandomHunting(true);
       setNotice(
-        "Random hunt started. HuntPro + Grabley will keep looking for hot products. You can close this tab — keep Chrome open. We’ll email you when results are ready.",
+        "Random hunt started — HuntPro is opening eBay tabs in the background. Keep Chrome open (this tab can close). We’ll email you when ready.",
       );
-      setError("");
       setKeyword(RANDOM_HOT_KEYWORD);
       setResultDays(7);
       baselineResultIdRef.current = null;
@@ -108,11 +144,17 @@ export function HuntProShell() {
         void (async () => {
           try {
             const latest = await fetchLatest(id, { keyword: RANDOM_HOT_KEYWORD });
-            if (latest && latest.id !== baselineResultIdRef.current && (latest.products?.length ?? 0) > 0) {
+            if (
+              latest &&
+              latest.id !== baselineResultIdRef.current &&
+              (latest.products?.length ?? 0) > 0
+            ) {
               baselineResultIdRef.current = latest.id;
               setResult(latest);
               setRandomHunting(false);
-              setNotice("Hunt complete — hot products are ready below. We also emailed you a View Products link.");
+              setNotice(
+                "Hunt complete — hot products are ready below. We also emailed you a View Products link.",
+              );
               try {
                 localStorage.removeItem(HUNT_ACTIVE_KEY);
               } catch {
@@ -140,7 +182,7 @@ export function HuntProShell() {
       setConnecting(false);
       setOnboardStep(null);
       const uid = id ?? userId ?? sessionStorage.getItem("ecomtools_user_id");
-      if (uid) startRandomHunt(uid);
+      if (uid) void startRandomHunt(uid);
     },
     [startRandomHunt, userId],
   );
@@ -164,7 +206,7 @@ export function HuntProShell() {
     if (huntActive && id) {
       setRandomHunting(true);
       setNotice("Random hunt still running in the background via HuntPro…");
-      startRandomHunt(id);
+      void startRandomHunt(id);
     }
     // Only on first mount — resume active hunt / show onboarding.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -217,8 +259,24 @@ export function HuntProShell() {
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
-      const data = event.data as { type?: string } | null;
-      if (!data || data.type !== "HUNTPRO_RESULTS") return;
+      const data = event.data as { type?: string; error?: string } | null;
+      if (!data) return;
+
+      if (data.type === "HUNTPRO_ERROR") {
+        setRandomHunting(false);
+        setSearching(false);
+        setNotice("");
+        setError(data.error || "HuntPro failed while hunting.");
+        try {
+          localStorage.removeItem(HUNT_ACTIVE_KEY);
+        } catch {
+          // ignore
+        }
+        stopPolling();
+        return;
+      }
+
+      if (data.type !== "HUNTPRO_RESULTS") return;
       if (!userId) return;
       void (async () => {
         try {
@@ -341,7 +399,7 @@ export function HuntProShell() {
           {userId && onboardStep === null ? (
             <button
               type="button"
-              onClick={() => startRandomHunt(userId)}
+              onClick={() => void startRandomHunt(userId)}
               disabled={randomHunting}
               className="inline-flex items-center justify-center rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(88,66,244,0.28)] transition-all hover:bg-brand-dark disabled:opacity-60"
             >
@@ -473,25 +531,35 @@ export function HuntProShell() {
       {onboardStep === "huntpro" ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4">
           <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-6 text-center shadow-2xl">
-            <h3 className="text-lg font-bold text-[#111827]">Install HuntPro</h3>
-            <p className="mt-2 text-sm text-[#6B7280]">
-              HuntPro finds random hot eBay products using Grabley sold history, then sends them to
-              EcomTool — even if you close this tab (keep Chrome open).
+            <h3 className="text-lg font-bold text-[#111827]">Install HuntPro (required)</h3>
+            <p className="mt-2 text-left text-sm text-[#6B7280]">
+              Website alone cannot open eBay tabs. Load the local HuntPro extension:
             </p>
+            <ol className="mt-3 list-decimal space-y-1 pl-5 text-left text-sm text-[#374151]">
+              <li>
+                Open <code className="rounded bg-gray-100 px-1">chrome://extensions</code>
+              </li>
+              <li>Enable Developer mode</li>
+              <li>Click Load unpacked</li>
+              <li>
+                Select folder <code className="rounded bg-gray-100 px-1">extension/huntpro</code> in
+                this project
+              </li>
+            </ol>
             <a
               href={HUNTPRO_EXTENSION_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-brand-dark"
+              className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#374151] transition-all hover:bg-gray-50"
             >
-              Add HuntPro extension
+              Chrome Web Store search (optional)
             </a>
             <button
               type="button"
               onClick={() => setOnboardStep("connect")}
-              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#374151] transition-all hover:bg-gray-50"
+              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-brand-dark"
             >
-              I&apos;ve added it
+              I&apos;ve loaded HuntPro
             </button>
           </div>
         </div>
