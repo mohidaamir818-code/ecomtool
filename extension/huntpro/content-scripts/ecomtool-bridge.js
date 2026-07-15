@@ -17,21 +17,6 @@
     }
   }
 
-  function relayToBackground(payload, respondToPage) {
-    try {
-      chrome.runtime.sendMessage(payload, (response) => {
-        void chrome.runtime.lastError;
-        if (typeof respondToPage === "function") {
-          respondToPage(response || { ok: false, error: "No response from HuntPro." });
-        }
-      });
-    } catch {
-      if (typeof respondToPage === "function") {
-        respondToPage({ ok: false, error: "HuntPro extension context invalid." });
-      }
-    }
-  }
-
   function postToPage(data) {
     try {
       window.postMessage({ ...data, source: SOURCE }, "*");
@@ -45,8 +30,43 @@
     postToPage({ type: "HUNTPRO_PONG", ready: true, source: SOURCE });
   }
 
+  function relayToBackground(payload, respondToPage) {
+    try {
+      chrome.runtime.sendMessage(payload, (response) => {
+        const err = chrome.runtime.lastError;
+        if (err) {
+          if (typeof respondToPage === "function") {
+            respondToPage({ ok: false, error: err.message || "HuntPro background unavailable." });
+          }
+          return;
+        }
+        if (typeof respondToPage === "function") {
+          respondToPage(response || { ok: true, started: true });
+        }
+      });
+    } catch (error) {
+      if (typeof respondToPage === "function") {
+        respondToPage({
+          ok: false,
+          error: error instanceof Error ? error.message : "HuntPro extension context invalid.",
+        });
+      }
+    }
+  }
+
+  // Background → page notifications (results / errors / status).
+  chrome.runtime.onMessage.addListener((message) => {
+    if (!message || typeof message !== "object") return;
+    if (
+      message.type === "HUNTPRO_RESULTS" ||
+      message.type === "HUNTPRO_ERROR" ||
+      message.type === "HUNTPRO_STATUS"
+    ) {
+      postToPage(message);
+    }
+  });
+
   window.addEventListener("message", (event) => {
-    // Accept page + same-window messages (ignore other frames/windows).
     if (event.source && event.source !== window) return;
     const data = event.data;
     if (!data || typeof data !== "object") return;
@@ -76,7 +96,7 @@
       data.type === "HUNTPRO_RANDOM_HUNT" &&
       (data.source === "ecomtool" || data.source === "huntpro-extension" || !data.source)
     ) {
-      postToPage({ type: "HUNTPRO_STATUS", status: "started" });
+      postToPage({ type: "HUNTPRO_STATUS", status: "started", message: "HuntPro received start signal…" });
       relayToBackground(
         {
           type: "HUNTPRO_RANDOM_HUNT",
@@ -88,17 +108,18 @@
           appBaseUrl: window.location.origin,
         },
         (response) => {
-          if (response?.ok) {
-            postToPage({
-              type: "HUNTPRO_RESULTS",
-              productCount: response.productCount,
-            });
-          } else {
+          if (response?.ok === false) {
             postToPage({
               type: "HUNTPRO_ERROR",
-              error: response?.error || "Random hunt failed.",
+              error: response?.error || "Could not start HuntPro background hunt.",
             });
+            return;
           }
+          postToPage({
+            type: "HUNTPRO_STATUS",
+            status: "running",
+            message: "Hunt started in background — opening eBay tabs…",
+          });
         },
       );
       return;
@@ -108,7 +129,7 @@
       data.type === "HUNTPRO_SEARCH" &&
       (data.source === "ecomtool" || data.source === "huntpro-extension" || !data.source)
     ) {
-      postToPage({ type: "HUNTPRO_STATUS", status: "started" });
+      postToPage({ type: "HUNTPRO_STATUS", status: "started", message: "HuntPro received keyword search…" });
       relayToBackground(
         {
           type: "HUNTPRO_SEARCH",
@@ -118,15 +139,10 @@
           appBaseUrl: window.location.origin,
         },
         (response) => {
-          if (response?.ok) {
-            postToPage({
-              type: "HUNTPRO_RESULTS",
-              productCount: response.productCount,
-            });
-          } else {
+          if (response?.ok === false) {
             postToPage({
               type: "HUNTPRO_ERROR",
-              error: response?.error || "Keyword hunt failed.",
+              error: response?.error || "Could not start HuntPro keyword hunt.",
             });
           }
         },
@@ -138,7 +154,6 @@
     replyPong();
   });
 
-  // Announce presence immediately + after short delays (SPA / late listeners).
   replyPong();
   setTimeout(replyPong, 500);
   setTimeout(replyPong, 1500);

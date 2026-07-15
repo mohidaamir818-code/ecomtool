@@ -5,7 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { DashboardLayout } from "@/features/dashboard/components/DashboardLayout";
 import type { HuntProProduct, HuntProResult } from "@/types/huntpro";
 
-const POLL_INTERVAL_MS = 5000;
+const POLL_INTERVAL_MS = 4000;
+const HUNT_TIMEOUT_MS = 120_000;
 
 const GRABLEY_EXTENSION_URL =
   "https://chromewebstore.google.com/detail/grabley-product-search-to/hppdgjpcbnbfapnailmeiibngpolplao";
@@ -101,14 +102,37 @@ export function HuntProShell() {
   const [resultDays, setResultDays] = useState(7);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const baselineResultIdRef = useRef<string | null>(null);
+  const huntStartedAtRef = useRef<number>(0);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
   }, []);
+
+  const applyHuntResult = useCallback(
+    (latest: HuntProResult) => {
+      setResult(latest);
+      setSearching(false);
+      setRandomHunting(false);
+      setError("");
+      setNotice("Hunt complete — hot products are ready below.");
+      try {
+        localStorage.removeItem(HUNT_ACTIVE_KEY);
+      } catch {
+        // ignore
+      }
+      stopPolling();
+    },
+    [stopPolling],
+  );
 
   const fetchLatest = useCallback(
     async (
@@ -129,23 +153,69 @@ export function HuntProShell() {
     [],
   );
 
+  const startResultPolling = useCallback(
+    (id: string, preferredKeyword?: string) => {
+      stopPolling();
+      pollRef.current = setInterval(() => {
+        void (async () => {
+          try {
+            const preferred = preferredKeyword?.trim() || RANDOM_HOT_KEYWORD;
+            const latest =
+              (await fetchLatest(id, { keyword: preferred })) ?? (await fetchLatest(id));
+            if (!latest || (latest.products?.length ?? 0) === 0) return;
+            if (latest.id === baselineResultIdRef.current) return;
+            const createdAt = Date.parse(latest.createdAt);
+            if (
+              Number.isFinite(createdAt) &&
+              huntStartedAtRef.current > 0 &&
+              createdAt + 2000 < huntStartedAtRef.current
+            ) {
+              return;
+            }
+            applyHuntResult(latest);
+          } catch {
+            // keep polling
+          }
+        })();
+      }, POLL_INTERVAL_MS);
+
+      timeoutRef.current = setTimeout(() => {
+        setRandomHunting(false);
+        setSearching(false);
+        setNotice("");
+        setError(
+          "Hunt timed out with no products. Reload EcomTool HuntPro extension (v1.0.2), keep Chrome open, sign into eBay.co.uk, then try again.",
+        );
+        try {
+          localStorage.removeItem(HUNT_ACTIVE_KEY);
+        } catch {
+          // ignore
+        }
+        stopPolling();
+      }, HUNT_TIMEOUT_MS);
+    },
+    [applyHuntResult, fetchLatest, stopPolling],
+  );
+
   const startRandomHunt = useCallback(
     async (id: string) => {
       setError("");
       setOnboardStep(null);
+      huntStartedAtRef.current = Date.now();
 
-      // Soft check only — never block hunting or reopen the install popup.
-      // Some HuntPro builds hunt fine but don't answer HUNTPRO_PING.
-      const present = await detectHuntProExtension();
-      if (!present) {
-        setNotice(
-          "Starting hunt… (extension ping not confirmed — if tabs don’t open, reload EcomTool HuntPro and this page).",
-        );
-      } else {
-        setNotice(
-          "Random hunt started — HuntPro is opening eBay tabs in the background. Keep Chrome open (this tab can close). We’ll email you when ready.",
-        );
+      try {
+        const existing = await fetchLatest(id, { keyword: RANDOM_HOT_KEYWORD });
+        baselineResultIdRef.current = existing?.id ?? null;
+      } catch {
+        baselineResultIdRef.current = null;
       }
+
+      const present = await detectHuntProExtension();
+      setNotice(
+        present
+          ? "Sending start signal to HuntPro…"
+          : "Extension ping weak — still sending hunt start. Watch for eBay tabs opening…",
+      );
 
       try {
         localStorage.setItem(HUNT_ACTIVE_KEY, "true");
@@ -156,7 +226,6 @@ export function HuntProShell() {
       setRandomHunting(true);
       setKeyword(RANDOM_HOT_KEYWORD);
       setResultDays(7);
-      baselineResultIdRef.current = null;
 
       window.postMessage(
         {
@@ -168,40 +237,14 @@ export function HuntProShell() {
           minDailySales: 1,
           lookbackDays: 7,
           useGrableyHistory: true,
+          appBaseUrl: window.location.origin,
         },
         "*",
       );
 
-      stopPolling();
-      pollRef.current = setInterval(() => {
-        void (async () => {
-          try {
-            const latest = await fetchLatest(id, { keyword: RANDOM_HOT_KEYWORD });
-            if (
-              latest &&
-              latest.id !== baselineResultIdRef.current &&
-              (latest.products?.length ?? 0) > 0
-            ) {
-              baselineResultIdRef.current = latest.id;
-              setResult(latest);
-              setRandomHunting(false);
-              setNotice(
-                "Hunt complete — hot products are ready below. We also emailed you a View Products link.",
-              );
-              try {
-                localStorage.removeItem(HUNT_ACTIVE_KEY);
-              } catch {
-                // ignore
-              }
-              stopPolling();
-            }
-          } catch {
-            // keep polling quietly
-          }
-        })();
-      }, POLL_INTERVAL_MS);
+      startResultPolling(id, RANDOM_HOT_KEYWORD);
     },
-    [fetchLatest, stopPolling],
+    [fetchLatest, startResultPolling],
   );
 
   const completeOnboarding = useCallback(
@@ -350,8 +393,20 @@ export function HuntProShell() {
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
-      const data = event.data as { type?: string; error?: string } | null;
-      if (!data) return;
+      const data = event.data as {
+        type?: string;
+        error?: string;
+        message?: string;
+        status?: string;
+        keyword?: string;
+      } | null;
+      if (!data?.type) return;
+
+      if (data.type === "HUNTPRO_STATUS") {
+        if (data.message) setNotice(data.message);
+        else if (data.status) setNotice(`HuntPro: ${data.status}`);
+        return;
+      }
 
       if (data.type === "HUNTPRO_ERROR") {
         setRandomHunting(false);
@@ -371,28 +426,22 @@ export function HuntProShell() {
       if (!userId) return;
       void (async () => {
         try {
-          const latest = await fetchLatest(userId, { keyword: RANDOM_HOT_KEYWORD });
+          const latest =
+            (await fetchLatest(userId, {
+              keyword: data.keyword || RANDOM_HOT_KEYWORD,
+            })) ?? (await fetchLatest(userId));
           if (latest && (latest.products?.length ?? 0) > 0) {
-            setResult(latest);
-            setSearching(false);
-            setRandomHunting(false);
-            setNotice("Hunt complete — hot products are ready below.");
-            try {
-              localStorage.removeItem(HUNT_ACTIVE_KEY);
-            } catch {
-              // ignore
-            }
-            stopPolling();
+            applyHuntResult(latest);
           }
-        } catch {
-          // polling continues
+        } catch (loadError) {
+          setError(loadError instanceof Error ? loadError.message : "Failed to load hunt results.");
         }
       })();
     }
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [userId, fetchLatest, stopPolling]);
+  }, [userId, fetchLatest, stopPolling, applyHuntResult]);
 
   async function handleSearch(event: React.FormEvent) {
     event.preventDefault();
@@ -406,12 +455,12 @@ export function HuntProShell() {
       return;
     }
 
-    stopPolling();
     setError("");
     setResult(null);
     setSearching(true);
-    setNotice("Asking HuntPro to scrape eBay…");
+    setNotice("Sending keyword hunt to HuntPro…");
     setResultDays(days);
+    huntStartedAtRef.current = Date.now();
 
     try {
       const existing = await fetchLatest(userId, { keyword: trimmed });
@@ -427,25 +476,12 @@ export function HuntProShell() {
         userId,
         keyword: trimmed,
         days,
+        appBaseUrl: window.location.origin,
       },
       "*",
     );
 
-    pollRef.current = setInterval(() => {
-      void (async () => {
-        try {
-          const latest = await fetchLatest(userId, { keyword: trimmed });
-          if (latest && latest.id !== baselineResultIdRef.current) {
-            setResult(latest);
-            setSearching(false);
-            setNotice("");
-            stopPolling();
-          }
-        } catch (pollError) {
-          setError(pollError instanceof Error ? pollError.message : "Failed to load results.");
-        }
-      })();
-    }, POLL_INTERVAL_MS);
+    startResultPolling(userId, trimmed);
   }
 
   const statistics = result?.statistics;
