@@ -108,8 +108,16 @@ function applyProfitOverride<T extends { minProfitPercent: number; maxProfitPerc
   profitPercent: number | null | undefined,
 ): T {
   if (profitPercent == null || !Number.isFinite(profitPercent)) return settings;
-  const clamped = Math.min(95, Math.max(1, profitPercent));
-  return { ...settings, minProfitPercent: clamped, maxProfitPercent: clamped };
+  // Bulk % is the *minimum* target profit — never collapse min=max (e.g. 1%–1%),
+  // or smart pricing cannot resolve a sellable price.
+  const minProfitPercent = Math.min(95, Math.max(1, Number(profitPercent)));
+  const maxProfitPercent = Math.min(
+    95,
+    settings.maxProfitPercent > minProfitPercent
+      ? settings.maxProfitPercent
+      : Math.min(95, minProfitPercent + 20),
+  );
+  return { ...settings, minProfitPercent, maxProfitPercent };
 }
 
 export async function getUserBulkListingJobs(userId: string): Promise<BulkListingJob[]> {
@@ -214,6 +222,18 @@ async function updateJob(
     .eq("id", jobId);
 }
 
+const RETRY_RESET_FIELDS = {
+  status: "queued" as const,
+  error_message: null,
+  listing_url: null,
+  listed_title: null,
+  listed_price: null,
+  currency: null,
+  draft_json: null,
+  started_at: null,
+  finished_at: null,
+};
+
 export async function resetJobForRetry(jobId: string, userId: string): Promise<BulkListingJob | null> {
   const supabase = getSupabaseAdmin();
   const { data } = await supabase
@@ -228,15 +248,7 @@ export async function resetJobForRetry(jobId: string, userId: string): Promise<B
   const { data: updated, error } = await supabase
     .from("bulk_listing_jobs")
     .update({
-      status: "queued",
-      error_message: null,
-      listing_url: null,
-      listed_title: null,
-      listed_price: null,
-      currency: null,
-      draft_json: null,
-      started_at: null,
-      finished_at: null,
+      ...RETRY_RESET_FIELDS,
       updated_at: new Date().toISOString(),
     })
     .eq("id", jobId)
@@ -245,6 +257,23 @@ export async function resetJobForRetry(jobId: string, userId: string): Promise<B
 
   if (error) throw new Error(error.message);
   return mapJobRow(updated as Record<string, unknown>);
+}
+
+/** Re-queue all failed jobs so prepare runs again after a pricing/settings fix. */
+export async function resetFailedJobsForRetry(userId: string): Promise<number> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("bulk_listing_jobs")
+    .update({
+      ...RETRY_RESET_FIELDS,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("user_id", userId)
+    .eq("status", "failed")
+    .select("id");
+
+  if (error) throw new Error(error.message);
+  return data?.length ?? 0;
 }
 
 export async function processNextBulkListingJob(input: {

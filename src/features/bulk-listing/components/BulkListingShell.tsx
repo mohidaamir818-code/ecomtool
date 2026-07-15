@@ -650,6 +650,32 @@ export function BulkListingShell() {
     }
   }
 
+  async function handleRetryAllFailed() {
+    if (!userId || stats.failed === 0) return;
+    setError(null);
+    setNotice(null);
+
+    try {
+      const response = await fetch("/api/bulk-listing/retry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, allFailed: true }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error ?? "Retry failed.");
+
+      setJobs(data.jobs ?? []);
+      setNotice(
+        `Re-queued ${data.retriedCount ?? stats.failed} failed product${
+          (data.retriedCount ?? stats.failed) === 1 ? "" : "s"
+        } for prepare.`,
+      );
+      await runProcessor();
+    } catch (retryError) {
+      setError(retryError instanceof Error ? retryError.message : "Retry failed.");
+    }
+  }
+
   if (reviewJob && reviewDraft && userId) {
     return (
       <DashboardLayout>
@@ -917,13 +943,25 @@ export function BulkListingShell() {
 
         {/* Live results */}
         <div className="mt-6 overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4">
             <h2 className="text-sm font-bold text-[#111827]">Prepare progress</h2>
-            {stats.total > 0 ? (
-              <span className="text-xs text-[#6B7280]">
-                {stats.prepared} ready · {stats.listed} listed · {stats.total} total
-              </span>
-            ) : null}
+            <div className="flex flex-wrap items-center gap-3">
+              {stats.total > 0 ? (
+                <span className="text-xs text-[#6B7280]">
+                  {stats.prepared} ready · {stats.listed} listed · {stats.total} total
+                </span>
+              ) : null}
+              {stats.failed > 0 ? (
+                <button
+                  type="button"
+                  disabled={processing}
+                  onClick={() => void handleRetryAllFailed()}
+                  className="rounded-lg border border-brand/30 bg-brand/5 px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/10 disabled:opacity-60"
+                >
+                  Retry all failed ({stats.failed})
+                </button>
+              ) : null}
+            </div>
           </div>
 
           {stats.total > 0 ? (

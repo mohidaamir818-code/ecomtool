@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   getUserBulkListingJobs,
+  resetFailedJobsForRetry,
   resetJobForRetry,
 } from "@/lib/bulk-listing/service";
 import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
@@ -12,6 +13,7 @@ export async function POST(request: NextRequest) {
     const body = (await request.json()) as {
       userId?: string;
       jobId?: string;
+      allFailed?: boolean;
     };
 
     const userId = body.userId?.trim();
@@ -20,12 +22,19 @@ export async function POST(request: NextRequest) {
     if (!userId) {
       return NextResponse.json({ error: "userId is required." }, { status: 400 });
     }
-    if (!jobId) {
-      return NextResponse.json({ error: "jobId is required." }, { status: 400 });
-    }
 
     const accessDenied = await requireActiveUser(userId);
     if (accessDenied) return accessDenied;
+
+    if (body.allFailed) {
+      const count = await resetFailedJobsForRetry(userId);
+      const jobs = await getUserBulkListingJobs(userId);
+      return NextResponse.json({ success: true, retriedCount: count, jobs });
+    }
+
+    if (!jobId) {
+      return NextResponse.json({ error: "jobId is required." }, { status: 400 });
+    }
 
     const job = await resetJobForRetry(jobId, userId);
     if (!job) {
