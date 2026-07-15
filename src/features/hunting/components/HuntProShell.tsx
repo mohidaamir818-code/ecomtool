@@ -132,34 +132,28 @@ export function HuntProShell() {
   const startRandomHunt = useCallback(
     async (id: string) => {
       setError("");
-      setNotice("Checking HuntPro extension…");
+      setOnboardStep(null);
 
+      // Soft check only — never block hunting or reopen the install popup.
+      // Some HuntPro builds hunt fine but don't answer HUNTPRO_PING.
       const present = await detectHuntProExtension();
-
       if (!present) {
-        setRandomHunting(false);
-        setNotice("");
-        setError(
-          "EcomTool HuntPro extension not detected on this site. In chrome://extensions open EcomTool HuntPro → Site access → On all sites, then Reload the extension and hard-refresh this page (Ctrl+Shift+R).",
+        setNotice(
+          "Starting hunt… (extension ping not confirmed — if tabs don’t open, reload EcomTool HuntPro and this page).",
         );
-        setOnboardStep("huntpro");
-        try {
-          localStorage.removeItem(HUNT_ACTIVE_KEY);
-        } catch {
-          // ignore
-        }
-        return;
+      } else {
+        setNotice(
+          "Random hunt started — HuntPro is opening eBay tabs in the background. Keep Chrome open (this tab can close). We’ll email you when ready.",
+        );
       }
 
       try {
         localStorage.setItem(HUNT_ACTIVE_KEY, "true");
+        localStorage.setItem(HUNTPRO_ONBOARDED_KEY, "true");
       } catch {
         // ignore
       }
       setRandomHunting(true);
-      setNotice(
-        "Random hunt started — HuntPro is opening eBay tabs in the background. Keep Chrome open (this tab can close). We’ll email you when ready.",
-      );
       setKeyword(RANDOM_HOT_KEYWORD);
       setResultDays(7);
       baselineResultIdRef.current = null;
@@ -239,7 +233,26 @@ export function HuntProShell() {
       return;
     }
     if (!onboarded) {
+      // If extension already injected, skip the scary install wall.
+      if (isHuntProDomReady()) {
+        try {
+          localStorage.setItem(HUNTPRO_ONBOARDED_KEY, "true");
+        } catch {
+          // ignore
+        }
+        setOnboardStep("connect");
+        return;
+      }
       setOnboardStep("huntpro");
+      void detectHuntProExtension().then((ok) => {
+        if (!ok) return;
+        try {
+          localStorage.setItem(HUNTPRO_ONBOARDED_KEY, "true");
+        } catch {
+          // ignore
+        }
+        setOnboardStep((step) => (step === "huntpro" ? "connect" : step));
+      });
       return;
     }
     if (huntActive && id) {
@@ -289,12 +302,51 @@ export function HuntProShell() {
       const data = event.data as { type?: string; userId?: string } | null;
       if (!data || data.type !== "ECOMTOOL_HUNTPRO_CONNECT") return;
       if (data.userId) setUserId(data.userId);
+      try {
+        localStorage.setItem(HUNTPRO_ONBOARDED_KEY, "true");
+        localStorage.setItem(GRABLEY_DONE_KEY, "true");
+      } catch {
+        // ignore
+      }
       completeOnboarding(data.userId);
     }
 
     window.addEventListener("message", onConnectMessage);
     return () => window.removeEventListener("message", onConnectMessage);
   }, [completeOnboarding]);
+
+  // Any live HuntPro signal means it's installed — never force the install popup again.
+  useEffect(() => {
+    function markFromHuntProStep() {
+      try {
+        localStorage.setItem(HUNTPRO_ONBOARDED_KEY, "true");
+      } catch {
+        // ignore
+      }
+      setOnboardStep((step) => (step === "huntpro" ? "connect" : step));
+    }
+
+    function markConnectedFromSignal(event: MessageEvent) {
+      const data = event.data as { type?: string; source?: string } | null;
+      if (!data?.type) return;
+      const types = new Set([
+        "HUNTPRO_PONG",
+        "HUNTPRO_STATUS",
+        "HUNTPRO_RESULTS",
+        "HUNTPRO_ERROR",
+        "ECOMTOOL_HUNTPRO_CONNECT",
+      ]);
+      if (!types.has(data.type) && data.source !== "huntpro-extension") return;
+      markFromHuntProStep();
+    }
+
+    window.addEventListener("message", markConnectedFromSignal);
+    window.addEventListener("ecomtool-huntpro-pong", markFromHuntProStep);
+    return () => {
+      window.removeEventListener("message", markConnectedFromSignal);
+      window.removeEventListener("ecomtool-huntpro-pong", markFromHuntProStep);
+    };
+  }, []);
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
@@ -572,36 +624,48 @@ export function HuntProShell() {
           <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-6 text-center shadow-2xl">
             <h3 className="text-lg font-bold text-[#111827]">Install EcomTool HuntPro</h3>
             <p className="mt-2 text-left text-sm text-[#6B7280]">
-              Use our local extension (folder <code className="rounded bg-gray-100 px-1">extension/huntpro</code>),
-              not a random Chrome Store listing named HuntPro.
+              Load folder <code className="rounded bg-gray-100 px-1">extension/huntpro</code>, set Site
+              access to On all sites, then continue. If HuntPro is already working, skip this step.
             </p>
             <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-left text-sm text-[#374151]">
               <li>
                 Open <code className="rounded bg-gray-100 px-1">chrome://extensions</code>
               </li>
-              <li>Developer mode → Load unpacked → select <code className="rounded bg-gray-100 px-1">extension/huntpro</code></li>
-              <li>
-                On <strong>EcomTool HuntPro</strong>: Details → Site access →{" "}
-                <strong>On all sites</strong>
-              </li>
-              <li>Click Reload on the extension, then hard-refresh this page (Ctrl+Shift+R)</li>
+              <li>Developer mode → Load unpacked → <code className="rounded bg-gray-100 px-1">extension/huntpro</code></li>
+              <li>Site access → <strong>On all sites</strong>, then Reload</li>
             </ol>
             <button
               type="button"
-              onClick={async () => {
-                const ok = await detectHuntProExtension();
-                if (ok) {
-                  setError("");
-                  setOnboardStep("connect");
-                  return;
+              onClick={() => {
+                try {
+                  localStorage.setItem(HUNTPRO_ONBOARDED_KEY, "true");
+                } catch {
+                  // ignore
                 }
-                setError(
-                  "Still not detected. Set Site access to On all sites, Reload the extension, then hard-refresh this page.",
-                );
+                setError("");
+                setOnboardStep("connect");
               }}
               className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-brand-dark"
             >
-              Check extension & continue
+              Continue to connect
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                try {
+                  localStorage.setItem(HUNTPRO_ONBOARDED_KEY, "true");
+                  localStorage.setItem(GRABLEY_DONE_KEY, "true");
+                } catch {
+                  // ignore
+                }
+                setError("");
+                setOnboardStep(null);
+                const uid = userId ?? sessionStorage.getItem("ecomtools_user_id");
+                if (uid) void startRandomHunt(uid);
+              }}
+              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#374151] transition-all hover:bg-gray-50"
+            >
+              Already connected — start hunting
             </button>
           </div>
         </div>
