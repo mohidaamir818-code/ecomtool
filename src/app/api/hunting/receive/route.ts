@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  getHuntingResultById,
   getLatestHuntingResult,
+  RANDOM_HOT_KEYWORD,
   saveHuntingResult,
+  sendHuntProductsReadyEmail,
 } from "@/lib/hunting/huntpro-service";
 import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
 import type {
@@ -41,36 +44,53 @@ function normalizeProducts(raw: HuntProProduct[] | undefined): HuntProProduct[] 
   }));
 }
 
+function isRandomHotHunt(keyword: string): boolean {
+  const normalized = keyword.trim().toLowerCase();
+  return normalized === RANDOM_HOT_KEYWORD || normalized.startsWith("random-hot");
+}
+
 export async function POST(request: NextRequest) {
   try {
     if (request.headers.get("x-huntpro-key") !== HUNTPRO_KEY) {
       return NextResponse.json({ error: "Invalid HuntPro key." }, { status: 401 });
     }
 
-    const body = (await request.json()) as HuntProReceivePayload;
+    const body = (await request.json()) as HuntProReceivePayload & {
+      huntComplete?: boolean;
+    };
 
     const userId = body.userId?.trim();
-    const keyword = body.keyword?.trim();
+    const keyword = body.keyword?.trim() || RANDOM_HOT_KEYWORD;
 
     if (!userId) {
       return NextResponse.json({ error: "userId is required." }, { status: 400 });
-    }
-    if (!keyword) {
-      return NextResponse.json({ error: "keyword is required." }, { status: 400 });
     }
 
     const accessDenied = await requireActiveUser(userId);
     if (accessDenied) return accessDenied;
 
+    const products = normalizeProducts(body.products);
     const result = await saveHuntingResult({
       userId,
       keyword,
       source: body.source ?? "huntpro-extension",
       statistics: normalizeStatistics(body.statistics),
-      products: normalizeProducts(body.products),
+      products,
     });
 
-    return NextResponse.json({ success: true, result }, { status: 201 });
+    const shouldEmail =
+      products.length > 0 &&
+      (body.huntComplete === true || isRandomHotHunt(keyword) || products.length >= 20);
+
+    if (shouldEmail) {
+      await sendHuntProductsReadyEmail({
+        userId,
+        resultId: result.id,
+        productCount: products.length,
+      });
+    }
+
+    return NextResponse.json({ success: true, result, emailed: shouldEmail }, { status: 201 });
   } catch (error) {
     const blocked = userBlockErrorResponse(error);
     if (blocked) return blocked;
@@ -84,6 +104,7 @@ export async function GET(request: NextRequest) {
   try {
     const userId = request.nextUrl.searchParams.get("userId")?.trim();
     const keyword = request.nextUrl.searchParams.get("keyword")?.trim() || undefined;
+    const resultId = request.nextUrl.searchParams.get("resultId")?.trim() || undefined;
 
     if (!userId) {
       return NextResponse.json({ error: "userId is required." }, { status: 400 });
@@ -92,7 +113,9 @@ export async function GET(request: NextRequest) {
     const accessDenied = await requireActiveUser(userId);
     if (accessDenied) return accessDenied;
 
-    const result = await getLatestHuntingResult(userId, keyword);
+    const result = resultId
+      ? await getHuntingResultById(userId, resultId)
+      : await getLatestHuntingResult(userId, keyword);
 
     return NextResponse.json({ success: true, result });
   } catch (error) {

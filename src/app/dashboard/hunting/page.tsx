@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { HuntProShell } from "@/features/hunting/components/HuntProShell";
 
 export const metadata: Metadata = {
@@ -7,5 +8,9 @@ export const metadata: Metadata = {
 };
 
 export default function HuntingPage() {
-  return <HuntProShell />;
+  return (
+    <Suspense fallback={null}>
+      <HuntProShell />
+    </Suspense>
+  );
 }

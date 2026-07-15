@@ -1,11 +1,15 @@
 import "server-only";
 
+import { sendEmail } from "@/lib/email/send-email";
+import { getAppOrigin } from "@/lib/env";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type {
   HuntProProduct,
   HuntProResult,
   HuntProStatistics,
 } from "@/types/huntpro";
+
+export const RANDOM_HOT_KEYWORD = "random-hot";
 
 const EMPTY_STATISTICS: HuntProStatistics = {
   totalSold: 0,
@@ -25,6 +29,12 @@ function mapResultRow(row: Record<string, unknown>): HuntProResult {
     products: (row.products as HuntProProduct[] | null) ?? [],
     createdAt: String(row.created_at),
   };
+}
+
+async function getUserEmail(userId: string): Promise<string | null> {
+  const supabase = getSupabaseAdmin();
+  const { data } = await supabase.from("profiles").select("email").eq("id", userId).maybeSingle();
+  return data?.email?.trim() ?? null;
 }
 
 export async function saveHuntingResult(input: {
@@ -52,6 +62,26 @@ export async function saveHuntingResult(input: {
     throw new Error(error.message);
   }
 
+  return mapResultRow(data as Record<string, unknown>);
+}
+
+export async function getHuntingResultById(
+  userId: string,
+  resultId: string,
+): Promise<HuntProResult | null> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("hunting_results")
+    .select("*")
+    .eq("id", resultId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    if (error.message.includes("does not exist")) return null;
+    throw new Error(error.message);
+  }
+  if (!data) return null;
   return mapResultRow(data as Record<string, unknown>);
 }
 
@@ -97,4 +127,40 @@ export async function getLatestHuntingResult(
   if (!data) return null;
 
   return mapResultRow(data as Record<string, unknown>);
+}
+
+/** Email the seller when a random/hot hunt batch is ready to view. */
+export async function sendHuntProductsReadyEmail(input: {
+  userId: string;
+  resultId: string;
+  productCount: number;
+}): Promise<void> {
+  const email = await getUserEmail(input.userId);
+  if (!email) return;
+
+  const viewUrl = `${getAppOrigin()}/dashboard/hunting?resultId=${encodeURIComponent(input.resultId)}`;
+  const count = input.productCount;
+
+  try {
+    await sendEmail({
+      to: email,
+      subject: `Your hunt is ready — ${count} hot product${count === 1 ? "" : "s"}`,
+      text: [
+        `HuntPro found ${count} hot-selling product${count === 1 ? "" : "s"} for you.`,
+        "",
+        `View products: ${viewUrl}`,
+      ].join("\n"),
+      html: `
+        <div style="font-family:Arial,sans-serif;line-height:1.5;color:#111827">
+          <p style="margin:0 0 12px">HuntPro found <strong>${count}</strong> hot-selling product${count === 1 ? "" : "s"} for you.</p>
+          <p style="margin:0 0 20px">Open EcomTool to review them and start listing.</p>
+          <a href="${viewUrl}" style="display:inline-block;background:#5842F4;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:600">
+            View Products
+          </a>
+        </div>
+      `,
+    });
+  } catch {
+    // Best-effort — hunting result is already saved.
+  }
 }

@@ -1,21 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { DashboardLayout } from "@/features/dashboard/components/DashboardLayout";
 import type { HuntProProduct, HuntProResult } from "@/types/huntpro";
 
-const POLL_INTERVAL_MS = 3000;
-const POLL_TIMEOUT_MS = 90000;
+const POLL_INTERVAL_MS = 5000;
 
-const HUNTPRO_EXTENSION_URL =
-  "https://chromewebstore.google.com/search/HuntPro";
+const GRABLEY_EXTENSION_URL =
+  "https://chromewebstore.google.com/detail/grabley-product-search-to/hppdgjpcbnbfapnailmeiibngpolplao";
+const HUNTPRO_EXTENSION_URL = "https://chromewebstore.google.com/search/HuntPro";
 const HUNTPRO_CONNECT_URL = "/api/huntpro/connect";
-const ONBOARDED_STORAGE_KEY = "huntpro_onboarded";
 
-const DAY_FILTER_OPTIONS = [5, 10, 15, 20, 25, 30] as const;
-const DEFAULT_DAY_FILTER = 30;
+const GRABLEY_DONE_KEY = "ecomtools_grabley_done";
+const HUNTPRO_ONBOARDED_KEY = "huntpro_onboarded";
+const HUNT_ACTIVE_KEY = "ecomtools_random_hunt_active";
+const RANDOM_HOT_KEYWORD = "random-hot";
+const RANDOM_TARGET_COUNT = 20;
 
-type OnboardStep = "install" | "connect" | null;
+type OnboardStep = "grabley" | "huntpro" | "connect" | null;
 
 function formatPrice(value: number): string {
   return `£${Number(value || 0).toFixed(2)}`;
@@ -26,23 +29,22 @@ function aliExpressSearchUrl(title: string): string {
 }
 
 export function HuntProShell() {
+  const searchParams = useSearchParams();
+  const resultIdFromEmail = searchParams.get("resultId")?.trim() || null;
+
   const [userId, setUserId] = useState<string | null>(null);
   const [keyword, setKeyword] = useState("");
   const [searching, setSearching] = useState(false);
+  const [randomHunting, setRandomHunting] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [result, setResult] = useState<HuntProResult | null>(null);
   const [onboardStep, setOnboardStep] = useState<OnboardStep>(null);
   const [connecting, setConnecting] = useState(false);
-  const [days, setDays] = useState<number>(DEFAULT_DAY_FILTER);
-  // The day window that produced the currently-displayed result.
-  const [resultDays, setResultDays] = useState<number>(DEFAULT_DAY_FILTER);
+  const [days, setDays] = useState(7);
+  const [resultDays, setResultDays] = useState(7);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const searchStartedAtRef = useRef<number>(0);
-  // Snapshot of the latest result id when a search starts, so we can detect a
-  // newly-arrived result without relying on the browser clock (avoids skew).
   const baselineResultIdRef = useRef<string | null>(null);
 
   const stopPolling = useCallback(() => {
@@ -50,17 +52,18 @@ export function HuntProShell() {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
   }, []);
 
   const fetchLatest = useCallback(
-    async (id: string, searchKeyword: string): Promise<HuntProResult | null> => {
-      const response = await fetch(
-        `/api/hunting/receive?userId=${encodeURIComponent(id)}&keyword=${encodeURIComponent(searchKeyword)}`,
-      );
+    async (
+      id: string,
+      options?: { keyword?: string; resultId?: string },
+    ): Promise<HuntProResult | null> => {
+      const params = new URLSearchParams({ userId: id });
+      if (options?.resultId) params.set("resultId", options.resultId);
+      else if (options?.keyword) params.set("keyword", options.keyword);
+
+      const response = await fetch(`/api/hunting/receive?${params.toString()}`);
       const data = (await response.json()) as { result?: HuntProResult | null; error?: string };
       if (!response.ok) {
         throw new Error(data.error ?? "Failed to load hunting results.");
@@ -70,65 +73,177 @@ export function HuntProShell() {
     [],
   );
 
+  const startRandomHunt = useCallback(
+    (id: string) => {
+      try {
+        localStorage.setItem(HUNT_ACTIVE_KEY, "true");
+      } catch {
+        // ignore
+      }
+      setRandomHunting(true);
+      setNotice(
+        "Random hunt started. HuntPro + Grabley will keep looking for hot products. You can close this tab — keep Chrome open. We’ll email you when results are ready.",
+      );
+      setError("");
+      setKeyword(RANDOM_HOT_KEYWORD);
+      setResultDays(7);
+      baselineResultIdRef.current = null;
+
+      window.postMessage(
+        {
+          type: "HUNTPRO_RANDOM_HUNT",
+          source: "ecomtool",
+          userId: id,
+          keyword: RANDOM_HOT_KEYWORD,
+          targetCount: RANDOM_TARGET_COUNT,
+          minDailySales: 1,
+          lookbackDays: 7,
+          useGrableyHistory: true,
+        },
+        "*",
+      );
+
+      stopPolling();
+      pollRef.current = setInterval(() => {
+        void (async () => {
+          try {
+            const latest = await fetchLatest(id, { keyword: RANDOM_HOT_KEYWORD });
+            if (latest && latest.id !== baselineResultIdRef.current && (latest.products?.length ?? 0) > 0) {
+              baselineResultIdRef.current = latest.id;
+              setResult(latest);
+              setRandomHunting(false);
+              setNotice("Hunt complete — hot products are ready below. We also emailed you a View Products link.");
+              try {
+                localStorage.removeItem(HUNT_ACTIVE_KEY);
+              } catch {
+                // ignore
+              }
+              stopPolling();
+            }
+          } catch {
+            // keep polling quietly
+          }
+        })();
+      }, POLL_INTERVAL_MS);
+    },
+    [fetchLatest, stopPolling],
+  );
+
+  const completeOnboarding = useCallback(
+    (id?: string | null) => {
+      try {
+        localStorage.setItem(HUNTPRO_ONBOARDED_KEY, "true");
+        localStorage.setItem(GRABLEY_DONE_KEY, "true");
+      } catch {
+        // ignore
+      }
+      setConnecting(false);
+      setOnboardStep(null);
+      const uid = id ?? userId ?? sessionStorage.getItem("ecomtools_user_id");
+      if (uid) startRandomHunt(uid);
+    },
+    [startRandomHunt, userId],
+  );
+
   useEffect(() => {
     const id = sessionStorage.getItem("ecomtools_user_id");
     if (id) setUserId(id);
 
-    const onboarded = localStorage.getItem(ONBOARDED_STORAGE_KEY) === "true";
-    if (!onboarded) setOnboardStep("install");
+    const grableyDone = localStorage.getItem(GRABLEY_DONE_KEY) === "true";
+    const onboarded = localStorage.getItem(HUNTPRO_ONBOARDED_KEY) === "true";
+    const huntActive = localStorage.getItem(HUNT_ACTIVE_KEY) === "true";
+
+    if (!grableyDone) {
+      setOnboardStep("grabley");
+      return;
+    }
+    if (!onboarded) {
+      setOnboardStep("huntpro");
+      return;
+    }
+    if (huntActive && id) {
+      setRandomHunting(true);
+      setNotice("Random hunt still running in the background via HuntPro…");
+      startRandomHunt(id);
+    }
+    // Only on first mount — resume active hunt / show onboarding.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const completeOnboarding = useCallback(() => {
-    try {
-      localStorage.setItem(ONBOARDED_STORAGE_KEY, "true");
-    } catch {
-      // Ignore storage errors; onboarding still closes for this session.
-    }
-    setConnecting(false);
-    setOnboardStep(null);
-  }, []);
+  useEffect(() => {
+    if (!userId) return;
+    if (!resultIdFromEmail && !userId) return;
+
+    void (async () => {
+      try {
+        const latest = await fetchLatest(userId, {
+          resultId: resultIdFromEmail ?? undefined,
+          keyword: resultIdFromEmail ? undefined : RANDOM_HOT_KEYWORD,
+        });
+        if (latest) {
+          setResult(latest);
+          setResultDays(7);
+          if (resultIdFromEmail) {
+            setNotice("Showing hunted products from your email link.");
+            try {
+              localStorage.removeItem(HUNT_ACTIVE_KEY);
+            } catch {
+              // ignore
+            }
+            setRandomHunting(false);
+          }
+        }
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : "Failed to load hunt results.");
+      }
+    })();
+  }, [userId, resultIdFromEmail, fetchLatest]);
 
   useEffect(() => {
     return () => stopPolling();
   }, [stopPolling]);
 
-  // Listen for the connect confirmation from the HuntPro extension / connect tab.
   useEffect(() => {
     function onConnectMessage(event: MessageEvent) {
       const data = event.data as { type?: string; userId?: string } | null;
       if (!data || data.type !== "ECOMTOOL_HUNTPRO_CONNECT") return;
       if (data.userId) setUserId(data.userId);
-      completeOnboarding();
+      completeOnboarding(data.userId);
     }
 
     window.addEventListener("message", onConnectMessage);
     return () => window.removeEventListener("message", onConnectMessage);
   }, [completeOnboarding]);
 
-  // Listen for results pushed directly by the HuntPro extension.
   useEffect(() => {
     function onMessage(event: MessageEvent) {
       const data = event.data as { type?: string } | null;
       if (!data || data.type !== "HUNTPRO_RESULTS") return;
-      if (!userId || !keyword.trim()) return;
+      if (!userId) return;
       void (async () => {
         try {
-          const latest = await fetchLatest(userId, keyword.trim());
-          if (latest && latest.id !== baselineResultIdRef.current) {
+          const latest = await fetchLatest(userId, { keyword: RANDOM_HOT_KEYWORD });
+          if (latest && (latest.products?.length ?? 0) > 0) {
             setResult(latest);
             setSearching(false);
-            setNotice("");
+            setRandomHunting(false);
+            setNotice("Hunt complete — hot products are ready below.");
+            try {
+              localStorage.removeItem(HUNT_ACTIVE_KEY);
+            } catch {
+              // ignore
+            }
             stopPolling();
           }
         } catch {
-          // Ignore; polling will continue to retry.
+          // polling continues
         }
       })();
     }
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [userId, keyword, fetchLatest, stopPolling]);
+  }, [userId, fetchLatest, stopPolling]);
 
   async function handleSearch(event: React.FormEvent) {
     event.preventDefault();
@@ -146,25 +261,20 @@ export function HuntProShell() {
     setError("");
     setResult(null);
     setSearching(true);
-    setNotice("Asking HuntPro to scrape eBay… keep this tab open.");
-    searchStartedAtRef.current = Date.now();
+    setNotice("Asking HuntPro to scrape eBay…");
+    setResultDays(days);
 
-    // Snapshot the current latest result so we only show a freshly-scraped one.
-    // Using the result id (not timestamps) avoids browser/server clock skew.
     try {
-      const existing = await fetchLatest(userId, trimmed);
+      const existing = await fetchLatest(userId, { keyword: trimmed });
       baselineResultIdRef.current = existing?.id ?? null;
     } catch {
       baselineResultIdRef.current = null;
     }
 
-    setResultDays(days);
-
-    // Tell the HuntPro Chrome extension to start scraping eBay for this keyword.
     window.postMessage(
       {
         type: "HUNTPRO_SEARCH",
-        source: "huntpro-extension",
+        source: "ecomtool",
         userId,
         keyword: trimmed,
         days,
@@ -175,7 +285,7 @@ export function HuntProShell() {
     pollRef.current = setInterval(() => {
       void (async () => {
         try {
-          const latest = await fetchLatest(userId, trimmed);
+          const latest = await fetchLatest(userId, { keyword: trimmed });
           if (latest && latest.id !== baselineResultIdRef.current) {
             setResult(latest);
             setSearching(false);
@@ -187,38 +297,9 @@ export function HuntProShell() {
         }
       })();
     }, POLL_INTERVAL_MS);
-
-    timeoutRef.current = setTimeout(() => {
-      void (async () => {
-        stopPolling();
-        setSearching(false);
-        // Last-chance: if any result for this keyword exists, show it rather
-        // than leaving the page blank.
-        try {
-          const latest = await fetchLatest(userId, trimmed);
-          if (latest) {
-            setResult(latest);
-            setNotice("");
-            return;
-          }
-        } catch {
-          // fall through to the error message below
-        }
-        setResult((current) => {
-          if (!current) {
-            setNotice("");
-            setError(
-              "No results yet. Make sure the HuntPro extension is installed and try again.",
-            );
-          }
-          return current;
-        });
-      })();
-    }, POLL_TIMEOUT_MS);
   }
 
   const statistics = result?.statistics;
-  // Most-sold products first, then by sold price as a tiebreaker.
   const products = [...(result?.products ?? [])].sort((a, b) => {
     const countDiff = (b.soldCount ?? 0) - (a.soldCount ?? 0);
     if (countDiff !== 0) return countDiff;
@@ -246,15 +327,27 @@ export function HuntProShell() {
   return (
     <DashboardLayout>
       <div className="mx-auto max-w-[1200px] p-6 lg:p-8">
-        <header className="mb-6">
-          <span className="inline-flex rounded-full border border-[#DDD6FE] bg-brand-light px-3 py-1 text-xs font-semibold text-brand">
-            Product Discovery
-          </span>
-          <h1 className="mt-3 text-2xl font-bold text-[#111827] lg:text-3xl">Product Hunting</h1>
-          <p className="mt-1 max-w-xl text-sm leading-relaxed text-[#6B7280]">
-            Search a keyword and pick a day range. HuntPro scrapes eBay sold listings and shows the
-            most-sold products on top — only items listed in the last month.
-          </p>
+        <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <span className="inline-flex rounded-full border border-[#DDD6FE] bg-brand-light px-3 py-1 text-xs font-semibold text-brand">
+              Product Discovery
+            </span>
+            <h1 className="mt-3 text-2xl font-bold text-[#111827] lg:text-3xl">Product Hunting</h1>
+            <p className="mt-1 max-w-xl text-sm leading-relaxed text-[#6B7280]">
+              Install Grabley + HuntPro, connect once, then auto-hunt random hot eBay products (1+
+              sales/day, strong last 7 days). We email you when ready.
+            </p>
+          </div>
+          {userId && onboardStep === null ? (
+            <button
+              type="button"
+              onClick={() => startRandomHunt(userId)}
+              disabled={randomHunting}
+              className="inline-flex items-center justify-center rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(88,66,244,0.28)] transition-all hover:bg-brand-dark disabled:opacity-60"
+            >
+              {randomHunting ? "Hunting…" : "Start random hunt"}
+            </button>
+          ) : null}
         </header>
 
         <form
@@ -270,52 +363,48 @@ export function HuntProShell() {
             </span>
             <input
               type="text"
-              value={keyword}
+              value={keyword === RANDOM_HOT_KEYWORD ? "" : keyword}
               onChange={(event) => setKeyword(event.target.value)}
-              placeholder="e.g. wireless earbuds"
+              placeholder="Optional keyword search, e.g. wireless earbuds"
               className="w-full rounded-xl border border-gray-200 bg-white py-3 pl-10 pr-4 text-sm font-medium text-[#374151] outline-none focus:border-brand focus:ring-4 focus:ring-brand/10"
             />
           </div>
-          <div>
-            <label htmlFor="hunt-days" className="sr-only">
-              Sold within
-            </label>
-            <select
-              id="hunt-days"
-              value={days}
-              onChange={(event) => setDays(Number(event.target.value))}
-              className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-medium text-[#374151] outline-none focus:border-brand focus:ring-4 focus:ring-brand/10 sm:w-auto"
-            >
-              {DAY_FILTER_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  Last {option} days
-                </option>
-              ))}
-            </select>
-          </div>
+          <select
+            value={days}
+            onChange={(event) => setDays(Number(event.target.value))}
+            className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-medium text-[#374151] outline-none focus:border-brand focus:ring-4 focus:ring-brand/10 sm:w-auto"
+          >
+            {[7, 10, 15, 20, 30].map((option) => (
+              <option key={option} value={option}>
+                Last {option} days
+              </option>
+            ))}
+          </select>
           <button
             type="submit"
             disabled={searching || !userId}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand px-6 py-3 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(88,66,244,0.35)] transition-all hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-6 py-3 text-sm font-semibold text-[#374151] transition-all hover:bg-gray-50 disabled:opacity-60"
           >
-            {searching ? "Searching…" : "Search"}
+            {searching ? "Searching…" : "Keyword search"}
           </button>
         </form>
 
-        {error && (
+        {error ? (
           <div className="mb-6 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-medium text-red-600">
             {error}
           </div>
-        )}
-        {notice && (
-          <div className="mb-6 flex items-center gap-3 rounded-xl border border-brand/20 bg-brand-light px-4 py-3 text-sm font-medium text-brand">
-            <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden>
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            {notice}
+        ) : null}
+        {notice ? (
+          <div className="mb-6 flex items-start gap-3 rounded-xl border border-brand/20 bg-brand-light px-4 py-3 text-sm font-medium text-brand">
+            {(searching || randomHunting) && (
+              <svg className="mt-0.5 h-4 w-4 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            )}
+            <span>{notice}</span>
           </div>
-        )}
+        ) : null}
 
         <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
           {statCards.map((stat) => (
@@ -336,29 +425,58 @@ export function HuntProShell() {
               />
             ))}
           </div>
-        ) : !searching ? (
+        ) : !searching && !randomHunting ? (
           <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50/60 px-6 py-12 text-center">
-            <p className="text-sm font-medium text-[#374151]">No results yet</p>
+            <p className="text-sm font-medium text-[#374151]">No hunted products yet</p>
             <p className="mt-1 text-xs text-[#6B7280]">
-              Enter a keyword and click Search. HuntPro will scrape eBay and results will show here.
+              Finish Grabley + HuntPro setup, or tap Start random hunt. Results also open from your
+              email &quot;View Products&quot; button.
             </p>
           </div>
         ) : null}
       </div>
 
-      {onboardStep === "install" ? (
+      {onboardStep === "grabley" ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4">
           <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-6 text-center shadow-2xl">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-light text-brand">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden>
-                <path d="M4 8h16l-1.5 10H5.5L4 8z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-                <path d="M9 8V6a3 3 0 016 0v2" stroke="currentColor" strokeWidth="1.5" />
-              </svg>
-            </div>
-            <h3 className="mt-4 text-lg font-bold text-[#111827]">Add the HuntPro extension</h3>
+            <h3 className="text-lg font-bold text-[#111827]">Install Grabley</h3>
             <p className="mt-2 text-sm text-[#6B7280]">
-              To hunt products, install the free HuntPro Chrome extension. It scrapes eBay sold
-              listings and sends the results straight here.
+              Grabley adds the <strong>[history]</strong> button on eBay listings so HuntPro can
+              read sold history and find hot products.
+            </p>
+            <a
+              href={GRABLEY_EXTENSION_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-brand-dark"
+            >
+              Add Grabley extension
+            </a>
+            <button
+              type="button"
+              onClick={() => {
+                try {
+                  localStorage.setItem(GRABLEY_DONE_KEY, "true");
+                } catch {
+                  // ignore
+                }
+                setOnboardStep("huntpro");
+              }}
+              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#374151] transition-all hover:bg-gray-50"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {onboardStep === "huntpro" ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-6 text-center shadow-2xl">
+            <h3 className="text-lg font-bold text-[#111827]">Install HuntPro</h3>
+            <p className="mt-2 text-sm text-[#6B7280]">
+              HuntPro finds random hot eBay products using Grabley sold history, then sends them to
+              EcomTool — even if you close this tab (keep Chrome open).
             </p>
             <a
               href={HUNTPRO_EXTENSION_URL}
@@ -366,7 +484,7 @@ export function HuntProShell() {
               rel="noopener noreferrer"
               className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-brand-dark"
             >
-              Add Extension
+              Add HuntPro extension
             </a>
             <button
               type="button"
@@ -382,21 +500,10 @@ export function HuntProShell() {
       {onboardStep === "connect" ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4">
           <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-6 text-center shadow-2xl">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-light text-brand">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden>
-                <path
-                  d="M9 12l2 2 4-4M7.5 5.5l-2 2a3 3 0 000 4l3 3M16.5 18.5l2-2a3 3 0 000-4l-3-3"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </div>
-            <h3 className="mt-4 text-lg font-bold text-[#111827]">Connect the extension</h3>
+            <h3 className="text-lg font-bold text-[#111827]">Connect HuntPro</h3>
             <p className="mt-2 text-sm text-[#6B7280]">
-              Click connect and HuntPro will link to your EcomTool account automatically. Then you
-              can start hunting products.
+              Link HuntPro to your EcomTool account. Random hunting starts automatically right after
+              connect.
             </p>
             <a
               href={HUNTPRO_CONNECT_URL}
@@ -405,14 +512,14 @@ export function HuntProShell() {
               onClick={() => setConnecting(true)}
               className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-brand-dark"
             >
-              {connecting ? "Connecting…" : "Connect"}
+              {connecting ? "Connecting…" : "Connect HuntPro"}
             </a>
             <button
               type="button"
-              onClick={completeOnboarding}
+              onClick={() => completeOnboarding()}
               className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#374151] transition-all hover:bg-gray-50"
             >
-              Done
+              Done — start hunting
             </button>
           </div>
         </div>
@@ -464,12 +571,6 @@ function HuntProResultCard({ product, days }: { product: HuntProProduct; days: n
             <p className="text-sm font-bold text-emerald-600">{soldCount}</p>
           </div>
         </div>
-
-        {product.listedDate ? (
-          <p className="mt-2 text-[11px] text-[#6B7280]">
-            Listed: <span className="font-semibold text-[#374151]">{product.listedDate}</span>
-          </p>
-        ) : null}
 
         <div className="mt-4 flex flex-col gap-2">
           {product.listingUrl ? (
