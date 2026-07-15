@@ -61,5 +61,10 @@ export function mergeEditedPhotosIntoDraftPhotos(
   if (editedPhotos.length === 0) return existing;
 
   const originals = existing.map((photo) => ({ ...photo, selected: false }));
-  return [...editedPhotos, ...originals];
+  const merged = [...editedPhotos, ...originals];
+  // Safety: never leave the draft with zero selected photos.
+  if (!merged.some((photo) => photo.selected) && merged.length > 0) {
+    return merged.map((photo) => ({ ...photo, selected: true }));
+  }
+  return merged;
 }

@@ -240,8 +240,14 @@ export function AmazefAutoListReviewPage({
       return;
     }
 
+    const photos =
+      draft.photos.length > 0 && !draft.photos.some((photo) => photo.selected)
+        ? draft.photos.map((photo) => ({ ...photo, selected: true }))
+        : draft.photos;
+
     const listingDraft = ensureAmazefOffers({
       ...draft,
+      photos,
       product: {
         ...draft.product,
         handlingTimeLabel: normalizeAmazefHandlingTimeLabel(draft.product.handlingTimeLabel, "1 day"),

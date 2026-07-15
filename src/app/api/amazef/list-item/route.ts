@@ -7,11 +7,24 @@ import { logUserApiRequest } from "@/lib/requests/tracker";
 import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
 import type { ListingDraft } from "@/types/listing-generator";
 
+/** AI merge can leave backup originals as selected:false; treat any real photo as usable. */
+function ensureListingPhotosSelected(draft: ListingDraft): ListingDraft {
+  const photos = draft.photos ?? [];
+  if (photos.length === 0) return draft;
+  if (photos.some((photo) => photo.selected)) return draft;
+  return {
+    ...draft,
+    photos: photos.map((photo) => ({ ...photo, selected: true })),
+  };
+}
+
 function validateDraft(draft: ListingDraft): string | null {
   if (!draft.listing.seoTitle.trim()) return "Title is required.";
   if (draft.listing.seoTitle.length > 80) return "Title must be 80 characters or less.";
   if (draft.listing.suggestedPrice <= 0) return "Price must be greater than 0.";
-  if (!draft.photos.some((photo) => photo.selected)) return "Select at least one photo.";
+  if (!draft.photos.some((photo) => Boolean(photo.url?.trim()))) {
+    return "Select at least one photo.";
+  }
 
   if (!draft.product.internalProductSku?.trim()) {
     return "Internal product SKU is missing. Re-open the listing wizard to assign SKUs.";
@@ -55,7 +68,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "draft is required." }, { status: 400 });
     }
 
-    const validationError = validateDraft(body.draft);
+    const draft = ensureListingPhotosSelected(body.draft);
+
+    const validationError = validateDraft(draft);
     if (validationError) {
       return NextResponse.json({ error: validationError }, { status: 400 });
     }
@@ -65,12 +80,12 @@ export async function POST(request: NextRequest) {
 
     const result = await listDraftOnAmazef(
       userId,
-      body.draft,
-      buildAmazefPromotionsFromDraft(body.draft, body.draft.pricingBreakdown?.recommendedPrice),
+      draft,
+      buildAmazefPromotionsFromDraft(draft, draft.pricingBreakdown?.recommendedPrice),
     );
 
     try {
-      await saveListedProduct(userId, "amazef", body.draft, result);
+      await saveListedProduct(userId, "amazef", draft, result);
     } catch (error) {
       console.error("[Amazef list-item] Failed to save listed product:", error);
     }
