@@ -89,6 +89,52 @@ export function amazefShippingStorageKey(userId: string) {
   return `amazef-default-shipping-days-${userId}`;
 }
 
+export function amazefHandlingStorageKey(userId: string) {
+  return `amazef-default-handling-time-${userId}`;
+}
+
+/** Amazef seller rule: handling / processing time cannot exceed 5 days. */
+export const AMAZEF_MAX_HANDLING_DAYS = 5;
+
+/**
+ * Normalize a handling-time label and clamp any day numbers to Amazef's max (5).
+ * Examples: "6 days" → "5 days", "3 to 7 days" → "3 to 5 days", "1-2 days" unchanged.
+ */
+export function normalizeAmazefHandlingTimeLabel(
+  raw: string | null | undefined,
+  fallback = "1 day",
+): string {
+  const trimmed = raw?.trim() ?? "";
+  if (!trimmed) return fallback;
+
+  const rangeMatch = trimmed.match(
+    /(\d+)\s*(?:to|-|–|—)\s*(\d+)/i,
+  );
+  if (rangeMatch) {
+    const low = Math.min(
+      AMAZEF_MAX_HANDLING_DAYS,
+      Math.max(1, Number.parseInt(rangeMatch[1], 10)),
+    );
+    const high = Math.min(
+      AMAZEF_MAX_HANDLING_DAYS,
+      Math.max(low, Number.parseInt(rangeMatch[2], 10)),
+    );
+    if (low === high) return low === 1 ? "1 day" : `${low} days`;
+    return `${low} to ${high} days`;
+  }
+
+  const singleMatch = trimmed.match(/(\d+)/);
+  if (singleMatch) {
+    const days = Math.min(
+      AMAZEF_MAX_HANDLING_DAYS,
+      Math.max(1, Number.parseInt(singleMatch[1], 10)),
+    );
+    return days === 1 ? "1 day" : `${days} days`;
+  }
+
+  return trimmed || fallback;
+}
+
 export function normalizeCharmRules(input: unknown): CharmRule[] {
   if (!Array.isArray(input)) return [];
   return input

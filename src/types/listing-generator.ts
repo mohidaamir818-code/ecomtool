@@ -29,6 +29,8 @@ export interface ListingProductSource {
   variants?: ListingProductVariant[];
   internalProductSku?: string;
   shippingDaysLabel?: string | null;
+  /** Amazef handling / processing time before dispatch (e.g. "1 day", "1-2 days"). */
+  handlingTimeLabel?: string | null;
 }
 
 export interface GeneratedListingItemSpecific {

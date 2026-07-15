@@ -2,6 +2,7 @@ import "server-only";
 
 import { serverEnv } from "@/lib/env";
 import { getAmazefEmail } from "@/lib/amazef/connection";
+import { normalizeAmazefHandlingTimeLabel } from "@/features/listings/lib/amazef-auto-listing";
 import { fetchAliExpressShippingDaysLabel } from "@/lib/listings/aliexpress-shipping-days";
 import type { ListingDraft, ListOnEbayResult } from "@/types/listing-generator";
 
@@ -85,7 +86,12 @@ export async function listDraftOnAmazef(
     shippingDaysLabel = await fetchAliExpressShippingDaysLabel(draft.product.productUrl);
   }
 
-  const listingDraft = normalizeDraftForAmazef(draft, shippingDaysLabel);
+  const handlingTimeLabel = normalizeAmazefHandlingTimeLabel(
+    draft.product.handlingTimeLabel,
+    "1 day",
+  );
+
+  const listingDraft = normalizeDraftForAmazef(draft, shippingDaysLabel, handlingTimeLabel);
 
   const secret = serverEnv.amazefListingSecret();
   const controller = new AbortController();
@@ -105,6 +111,8 @@ export async function listDraftOnAmazef(
         externalUserRef: amazefEmail,
         draft: listingDraft,
         shippingDays: shippingDaysLabel,
+        deliveryTime: shippingDaysLabel,
+        handlingTime: handlingTimeLabel,
         ...(promotions && Object.keys(promotions).length > 0 ? { promotions } : {}),
       }),
       cache: "no-store",
@@ -193,6 +201,7 @@ function resolveSellableQuantity(variant: ListingDraft["variants"][number]): num
 function normalizeDraftForAmazef(
   draft: ListingDraft,
   shippingDaysLabel: string | null,
+  handlingTimeLabel: string | null,
 ): ListingDraft {
   const variants = draft.variants.map((variant) => {
     const sellable = resolveSellableQuantity(variant);
@@ -215,6 +224,7 @@ function normalizeDraftForAmazef(
       ...draft.product,
       stock: productStock,
       ...(shippingDaysLabel ? { shippingDaysLabel } : {}),
+      ...(handlingTimeLabel ? { handlingTimeLabel } : {}),
     },
   };
 }

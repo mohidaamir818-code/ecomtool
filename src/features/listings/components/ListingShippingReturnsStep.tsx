@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EbayBusinessPolicies, EbayPoliciesResponse, ListingDraft, ListingPlatform } from "@/types/listing-generator";
+import {
+  amazefHandlingStorageKey,
+  amazefShippingStorageKey,
+  normalizeAmazefHandlingTimeLabel,
+} from "@/features/listings/lib/amazef-auto-listing";
 import { listingPlatformLabel } from "@/features/listings/lib/vero-platform";
 
 const SELLER_HUB_URLS: Record<string, string> = {
@@ -9,10 +14,6 @@ const SELLER_HUB_URLS: Record<string, string> = {
   EBAY_US: "https://www.ebay.com/sh/landing",
   EBAY_DE: "https://www.ebay.de/sh/landing",
 };
-
-function amazefShippingStorageKey(userId: string) {
-  return `amazef-default-shipping-days-${userId}`;
-}
 
 interface ListingShippingReturnsStepProps {
   userId: string;
@@ -39,6 +40,7 @@ export function ListingShippingReturnsStep({
   const [shippingLoading, setShippingLoading] = useState(false);
   const [detectedShippingLabel, setDetectedShippingLabel] = useState<string | null>(null);
   const shippingManuallyEdited = useRef(Boolean(draft.product.shippingDaysLabel?.trim()));
+  const handlingManuallyEdited = useRef(Boolean(draft.product.handlingTimeLabel?.trim()));
 
   useEffect(() => {
     productRef.current = draft.product;
@@ -46,6 +48,34 @@ export function ListingShippingReturnsStep({
 
   useEffect(() => {
     if (platform !== "amazef") return;
+
+    const savedHandling = localStorage.getItem(amazefHandlingStorageKey(userId))?.trim();
+    if (savedHandling && !draft.product.handlingTimeLabel?.trim()) {
+      handlingManuallyEdited.current = true;
+      onChange({
+        product: {
+          ...productRef.current,
+          handlingTimeLabel: normalizeAmazefHandlingTimeLabel(savedHandling),
+        },
+      });
+    } else if (!draft.product.handlingTimeLabel?.trim() && !handlingManuallyEdited.current) {
+      onChange({
+        product: {
+          ...productRef.current,
+          handlingTimeLabel: "1 day",
+        },
+      });
+    } else if (draft.product.handlingTimeLabel?.trim()) {
+      const normalized = normalizeAmazefHandlingTimeLabel(draft.product.handlingTimeLabel);
+      if (normalized !== draft.product.handlingTimeLabel.trim()) {
+        onChange({
+          product: {
+            ...productRef.current,
+            handlingTimeLabel: normalized,
+          },
+        });
+      }
+    }
 
     const savedLabel = localStorage.getItem(amazefShippingStorageKey(userId))?.trim();
     if (savedLabel && !draft.product.shippingDaysLabel?.trim()) {
@@ -82,7 +112,7 @@ export function ListingShippingReturnsStep({
       })
       .catch(() => undefined)
       .finally(() => setShippingLoading(false));
-  }, [platform, userId, draft.product.productUrl, draft.product.shippingDaysLabel, onChange]);
+  }, [platform, userId, draft.product.productUrl, draft.product.shippingDaysLabel, draft.product.handlingTimeLabel, onChange]);
 
   function updateShippingDaysLabel(value: string) {
     shippingManuallyEdited.current = true;
@@ -96,6 +126,34 @@ export function ListingShippingReturnsStep({
       product: {
         ...draft.product,
         shippingDaysLabel: value,
+      },
+    });
+  }
+
+  function updateHandlingTimeLabel(value: string) {
+    handlingManuallyEdited.current = true;
+    const trimmed = value.trim();
+    if (trimmed) {
+      localStorage.setItem(amazefHandlingStorageKey(userId), trimmed);
+    } else {
+      localStorage.removeItem(amazefHandlingStorageKey(userId));
+    }
+    onChange({
+      product: {
+        ...draft.product,
+        handlingTimeLabel: value,
+      },
+    });
+  }
+
+  function commitHandlingTimeLabel() {
+    const normalized = normalizeAmazefHandlingTimeLabel(draft.product.handlingTimeLabel, "1 day");
+    handlingManuallyEdited.current = true;
+    localStorage.setItem(amazefHandlingStorageKey(userId), normalized);
+    onChange({
+      product: {
+        ...draft.product,
+        handlingTimeLabel: normalized,
       },
     });
   }
@@ -176,10 +234,25 @@ export function ListingShippingReturnsStep({
             />
           </label>
 
+          <label className="mt-4 block">
+            <span className="text-sm font-medium text-[#111827]">Handling time on {platformName}</span>
+            <input
+              type="text"
+              value={draft.product.handlingTimeLabel ?? ""}
+              onChange={(event) => updateHandlingTimeLabel(event.target.value)}
+              onBlur={() => commitHandlingTimeLabel()}
+              placeholder="e.g. 1 day or 1-2 days (max 5)"
+              className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm text-[#111827] outline-none focus:border-brand"
+            />
+            <span className="mt-1 block text-xs text-[#9CA3AF]">Amazef max: 5 days</span>
+          </label>
+
           <p className="mt-3 text-xs text-[#9CA3AF]">
-            You can keep the suggested value or type your own. Use formats like{" "}
+            You can keep the suggested value or type your own. Delivery examples:{" "}
             <span className="font-medium">7 days</span> or{" "}
-            <span className="font-medium">6 to 10 days</span>.
+            <span className="font-medium">6 to 10 days</span>. Handling examples:{" "}
+            <span className="font-medium">1 day</span> or{" "}
+            <span className="font-medium">1-2 days</span>.
           </p>
         </div>
       </div>

@@ -1,11 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   ListingDraft,
   ListingPhotoDraft,
   ListingVariantDraft,
 } from "@/types/listing-generator";
+import {
+  amazefHandlingStorageKey,
+  amazefShippingStorageKey,
+  normalizeAmazefHandlingTimeLabel,
+} from "@/features/listings/lib/amazef-auto-listing";
 import { ensureAmazefOffers } from "@/features/listings/lib/amazef-offers";
 import { ebayPrimaryButtonClass, ebaySecondaryButtonClass } from "@/features/listings/lib/ebay-ui";
 import { AmazefBestOffersPanel } from "./AmazefBestOffersPanel";
@@ -34,6 +39,15 @@ export function AmazefAutoListReviewPage({
   const [flaggingDescriptionPhotos, setFlaggingDescriptionPhotos] = useState(false);
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
+  const [shippingLoading, setShippingLoading] = useState(false);
+  const [detectedShippingLabel, setDetectedShippingLabel] = useState<string | null>(null);
+  const shippingManuallyEdited = useRef(Boolean(draft.product.shippingDaysLabel?.trim()));
+  const handlingManuallyEdited = useRef(Boolean(draft.product.handlingTimeLabel?.trim()));
+  const productRef = useRef(draft.product);
+
+  useEffect(() => {
+    productRef.current = draft.product;
+  }, [draft.product]);
 
   useEffect(() => {
     if (!draft.amazefOffers) {
@@ -41,6 +55,75 @@ export function AmazefAutoListReviewPage({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const savedHandling = localStorage.getItem(amazefHandlingStorageKey(userId))?.trim();
+    if (savedHandling && !draft.product.handlingTimeLabel?.trim()) {
+      handlingManuallyEdited.current = true;
+      onChange({
+        product: {
+          ...productRef.current,
+          handlingTimeLabel: normalizeAmazefHandlingTimeLabel(savedHandling),
+        },
+      });
+    } else if (!draft.product.handlingTimeLabel?.trim() && !handlingManuallyEdited.current) {
+      onChange({
+        product: {
+          ...productRef.current,
+          handlingTimeLabel: "1 day",
+        },
+      });
+    } else if (draft.product.handlingTimeLabel?.trim()) {
+      const normalized = normalizeAmazefHandlingTimeLabel(draft.product.handlingTimeLabel);
+      if (normalized !== draft.product.handlingTimeLabel.trim()) {
+        onChange({
+          product: {
+            ...productRef.current,
+            handlingTimeLabel: normalized,
+          },
+        });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
+  useEffect(() => {
+    const savedLabel = localStorage.getItem(amazefShippingStorageKey(userId))?.trim();
+    if (savedLabel && !draft.product.shippingDaysLabel?.trim()) {
+      shippingManuallyEdited.current = true;
+      onChange({
+        product: {
+          ...productRef.current,
+          shippingDaysLabel: savedLabel,
+        },
+      });
+      return;
+    }
+
+    const productUrl = draft.product.productUrl?.trim();
+    if (!productUrl || shippingManuallyEdited.current || draft.product.shippingDaysLabel?.trim()) {
+      return;
+    }
+
+    setShippingLoading(true);
+    void fetch(`/api/listings/shipping-days?url=${encodeURIComponent(productUrl)}`)
+      .then(async (response) => {
+        const data = (await response.json()) as { shippingDaysLabel?: string | null };
+        if (data.shippingDaysLabel) {
+          setDetectedShippingLabel(data.shippingDaysLabel);
+          if (!shippingManuallyEdited.current) {
+            onChange({
+              product: {
+                ...productRef.current,
+                shippingDaysLabel: data.shippingDaysLabel,
+              },
+            });
+          }
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => setShippingLoading(false));
+  }, [userId, draft.product.productUrl, draft.product.shippingDaysLabel, onChange]);
 
   useEffect(() => {
     const photos = draft.descriptionPhotos ?? [];
@@ -92,6 +175,50 @@ export function AmazefAutoListReviewPage({
 
   function updateListing(patch: Partial<ListingDraft["listing"]>) {
     onChange({ listing: { ...draft.listing, ...patch } });
+  }
+
+  function updateShippingDaysLabel(value: string) {
+    shippingManuallyEdited.current = true;
+    const trimmed = value.trim();
+    if (trimmed) {
+      localStorage.setItem(amazefShippingStorageKey(userId), trimmed);
+    } else {
+      localStorage.removeItem(amazefShippingStorageKey(userId));
+    }
+    onChange({
+      product: {
+        ...draft.product,
+        shippingDaysLabel: value,
+      },
+    });
+  }
+
+  function updateHandlingTimeLabel(value: string) {
+    handlingManuallyEdited.current = true;
+    const trimmed = value.trim();
+    if (trimmed) {
+      localStorage.setItem(amazefHandlingStorageKey(userId), trimmed);
+    } else {
+      localStorage.removeItem(amazefHandlingStorageKey(userId));
+    }
+    onChange({
+      product: {
+        ...draft.product,
+        handlingTimeLabel: value,
+      },
+    });
+  }
+
+  function commitHandlingTimeLabel() {
+    const normalized = normalizeAmazefHandlingTimeLabel(draft.product.handlingTimeLabel, "1 day");
+    handlingManuallyEdited.current = true;
+    localStorage.setItem(amazefHandlingStorageKey(userId), normalized);
+    onChange({
+      product: {
+        ...draft.product,
+        handlingTimeLabel: normalized,
+      },
+    });
   }
 
   async function handleListOnAmazef() {
@@ -268,6 +395,57 @@ export function AmazefAutoListReviewPage({
       <section className="border-b border-[#E5E5E5] py-8">
         <h2 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#191919]">Best offer</h2>
         <AmazefBestOffersPanel userId={userId} draft={ensureAmazefOffers(draft)} onChange={onChange} />
+      </section>
+
+      <section className="border-b border-[#E5E5E5] py-8">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-[#191919]">
+          Delivery &amp; handling
+        </h2>
+        <p className="mt-2 text-sm text-[#707070]">
+          These times are sent to Amazef with the listing. Edit them if you want different values.
+        </p>
+
+        {shippingLoading ? (
+          <p className="mt-4 text-sm text-[#707070]">Detecting AliExpress delivery dates…</p>
+        ) : detectedShippingLabel ? (
+          <p className="mt-4 text-sm text-[#374151]">
+            Suggested from AliExpress:{" "}
+            <span className="font-semibold text-[#3665F3]">{detectedShippingLabel}</span>
+          </p>
+        ) : null}
+
+        <div className="mt-5 grid gap-5 sm:grid-cols-2">
+          <label className="block">
+            <span className="text-sm font-medium text-[#191919]">Delivery time</span>
+            <input
+              type="text"
+              value={draft.product.shippingDaysLabel ?? ""}
+              onChange={(event) => updateShippingDaysLabel(event.target.value)}
+              placeholder="e.g. 7 days or 6 to 10 days"
+              className="mt-2 w-full rounded-lg border border-[#C5C5C5] bg-white px-3 py-3 text-sm outline-none focus:border-[#3665F3]"
+            />
+          </label>
+
+          <label className="block">
+            <span className="text-sm font-medium text-[#191919]">Handling time</span>
+            <input
+              type="text"
+              value={draft.product.handlingTimeLabel ?? ""}
+              onChange={(event) => updateHandlingTimeLabel(event.target.value)}
+              onBlur={() => commitHandlingTimeLabel()}
+              placeholder="e.g. 1 day or 1-2 days (max 5)"
+              className="mt-2 w-full rounded-lg border border-[#C5C5C5] bg-white px-3 py-3 text-sm outline-none focus:border-[#3665F3]"
+            />
+            <span className="mt-1 block text-xs text-[#9CA3AF]">Amazef max: 5 days</span>
+          </label>
+        </div>
+
+        <p className="mt-3 text-xs text-[#9CA3AF]">
+          Delivery = shipping to buyer. Handling = processing before dispatch. Formats like{" "}
+          <span className="font-medium">7 days</span>,{" "}
+          <span className="font-medium">6 to 10 days</span>, or{" "}
+          <span className="font-medium">1 day</span>.
+        </p>
       </section>
 
       <section className="py-8">
