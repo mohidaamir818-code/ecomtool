@@ -8,6 +8,7 @@ import { listDraftOnEbay, resolveDraftListingCategory } from "@/lib/ebay/sell-in
 import { promoteListing } from "@/lib/ebay/promoted-listings";
 import { sendEmail } from "@/lib/email/send-email";
 import { generateEbayListing } from "@/lib/gemini/generate-listing";
+import { isAiAuthError } from "@/lib/gemini/client";
 import { checkVeroSafety } from "@/lib/gemini/vero-check";
 import { VeroAckRequiredError } from "@/lib/listings/vero-ack-error";
 import { computeListingQualityScore } from "@/features/listings/lib/listing-quality";
@@ -23,6 +24,7 @@ import {
   editAliExpressListingPhotos,
   mergeEditedPhotosIntoDraftPhotos,
 } from "@/lib/listings/ai-listing-photos";
+import { selectFulfillmentPolicyForAliExpress } from "@/lib/listings/ebay-fulfillment-policy-match";
 import { selectFulfillmentPolicyWithAi } from "@/lib/listings/select-fulfillment-policy-ai";
 import { saveListedProduct } from "@/lib/listings/listed-products-service";
 import { fetchListingProductSource } from "@/lib/listings/product-source";
@@ -130,7 +132,7 @@ async function runPrepareStep<T>(
   run: () => Promise<T>,
   options?: { timeoutMs?: number; maxAttempts?: number },
 ): Promise<T> {
-  const timeoutMs = options?.timeoutMs ?? 45_000;
+  const timeoutMs = options?.timeoutMs ?? 25_000;
   const maxAttempts = options?.maxAttempts ?? 2;
   let lastError: unknown;
 
@@ -147,6 +149,8 @@ async function runPrepareStep<T>(
       ]);
     } catch (error) {
       lastError = error;
+      // Invalid Anthropic key will never succeed on retry — fail immediately.
+      if (isAiAuthError(error)) break;
       if (attempt < maxAttempts) {
         console.warn(`[eBay prepare] ${label} failed (attempt ${attempt}), retrying…`, error);
       }
@@ -193,8 +197,13 @@ export async function prepareEbayAutoListDraft(
   );
 
   const currency = product.currency === "USD" ? "GBP" : product.currency;
+  const fixedPrice =
+    options?.manualPriceOverride != null && options.manualPriceOverride > 0
+      ? options.manualPriceOverride
+      : null;
+  const wantMarket = fixedPrice == null && settings.smartPricingEnabled;
 
-  const [vero, sellerPrefs, aliExpressShipping, policies] = await Promise.all([
+  const [vero, sellerPrefs, aliExpressShipping, policies, market] = await Promise.all([
     runPrepareStep("VeRO check", () => checkVeroSafety(product)),
     getSellerPreferences(userId, currency).then(
       (prefs) => prefs ?? defaultSellerPreferences(currency),
@@ -203,6 +212,9 @@ export async function prepareEbayAutoListDraft(
       fetchAliExpressShippingDays(product.productUrl),
     ).catch(() => null),
     runPrepareStep("eBay policies", () => fetchSellerPolicies(token, marketplaceId, { userId })),
+    wantMarket
+      ? getMarketAveragePrice(product.title, marketplaceId).catch(() => null)
+      : Promise.resolve(null),
   ]);
 
   if (!vero.safe) {
@@ -222,29 +234,21 @@ export async function prepareEbayAutoListDraft(
   };
   const aliPrice = resolveBaseAliPrice(product);
 
-  const fixedPrice =
-    options?.manualPriceOverride != null && options.manualPriceOverride > 0
-      ? options.manualPriceOverride
-      : null;
-
   let smartPrice: number | null = null;
-  if (fixedPrice == null && settings.smartPricingEnabled) {
-    smartPrice = await runPrepareStep("Market price", async () => {
-      const market = await getMarketAveragePrice(product.title, marketplaceId);
-      const smart = computeSmartPrice({
-        aliPrice,
-        feePrefs,
-        minProfitPercent: settings.minProfitPercent,
-        maxProfitPercent: settings.maxProfitPercent,
-        market,
-        undercutMode: settings.undercutMode,
-        undercutPercent: settings.marketUndercutPercent,
-        undercutAmount: settings.marketUndercutAmount,
-        charmPricing: settings.charmPricingEnabled,
-        charmRules: settings.charmRules,
-      });
-      return smart?.price ?? null;
-    }).catch(() => null);
+  if (wantMarket && market) {
+    const smart = computeSmartPrice({
+      aliPrice,
+      feePrefs,
+      minProfitPercent: settings.minProfitPercent,
+      maxProfitPercent: settings.maxProfitPercent,
+      market,
+      undercutMode: settings.undercutMode,
+      undercutPercent: settings.marketUndercutPercent,
+      undercutAmount: settings.marketUndercutAmount,
+      charmPricing: settings.charmPricingEnabled,
+      charmRules: settings.charmRules,
+    });
+    smartPrice = smart?.price ?? null;
   }
 
   const effectivePrice = fixedPrice ?? smartPrice;
@@ -291,6 +295,8 @@ export async function prepareEbayAutoListDraft(
     listingPrice = pricing.breakdown.recommendedPrice;
   }
 
+  type EditedPhotos = Awaited<ReturnType<typeof editAliExpressListingPhotos>>;
+  const emptyEditedPhotos: EditedPhotos = [];
   const photoEditPromise =
     settings.aiPhotoEditEnabled && settings.aiPhotoEditPrompt.trim()
       ? editAliExpressListingPhotos({
@@ -301,13 +307,25 @@ export async function prepareEbayAutoListDraft(
           count: 3,
         }).catch((error) => {
           console.warn("[eBay prepare] AI photo edit skipped:", error);
-          return [] as Awaited<ReturnType<typeof editAliExpressListingPhotos>>;
+          return emptyEditedPhotos;
         })
-      : Promise.resolve([] as Awaited<ReturnType<typeof editAliExpressListingPhotos>>);
+      : Promise.resolve(emptyEditedPhotos);
+
+  // Cap photo-edit wait so it cannot stretch prepare past listing generation budget.
+  const timedPhotoEdit = Promise.race([
+    photoEditPromise,
+    new Promise<EditedPhotos>((resolve) => {
+      setTimeout(() => resolve(emptyEditedPhotos), 20_000);
+    }),
+  ]);
 
   const [listing, editedPhotos] = await Promise.all([
-    runPrepareStep("Listing generation", () => generateEbayListing(product, listingPrice)),
-    photoEditPromise,
+    runPrepareStep(
+      "Listing generation",
+      () => generateEbayListing(product, listingPrice),
+      { timeoutMs: 30_000, maxAttempts: 1 },
+    ),
+    timedPhotoEdit,
   ]);
 
   let draft = buildInitialDraft(product, listing, {
@@ -356,14 +374,26 @@ export async function prepareEbayAutoListDraft(
       throw new Error("Selected shipping policy was not found on your eBay account.");
     }
   } else {
-    fulfillmentPolicy = await runPrepareStep("Shipping policy match", () =>
-      selectFulfillmentPolicyWithAi({
-        aliExpressLabel: aliExpressShipping?.label ?? draft.product.shippingDaysLabel ?? null,
-        aliExpressMinDays: aliExpressShipping?.minDays ?? null,
-        aliExpressMaxDays: aliExpressShipping?.maxDays ?? null,
-        policies: policies.fulfillment,
-      }),
-    ).catch(() => null);
+    // Heuristic first (fast); AI only if heuristic cannot pick.
+    fulfillmentPolicy = selectFulfillmentPolicyForAliExpress(
+      policies.fulfillment,
+      aliExpressShipping?.maxDays ?? null,
+      aliExpressShipping?.minDays ?? null,
+    );
+
+    if (!fulfillmentPolicy) {
+      fulfillmentPolicy = await runPrepareStep(
+        "Shipping policy match",
+        () =>
+          selectFulfillmentPolicyWithAi({
+            aliExpressLabel: aliExpressShipping?.label ?? draft.product.shippingDaysLabel ?? null,
+            aliExpressMinDays: aliExpressShipping?.minDays ?? null,
+            aliExpressMaxDays: aliExpressShipping?.maxDays ?? null,
+            policies: policies.fulfillment,
+          }),
+        { timeoutMs: 15_000, maxAttempts: 1 },
+      ).catch(() => null);
+    }
 
     if (!fulfillmentPolicy && aliExpressShipping) {
       throw new EbayAutoListNeedsFulfillmentPolicyError(

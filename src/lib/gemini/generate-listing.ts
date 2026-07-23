@@ -1,6 +1,6 @@
 import "server-only";
 
-import { AiProviderError, generateAiJson } from "@/lib/gemini/client";
+import { AiProviderError, generateAiJson, isAiAuthError } from "@/lib/gemini/client";
 import { buildListingPrompt } from "@/lib/gemini/prompts";
 import {
   DEFAULT_EBAY_CONDITION,
@@ -67,7 +67,8 @@ export async function generateEbayListing(
   let raw: AiListingResponse | null = null;
   let lastError: Error | null = null;
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  // Auth failures must not retry. Other failures get one retry (2 attempts max).
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
       raw = await generateAiJson<AiListingResponse>(
         buildListingPrompt(product, recommendedPrice ?? fallbackPrice),
@@ -76,14 +77,15 @@ export async function generateEbayListing(
       break;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error("AI request failed.");
+      if (isAiAuthError(error)) break;
     }
   }
 
   if (!raw) {
     throw new AiProviderError(
       lastError?.message?.includes("JSON")
-        ? "AI failed to generate valid listing after 3 attempts."
-        : lastError?.message ?? "AI failed to generate listing after 3 attempts.",
+        ? "AI failed to generate valid listing after 2 attempts."
+        : lastError?.message ?? "AI failed to generate listing after 2 attempts.",
     );
   }
 

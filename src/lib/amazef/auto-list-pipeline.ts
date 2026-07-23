@@ -5,6 +5,7 @@ import { listDraftOnAmazef } from "@/lib/amazef/listing";
 import { saveListedProduct } from "@/lib/listings/listed-products-service";
 import { sendEmail } from "@/lib/email/send-email";
 import { generateEbayListing } from "@/lib/gemini/generate-listing";
+import { isAiAuthError } from "@/lib/gemini/client";
 import { checkVeroSafety } from "@/lib/gemini/vero-check";
 import { VeroAckRequiredError } from "@/lib/listings/vero-ack-error";
 import { computeListingQualityScore } from "@/features/listings/lib/listing-quality";
@@ -124,7 +125,7 @@ async function runPrepareStep<T>(
   run: () => Promise<T>,
   options?: { timeoutMs?: number; maxAttempts?: number },
 ): Promise<T> {
-  const timeoutMs = options?.timeoutMs ?? 45_000;
+  const timeoutMs = options?.timeoutMs ?? 25_000;
   const maxAttempts = options?.maxAttempts ?? 2;
   let lastError: unknown;
 
@@ -141,6 +142,8 @@ async function runPrepareStep<T>(
       ]);
     } catch (error) {
       lastError = error;
+      // Invalid Anthropic key will never succeed on retry — fail immediately.
+      if (isAiAuthError(error)) break;
       if (attempt < maxAttempts) {
         console.warn(`[Amazef prepare] ${label} failed (attempt ${attempt}), retrying…`, error);
       }
@@ -172,8 +175,13 @@ export async function prepareAmazefAutoListDraft(
   );
 
   const currency = product.currency === "USD" ? "GBP" : product.currency;
+  const fixedPrice =
+    options?.manualPriceOverride != null && options.manualPriceOverride > 0
+      ? options.manualPriceOverride
+      : null;
+  const wantMarket = fixedPrice == null && settings.smartPricingEnabled;
 
-  const [vero, sellerPrefs, shippingDaysLabel] = await Promise.all([
+  const [vero, sellerPrefs, shippingDaysLabel, market] = await Promise.all([
     runPrepareStep("VeRO check", () => checkVeroSafety(product)),
     getSellerPreferences(userId, currency).then(
       (prefs) => prefs ?? defaultSellerPreferences(currency),
@@ -181,6 +189,9 @@ export async function prepareAmazefAutoListDraft(
     runPrepareStep("AliExpress shipping", () =>
       fetchAliExpressShippingDaysLabel(product.productUrl),
     ).catch(() => null),
+    wantMarket
+      ? getMarketAveragePrice(product.title, "EBAY_GB").catch(() => null)
+      : Promise.resolve(null),
   ]);
 
   if (!vero.safe) {
@@ -200,29 +211,21 @@ export async function prepareAmazefAutoListDraft(
   };
   const aliPrice = resolveBaseAliPrice(product);
 
-  const fixedPrice =
-    options?.manualPriceOverride != null && options.manualPriceOverride > 0
-      ? options.manualPriceOverride
-      : null;
-
   let smartPrice: number | null = null;
-  if (fixedPrice == null && settings.smartPricingEnabled) {
-    smartPrice = await runPrepareStep("Market price", async () => {
-      const market = await getMarketAveragePrice(product.title, "EBAY_GB");
-      const smart = computeSmartPrice({
-        aliPrice,
-        feePrefs,
-        minProfitPercent: settings.minProfitPercent,
-        maxProfitPercent: settings.maxProfitPercent,
-        market,
-        undercutMode: settings.undercutMode,
-        undercutPercent: settings.marketUndercutPercent,
-        undercutAmount: settings.marketUndercutAmount,
-        charmPricing: settings.charmPricingEnabled,
-        charmRules: settings.charmRules,
-      });
-      return smart?.price ?? null;
-    }).catch(() => null);
+  if (wantMarket && market) {
+    const smart = computeSmartPrice({
+      aliPrice,
+      feePrefs,
+      minProfitPercent: settings.minProfitPercent,
+      maxProfitPercent: settings.maxProfitPercent,
+      market,
+      undercutMode: settings.undercutMode,
+      undercutPercent: settings.marketUndercutPercent,
+      undercutAmount: settings.marketUndercutAmount,
+      charmPricing: settings.charmPricingEnabled,
+      charmRules: settings.charmRules,
+    });
+    smartPrice = smart?.price ?? null;
   }
 
   const effectivePrice = fixedPrice ?? smartPrice;
@@ -269,6 +272,8 @@ export async function prepareAmazefAutoListDraft(
     listingPrice = pricing.breakdown.recommendedPrice;
   }
 
+  type EditedPhotos = Awaited<ReturnType<typeof editAliExpressListingPhotos>>;
+  const emptyEditedPhotos: EditedPhotos = [];
   const photoEditPromise =
     settings.aiPhotoEditEnabled && settings.aiPhotoEditPrompt.trim()
       ? editAliExpressListingPhotos({
@@ -279,13 +284,24 @@ export async function prepareAmazefAutoListDraft(
           count: 3,
         }).catch((error) => {
           console.warn("[Amazef prepare] AI photo edit skipped:", error);
-          return [] as Awaited<ReturnType<typeof editAliExpressListingPhotos>>;
+          return emptyEditedPhotos;
         })
-      : Promise.resolve([] as Awaited<ReturnType<typeof editAliExpressListingPhotos>>);
+      : Promise.resolve(emptyEditedPhotos);
+
+  const timedPhotoEdit = Promise.race([
+    photoEditPromise,
+    new Promise<EditedPhotos>((resolve) => {
+      setTimeout(() => resolve(emptyEditedPhotos), 20_000);
+    }),
+  ]);
 
   const [listing, editedPhotos] = await Promise.all([
-    runPrepareStep("Listing generation", () => generateEbayListing(product, listingPrice)),
-    photoEditPromise,
+    runPrepareStep(
+      "Listing generation",
+      () => generateEbayListing(product, listingPrice),
+      { timeoutMs: 30_000, maxAttempts: 1 },
+    ),
+    timedPhotoEdit,
   ]);
   const promotions = sellerPreferencesToPromotions(sellerPrefs);
 

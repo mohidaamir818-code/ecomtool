@@ -6,6 +6,9 @@ import { serverEnv } from "@/lib/env";
 
 const ANTHROPIC_MODEL = "claude-haiku-4-5";
 
+export const ANTHROPIC_AUTH_ERROR_MESSAGE =
+  "Anthropic API key is invalid. Update ANTHROPIC_API_KEY in your environment.";
+
 export class AiProviderError extends Error {
   constructor(message: string) {
     super(message);
@@ -13,8 +16,33 @@ export class AiProviderError extends Error {
   }
 }
 
+function isAnthropicAuthFailure(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const e = error as {
+    status?: number;
+    statusCode?: number;
+    message?: string;
+    error?: { type?: string; message?: string };
+  };
+  if (e.status === 401 || e.statusCode === 401) return true;
+  if (e.error?.type === "authentication_error") return true;
+  const message = `${e.message ?? ""} ${e.error?.message ?? ""}`;
+  return /authentication_error|API key is invalid/i.test(message);
+}
+
+/** True when the failure is a bad/missing Anthropic key — callers must not retry. */
+export function isAiAuthError(error: unknown): boolean {
+  if (error instanceof AiProviderError) {
+    return (
+      error.message === ANTHROPIC_AUTH_ERROR_MESSAGE ||
+      /API key is invalid|ANTHROPIC_API_KEY is not configured/i.test(error.message)
+    );
+  }
+  return isAnthropicAuthFailure(error);
+}
+
 function getClient(): Anthropic {
-  const apiKey = serverEnv.anthropicApiKey();
+  const apiKey = serverEnv.anthropicApiKey().trim();
   if (!apiKey) {
     throw new AiProviderError("ANTHROPIC_API_KEY is not configured.");
   }
@@ -36,6 +64,15 @@ function parseJsonResponse<T>(text: string): T {
     const message = error instanceof Error ? error.message : "Anthropic response was not valid JSON.";
     throw new AiProviderError(message);
   }
+}
+
+function toAiProviderError(error: unknown, fallback: string): AiProviderError {
+  if (error instanceof AiProviderError) return error;
+  if (isAnthropicAuthFailure(error)) {
+    return new AiProviderError(ANTHROPIC_AUTH_ERROR_MESSAGE);
+  }
+  const message = error instanceof Error ? error.message : fallback;
+  return new AiProviderError(message);
 }
 
 export interface GenerateAiJsonOptions {
@@ -63,11 +100,7 @@ export async function generateAiJson<T>(
 
     return parseJsonResponse<T>(text);
   } catch (error) {
-    if (error instanceof AiProviderError) throw error;
-
-    const message =
-      error instanceof Error ? error.message : "Anthropic request failed.";
-    throw new AiProviderError(message);
+    throw toAiProviderError(error, "Anthropic request failed.");
   }
 }
 
@@ -148,10 +181,6 @@ export async function generateAiVisionJson<T>(
 
     return parseJsonResponse<T>(text);
   } catch (error) {
-    if (error instanceof AiProviderError) throw error;
-
-    const message =
-      error instanceof Error ? error.message : "Anthropic vision request failed.";
-    throw new AiProviderError(message);
+    throw toAiProviderError(error, "Anthropic vision request failed.");
   }
 }
