@@ -104,6 +104,16 @@ export async function POST(request: NextRequest) {
 
     const message = error instanceof Error ? error.message : "Failed to list item on Amazef.";
 
+    if (error instanceof AmazefListingError) {
+      console.error("[Amazef list-item] Amazef upstream error:", {
+        status: error.status,
+        message: error.message,
+        bodyPreview: error.rawBody.replace(/\s+/g, " ").slice(0, 300),
+      });
+    } else {
+      console.error("[Amazef list-item] Unexpected error:", error);
+    }
+
     if (userId) {
       void logUserApiRequest({
         userId,
@@ -113,9 +123,14 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const status = error instanceof AmazefListingError && error.status >= 400 && error.status < 500
-      ? error.status
-      : 500;
+    // Keep 4xx from Amazef (auth/validation). Map other failures to 502/500 with JSON body
+    // so the UI never only sees a blank "Internal Server Error".
+    let status = 500;
+    if (error instanceof AmazefListingError) {
+      if (error.status >= 400 && error.status < 500) status = error.status;
+      else if (error.status === 502 || error.status === 504) status = error.status;
+      else status = 502;
+    }
 
     return NextResponse.json({ success: false, error: message, status }, { status });
   }

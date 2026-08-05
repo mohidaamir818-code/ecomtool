@@ -58,6 +58,52 @@ export interface AmazefPromotionPayload {
   };
 }
 
+async function resolveShippingDaysLabelSafe(
+  draft: ListingDraft,
+): Promise<string | null> {
+  const existing = draft.product.shippingDaysLabel?.trim() || null;
+  if (existing) return existing;
+  if (!draft.product.productUrl) return null;
+
+  // Never block / crash listing on AliExpress shipping lookup.
+  try {
+    return await Promise.race([
+      fetchAliExpressShippingDaysLabel(draft.product.productUrl),
+      new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), 8_000);
+      }),
+    ]);
+  } catch (error) {
+    console.warn("[Amazef list] shipping days lookup skipped:", error);
+    return null;
+  }
+}
+
+function mapAmazefCreateFailure(
+  status: number,
+  payload: AmazefCreateResponse | null,
+  rawBody: string,
+  statusText: string,
+): AmazefListingError {
+  const remoteError = payload?.error?.trim() || "";
+
+  if (status === 401 || /unauthorized/i.test(remoteError)) {
+    return new AmazefListingError(
+      "Amazef rejected the listing secret (Unauthorized). Confirm AMAZEF_LISTING_SECRET matches on Amazef and this app, then redeploy both.",
+      401,
+      rawBody,
+    );
+  }
+
+  const message =
+    remoteError ||
+    `Amazef listing failed (${status}): ${rawBody.slice(0, 200) || statusText || "no response body"}`;
+
+  // Upstream Amazef 5xx → 502 so this app's own crashes stay distinguishable.
+  const mappedStatus = status >= 500 ? 502 : status >= 400 ? status : 502;
+  return new AmazefListingError(message, mappedStatus, rawBody);
+}
+
 export async function listDraftOnAmazef(
   userId: string,
   draft: ListingDraft,
@@ -72,6 +118,15 @@ export async function listDraftOnAmazef(
     );
   }
 
+  const secret = serverEnv.amazefListingSecret();
+  if (!secret) {
+    throw new AmazefListingError(
+      "AMAZEF_LISTING_SECRET is not configured. Add the same secret used by Amazef, then redeploy.",
+      500,
+      "",
+    );
+  }
+
   const amazefEmail = await getAmazefEmail(userId);
   if (!amazefEmail) {
     throw new AmazefListingError(
@@ -81,10 +136,7 @@ export async function listDraftOnAmazef(
     );
   }
 
-  let shippingDaysLabel = draft.product.shippingDaysLabel?.trim() || null;
-  if (!shippingDaysLabel && draft.product.productUrl) {
-    shippingDaysLabel = await fetchAliExpressShippingDaysLabel(draft.product.productUrl);
-  }
+  const shippingDaysLabel = await resolveShippingDaysLabelSafe(draft);
 
   const handlingTimeLabel = normalizeAmazefHandlingTimeLabel(
     draft.product.handlingTimeLabel,
@@ -93,7 +145,6 @@ export async function listDraftOnAmazef(
 
   const listingDraft = normalizeDraftForAmazef(draft, shippingDaysLabel, handlingTimeLabel);
 
-  const secret = serverEnv.amazefListingSecret();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), AMAZEF_FETCH_TIMEOUT_MS);
 
@@ -104,7 +155,7 @@ export async function listDraftOnAmazef(
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
-        ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
+        Authorization: `Bearer ${secret}`,
       },
       body: JSON.stringify({
         userId,
@@ -118,6 +169,27 @@ export async function listDraftOnAmazef(
       cache: "no-store",
       signal: controller.signal,
     });
+  } catch (error) {
+    const aborted =
+      (error instanceof Error && error.name === "AbortError") ||
+      (typeof error === "object" &&
+        error !== null &&
+        "name" in error &&
+        (error as { name?: string }).name === "AbortError");
+
+    if (aborted) {
+      throw new AmazefListingError(
+        "Amazef listing timed out after 30s. Check Amazef /api/listings/create is healthy, then retry.",
+        504,
+        "",
+      );
+    }
+
+    throw new AmazefListingError(
+      `Could not reach Amazef listing API: ${error instanceof Error ? error.message : "network error"}`,
+      502,
+      "",
+    );
   } finally {
     clearTimeout(timeout);
   }
@@ -125,11 +197,16 @@ export async function listDraftOnAmazef(
   const rawBody = await response.text().catch(() => "");
   const payload = parseJsonSafe<AmazefCreateResponse | null>(rawBody, null);
 
+  console.log("[Amazef list] create response", {
+    status: response.status,
+    ok: response.ok,
+    hasPayload: Boolean(payload),
+    error: payload?.error ?? null,
+    bodyPreview: rawBody.replace(/\s+/g, " ").slice(0, 240),
+  });
+
   if (!response.ok || !payload || payload.success === false) {
-    const message =
-      payload?.error ||
-      `Amazef listing failed (${response.status}): ${rawBody.slice(0, 200) || response.statusText}`;
-    throw new AmazefListingError(message, response.status, rawBody);
+    throw mapAmazefCreateFailure(response.status, payload, rawBody, response.statusText);
   }
 
   return {
