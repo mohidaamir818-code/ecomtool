@@ -3,6 +3,8 @@ import { processNextBulkListingJob } from "@/lib/bulk-listing/service";
 import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
 
 export const dynamic = "force-dynamic";
+// Prepare can take ~30–50s; allow the job to finish instead of dying mid-`preparing`.
+export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   try {

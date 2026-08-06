@@ -28,6 +28,8 @@ import type { ListingDraft } from "@/types/listing-generator";
 
 const MAX_ROWS_PER_BATCH = 50;
 const ALIEXPRESS_URL_PATTERN = /aliexpress\./i;
+/** Prepare should finish in ~30–50s. Past this, the serverless worker likely died mid-job. */
+const STUCK_PREPARING_MS = 90_000;
 
 function mapJobRow(row: Record<string, unknown>): BulkListingJob {
   return {
@@ -305,6 +307,44 @@ export async function resetFailedJobsForRetry(userId: string): Promise<number> {
 const COLLAPSED_PROFIT_RANGE_ERROR =
   /Could not price within your profit range of (\d+(?:\.\d+)?)%–\1%\./i;
 
+/**
+ * Jobs claimed as `preparing` stay forever if the function times out / crashes.
+ * Re-queue those so the wave/client can continue the seller's batch.
+ */
+export async function reclaimStuckPreparingJobs(userId?: string): Promise<number> {
+  const supabase = getSupabaseAdmin();
+  const cutoff = new Date(Date.now() - STUCK_PREPARING_MS).toISOString();
+  const now = new Date().toISOString();
+
+  // Claim sets updated_at = started_at, so age of updated_at is enough.
+  let query = supabase
+    .from("bulk_listing_jobs")
+    .update({
+      status: "queued",
+      error_message: null,
+      draft_json: null,
+      started_at: null,
+      finished_at: null,
+      updated_at: now,
+    })
+    .eq("status", "preparing")
+    .lt("updated_at", cutoff);
+
+  if (userId) {
+    query = query.eq("user_id", userId);
+  }
+
+  const { data, error } = await query.select("id");
+
+  if (error) {
+    if (error.message.includes("does not exist")) return 0;
+    console.warn("[bulk-listing] reclaim stuck preparing failed:", error.message);
+    return 0;
+  }
+
+  return data?.length ?? 0;
+}
+
 /** Re-queue jobs that failed only because min profit == max profit (not VeRo). */
 async function requeueCollapsedProfitRangeFailures(userId: string): Promise<void> {
   const supabase = getSupabaseAdmin();
@@ -335,6 +375,9 @@ export async function processNextBulkListingJob(input: {
   amazefSettings?: Partial<AmazefAutoListingSettings>;
 }): Promise<{ processed: boolean; job: BulkListingJob | null; jobs: BulkListingJob[] }> {
   const supabase = getSupabaseAdmin();
+
+  // Unstick jobs left in `preparing` after a timeout/crash so the batch continues.
+  await reclaimStuckPreparingJobs(input.userId);
 
   // Auto-retry prior collapsed "X%–X%" profit failures (VeRO uses vero_hold, not failed).
   await requeueCollapsedProfitRangeFailures(input.userId);
@@ -617,6 +660,9 @@ async function processOneQueuedJobAnyUser(): Promise<boolean> {
 export async function runBulkListingWave(
   budgetMs = 45_000,
 ): Promise<{ processed: number; remaining: number }> {
+  // Recover stuck preparing jobs for every seller before draining the queue.
+  await reclaimStuckPreparingJobs();
+
   const start = Date.now();
   let processed = 0;
 
