@@ -229,7 +229,6 @@ export function BulkListingShell() {
     normalizeAutoListingSettings(null),
   );
   const processingRef = useRef(false);
-  const resumedRef = useRef(false);
   const aliPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [reviewJob, setReviewJob] = useState<BulkListingJob | null>(null);
   const [reviewDraft, setReviewDraft] = useState<ListingDraft | null>(null);
@@ -277,6 +276,7 @@ export function BulkListingShell() {
 
   const loadJobs = useCallback(async () => {
     if (!userId) return;
+    setLoading(true);
     try {
       const response = await fetch(`/api/bulk-listing?userId=${encodeURIComponent(userId)}`);
       const data = await response.json();
@@ -392,12 +392,15 @@ export function BulkListingShell() {
     }
   }, [userId, ebaySettings, amazefSettings]);
 
+  // Keep draining queued/preparing jobs. Do not gate on a one-shot resume flag —
+  // userId can appear before jobs load, which previously skipped the processor forever.
   useEffect(() => {
-    if (loading || !userId || resumedRef.current) return;
-    resumedRef.current = true;
-    if (jobs.some((job) => job.status === "queued" || job.status === "preparing")) {
-      void runProcessor();
-    }
+    if (loading || !userId) return;
+    const hasPending = jobs.some(
+      (job) => job.status === "queued" || job.status === "preparing",
+    );
+    if (!hasPending || processingRef.current) return;
+    void runProcessor();
   }, [loading, userId, jobs, runProcessor]);
 
   function updateRow(id: string, patch: Partial<DraftRow>) {

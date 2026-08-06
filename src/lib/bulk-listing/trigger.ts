@@ -32,13 +32,17 @@ export async function triggerBulkListingWorker(): Promise<void> {
   const cronSecret = process.env.CRON_SECRET?.trim();
   if (cronSecret) headers.authorization = `Bearer ${cronSecret}`;
 
+  // Fire-and-forget: awaiting the wave can deadlock under low Vercel concurrency
+  // (parent `after()` waits on a child that needs another slot) and leaves jobs Queued.
   try {
-    await fetch(`${base}/api/cron/bulk-listing`, {
+    void fetch(`${base}/api/cron/bulk-listing`, {
       method: "POST",
       headers,
       cache: "no-store",
+    }).catch(() => {
+      // Best-effort. Fallbacks (daily cron, client poller) will pick up the rest.
     });
   } catch {
-    // Best-effort. Fallbacks (daily cron, client poller) will pick up the rest.
+    // Best-effort.
   }
 }
