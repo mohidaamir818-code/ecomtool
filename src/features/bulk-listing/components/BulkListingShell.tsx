@@ -326,82 +326,51 @@ export function BulkListingShell() {
     setProcessing(true);
 
     try {
-      let idleRounds = 0;
       while (true) {
-        try {
-          const response = await fetch("/api/bulk-listing/process", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId,
-              ebaySettings,
-              amazefSettings,
-            }),
-          });
-          const data = await response.json();
-          if (!response.ok) throw new Error(data?.error ?? "Processing failed.");
+        const response = await fetch("/api/bulk-listing/process", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId,
+            ebaySettings,
+            amazefSettings,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data?.error ?? "Processing failed.");
 
-          setJobs(data.jobs ?? []);
-          setError("");
+        setJobs(data.jobs ?? []);
+        setError("");
 
-          if (data.processed) {
-            idleRounds = 0;
-            await sleep(PROCESS_DELAY_MS);
-            continue;
-          }
-
-          // A job may still be `preparing` (active or stuck). Keep polling so reclaim
-          // can re-queue timed-out jobs and the seller's batch continues.
-          const pending = (data.jobs as BulkListingJob[] | undefined)?.some(
-            (job) => job.status === "queued" || job.status === "preparing",
-          );
-          if (pending && idleRounds < 36) {
-            idleRounds += 1;
-            await sleep(5_000);
-            continue;
-          }
-          break;
-        } catch (processError) {
-          // Function timeout often leaves a job stuck in preparing — refresh + retry.
-          try {
-            const refresh = await fetch(
-              `/api/bulk-listing?userId=${encodeURIComponent(userId)}`,
-            );
-            const refreshData = await refresh.json();
-            if (refresh.ok && Array.isArray(refreshData.jobs)) {
-              setJobs(refreshData.jobs);
-              const pending = (refreshData.jobs as BulkListingJob[]).some(
-                (job) => job.status === "queued" || job.status === "preparing",
-              );
-              if (pending && idleRounds < 36) {
-                idleRounds += 1;
-                await sleep(5_000);
-                continue;
-              }
-            }
-          } catch {
-            // Fall through to surface the original error.
-          }
-          setError(processError instanceof Error ? processError.message : "Processing failed.");
-          break;
-        }
+        if (!data.processed) break;
+        await sleep(PROCESS_DELAY_MS);
       }
+    } catch (processError) {
+      setError(processError instanceof Error ? processError.message : "Processing failed.");
     } finally {
       processingRef.current = false;
       setProcessing(false);
     }
   }, [userId, ebaySettings, amazefSettings]);
 
-  // Keep draining queued/preparing jobs. Do not gate on a one-shot resume flag —
-  // userId can appear before jobs load, which previously skipped the processor forever.
+  // Start / keep preparing whenever queued jobs exist (works for existing stuck batches too).
   useEffect(() => {
     if (loading || !userId) return;
-    const hasPending = jobs.some(
-      (job) => job.status === "queued" || job.status === "preparing",
-    );
-    if (!hasPending || processingRef.current) return;
+    const hasQueued = jobs.some((job) => job.status === "queued" || job.status === "preparing");
+    if (!hasQueued || processingRef.current) return;
     void runProcessor();
   }, [loading, userId, jobs, runProcessor]);
+
+  // Backup poller: if a prepare call dies mid-flight, kick the queue again.
+  useEffect(() => {
+    if (!userId) return;
+    const timer = setInterval(() => {
+      const hasQueued = jobs.some((job) => job.status === "queued" || job.status === "preparing");
+      if (!hasQueued || processingRef.current || loading) return;
+      void runProcessor();
+    }, 8_000);
+    return () => clearInterval(timer);
+  }, [userId, jobs, loading, runProcessor]);
 
   function updateRow(id: string, patch: Partial<DraftRow>) {
     setDraftRows((rows) => rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));

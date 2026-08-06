@@ -2,47 +2,32 @@
  * Server-side trigger for the bulk-listing worker.
  *
  * On the Vercel Hobby plan, scheduled crons run at most once per day, which is
- * too slow to drain a freshly-queued batch. Instead we kick the worker route
- * directly (fire-and-forget) when a batch is created, and the worker re-triggers
- * itself in waves until the queue is empty. This keeps listings progressing
- * server-side even after the seller closes the tab — no frequent cron needed.
+ * too slow to drain a freshly-queued batch. Instead we run prepare waves
+ * in-process (via `after()`), and chain another wave while jobs remain.
+ *
+ * Important: do NOT HTTP self-call `/api/cron/bulk-listing` — that deadlocks or
+ * cancels under low concurrency and leaves every job stuck in Queued.
  */
 
-function resolveWorkerBaseUrl(): string | null {
-  const appUrl = process.env.APP_URL?.trim().replace(/\/$/, "");
-  if (appUrl) return appUrl;
+import { after } from "next/server";
+import { runBulkListingWave } from "@/lib/bulk-listing/service";
 
-  const vercelUrl = process.env.VERCEL_URL?.trim();
-  if (vercelUrl) return `https://${vercelUrl.replace(/^https?:\/\//, "")}`;
-
-  return null;
-}
+const WAVE_BUDGET_MS = 45_000;
 
 /**
- * Fires a request at the bulk-listing worker without awaiting completion.
- * Safe to call from API routes (ideally wrapped in `after()` so it runs after
- * the response is sent). Never throws — failures are swallowed because the daily
- * cron and client-side poller act as fallbacks.
+ * Runs one prepare wave, then schedules another if the queue is not empty.
+ * Safe to call from `after()` so work continues after the HTTP response.
+ * Never throws.
  */
 export async function triggerBulkListingWorker(): Promise<void> {
-  const base = resolveWorkerBaseUrl();
-  if (!base) return;
-
-  const headers: Record<string, string> = {};
-  const cronSecret = process.env.CRON_SECRET?.trim();
-  if (cronSecret) headers.authorization = `Bearer ${cronSecret}`;
-
-  // Fire-and-forget: awaiting the wave can deadlock under low Vercel concurrency
-  // (parent `after()` waits on a child that needs another slot) and leaves jobs Queued.
   try {
-    void fetch(`${base}/api/cron/bulk-listing`, {
-      method: "POST",
-      headers,
-      cache: "no-store",
-    }).catch(() => {
-      // Best-effort. Fallbacks (daily cron, client poller) will pick up the rest.
-    });
-  } catch {
-    // Best-effort.
+    const { remaining } = await runBulkListingWave(WAVE_BUDGET_MS);
+    if (remaining > 0) {
+      after(() => {
+        void triggerBulkListingWorker();
+      });
+    }
+  } catch (error) {
+    console.error("[bulk-listing] worker wave failed:", error);
   }
 }

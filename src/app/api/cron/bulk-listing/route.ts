@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
-import { runBulkListingWave } from "@/lib/bulk-listing/service";
 import { triggerBulkListingWorker } from "@/lib/bulk-listing/trigger";
 
 export const dynamic = "force-dynamic";
-// Hobby plan caps function duration; keep each wave short and chain instead.
+// Hobby plan caps function duration; each chained wave stays under this budget.
 export const maxDuration = 60;
 
 function verifyCron(request: NextRequest): boolean {
@@ -20,16 +19,11 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // Process a single wave within the function time budget, then re-trigger
-    // the worker if jobs remain. This drains an entire batch server-side on the
-    // Hobby plan without needing a sub-daily cron.
-    const { processed, remaining } = await runBulkListingWave(45_000);
+    // Kick an in-process wave (and chained follow-ups) so queued jobs do not sit idle.
+    // Do this in `after()` so the cron HTTP response returns quickly.
+    after(() => triggerBulkListingWorker());
 
-    if (remaining > 0) {
-      after(() => triggerBulkListingWorker());
-    }
-
-    return NextResponse.json({ success: true, processed, remaining });
+    return NextResponse.json({ success: true, started: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to process bulk listing.";
     return NextResponse.json({ error: message }, { status: 500 });

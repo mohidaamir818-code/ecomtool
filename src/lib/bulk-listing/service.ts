@@ -217,7 +217,12 @@ export async function createBulkListingBatch(input: {
     platform: row.platform,
     profit_percent: row.profitPercent,
     fixed_price: row.fixedPrice,
-    settings: row.platform === "amazef" ? amazefSnapshot : ebaySnapshot,
+    // Seller already passed the bulk "List" gate — keep prepare enabled even if
+    // localStorage settings later flip off or the cron runs without client settings.
+    settings:
+      row.platform === "amazef"
+        ? { ...amazefSnapshot, enabled: true }
+        : { ...ebaySnapshot, enabled: true },
     status: "queued",
     sort_order: row.sortOrder,
     created_at: now,
@@ -446,13 +451,12 @@ export async function processNextBulkListingJob(input: {
 
     if (job.platform === "amazef") {
       const settings = applyProfitOverride(
-        normalizeAutoListingSettings(storedSettings ?? input.amazefSettings ?? null),
+        {
+          ...normalizeAutoListingSettings(storedSettings ?? input.amazefSettings ?? null),
+          enabled: true,
+        },
         profitOverride,
       );
-
-      if (!settings.enabled) {
-        throw new Error("Amazef auto listing is not enabled. Turn it on in AI Listing settings.");
-      }
 
       const prepared = await prepareAmazefAutoListDraft(input.userId, job.productUrl, settings, {
         acknowledgeVero: job.veroAck,
@@ -465,13 +469,12 @@ export async function processNextBulkListingJob(input: {
       currency = prepared.draft.listing.currency;
     } else {
       const settings = applyProfitOverride(
-        normalizeEbayAutoListingSettings(storedSettings ?? input.ebaySettings ?? null),
+        {
+          ...normalizeEbayAutoListingSettings(storedSettings ?? input.ebaySettings ?? null),
+          enabled: true,
+        },
         profitOverride,
       );
-
-      if (!settings.enabled) {
-        throw new Error("eBay auto listing is not enabled. Turn it on in AI Listing settings.");
-      }
 
       const prepared = await prepareEbayAutoListDraft(input.userId, job.productUrl, settings, {
         acknowledgeVero: job.veroAck,
