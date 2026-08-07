@@ -32,6 +32,8 @@ import {
   buildBreakdownForPrice,
   buildVariantPricesWithFixedMarkupAboveAli,
   calculatePricingBreakdown,
+  priceExactlyAboveAli,
+  resolveAccurateAliDisplayPrice,
   resolveBaseAliPrice,
 } from "@/lib/listings/pricing";
 import { getMarketAveragePrice } from "@/lib/pricing/market-price";
@@ -238,10 +240,11 @@ export async function prepareEbayAutoListDraft(
     ...sellerPreferencesToFeePrefs(sellerPrefs),
     ebayFinalValueFeePercent: settings.platformFeePercent,
   };
-  const aliPrice = Number(resolveBaseAliPrice(product).toFixed(2));
+  // Real AliExpress storefront price (not a coupon outlier / wrong min-variant pick).
+  const aliPrice = resolveAccurateAliDisplayPrice(product);
   const markupAmount = Number(settings.fixedMarkupAboveAliAmount.toFixed(2));
   const markupPrice = useFixedMarkupAboveAli
-    ? Number((aliPrice + markupAmount).toFixed(2))
+    ? priceExactlyAboveAli(aliPrice, markupAmount)
     : null;
 
   // Priority: per-item override → exact Ali+markup → smart → profit range.
@@ -357,9 +360,15 @@ export async function prepareEbayAutoListDraft(
       listing: {
         ...draft.listing,
         suggestedPrice: listingPrice,
+        currency: "GBP",
+      },
+      product: {
+        ...draft.product,
+        price: aliPrice,
+        currency: "GBP",
       },
       variants: exactVariants,
-      pricingBreakdown,
+      pricingBreakdown: buildBreakdownForPrice(aliPrice, pricingPrefs, listingPrice),
       manualPriceOverride: listingPrice,
     };
   }
@@ -485,7 +494,35 @@ export async function prepareEbayAutoListDraft(
 
   draft = await ensureDraftVariantEans(draft);
 
-  return { draft, pricingBreakdown, settings };
+  // Lock prices again after SKU/EAN so Ali + markup stays exact.
+  if (useFixedMarkupAboveAli) {
+    const exactVariants = buildVariantPricesWithFixedMarkupAboveAli(product, markupAmount).map(
+      (variant) => {
+        const existing = draft.variants.find((entry) => entry.id === variant.id);
+        return existing
+          ? { ...variant, sku: existing.sku, ean: existing.ean, quantity: existing.quantity }
+          : variant;
+      },
+    );
+    draft = {
+      ...draft,
+      listing: {
+        ...draft.listing,
+        suggestedPrice: listingPrice,
+        currency: "GBP",
+      },
+      product: {
+        ...draft.product,
+        price: aliPrice,
+        currency: "GBP",
+      },
+      variants: exactVariants,
+      pricingBreakdown: buildBreakdownForPrice(aliPrice, pricingPrefs, listingPrice),
+      manualPriceOverride: listingPrice,
+    };
+  }
+
+  return { draft, pricingBreakdown: draft.pricingBreakdown ?? pricingBreakdown, settings };
 }
 
 export async function runEbayAutoListPipeline(

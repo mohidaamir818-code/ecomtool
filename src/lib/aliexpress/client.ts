@@ -1262,9 +1262,20 @@ async function parseDsProductPayload(
   const skus = normalizeDsSkuList(result.ae_item_sku_info_dtos);
   const mappedVariants = skus
     .map((sku) => {
-      const salePrice = parseNumber(sku.offer_sale_price ?? sku.sku_price);
+      const skuPrice = parseNumber(sku.sku_price);
+      const offerPrice = parseNumber(sku.offer_sale_price);
+      // Prefer live offer price, but reject deep coupon outliers vs shelf sku_price
+      // (same idea as HTML scrape) so “Ali + £1” uses the real storefront cost.
+      let salePrice: number | null = null;
+      if (offerPrice != null && offerPrice > 0 && skuPrice != null && skuPrice > 0) {
+        salePrice = offerPrice < skuPrice * 0.45 ? skuPrice : offerPrice;
+      } else if (offerPrice != null && offerPrice > 0) {
+        salePrice = offerPrice;
+      } else if (skuPrice != null && skuPrice > 0) {
+        salePrice = skuPrice;
+      }
       if (salePrice == null) return null;
-      const originalPrice = parseNumber(sku.sku_price);
+
       const stock = parseNumber(
         sku.sku_available_stock ?? sku.s_k_u_available_stock ?? sku.ipm_sku_stock,
       );
@@ -1275,20 +1286,18 @@ async function parseDsProductPayload(
       const fallbackLabel = String(sku.sku_attr ?? sku.id ?? sku.sku_id ?? "Variant");
       const skuImage = extractSkuImage(properties);
 
+      // We request target_currency=GBP + ship_to_country=GB — treat amounts as GBP.
       const variant: HandlingProductVariant = {
         id: String(sku.sku_id ?? sku.id ?? fallbackLabel),
         label: buildVariantLabelFromSkuProperties(properties, fallbackLabel),
-        price: salePrice,
-        currency: String(sku.currency_code ?? base?.currency_code ?? "GBP"),
+        price: Number(salePrice.toFixed(2)),
+        currency: "GBP",
         stock,
         imageUrl: skuImage ?? null,
       };
 
-      if (
-        originalPrice != null &&
-        originalPrice > salePrice
-      ) {
-        variant.originalPrice = originalPrice;
+      if (skuPrice != null && skuPrice > salePrice) {
+        variant.originalPrice = Number(skuPrice.toFixed(2));
       }
 
       return variant;
@@ -1337,8 +1346,8 @@ async function parseDsProductPayload(
     title,
     imageUrl: imageUrl ? String(imageUrl) : null,
     images: parsedImages,
-    price: defaultVariant.price,
-    currency: defaultVariant.currency,
+    price: Number(defaultVariant.price.toFixed(2)),
+    currency: "GBP",
     stock: defaultVariant.stock,
     orders:
       soldCount != null ? `${soldCount.toLocaleString()} sold` : base?.sales_count ? String(base.sales_count) : null,

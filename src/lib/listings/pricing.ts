@@ -131,13 +131,13 @@ export function buildVariantPricesWithFixedMarkupAboveAli(
 
   if (inStockVariants.length === 0) {
     const defaultImage = product.imageUrl ?? product.images[0] ?? "";
-    const ali = Number(Number(product.price).toFixed(2));
+    const ali = resolveAccurateAliDisplayPrice(product);
     return [
       {
         id: "default",
         label: "Default",
         imageUrl: defaultImage,
-        price: Number((ali + markup).toFixed(2)),
+        price: priceExactlyAboveAli(ali, markup),
         stock: product.stock ?? 1,
         sku: DEFAULT_VARIANT_SKU,
         ean: "",
@@ -156,7 +156,7 @@ export function buildVariantPricesWithFixedMarkupAboveAli(
       id: variant.id,
       label: variant.label,
       imageUrl: variantImage,
-      price: Number((ali + markup).toFixed(2)),
+      price: priceExactlyAboveAli(ali, markup),
       stock: variant.stock ?? 1,
       sku: DEFAULT_VARIANT_SKU,
       ean: "",
@@ -172,4 +172,24 @@ export function resolveBaseAliPrice(product: ListingProductSource): number {
     return Math.min(...inStock.map((v) => v.price));
   }
   return product.price;
+}
+
+/**
+ * Real AliExpress display cost for “Ali + fixed amount” pricing.
+ * Uses the product’s selected/storefront price when present (not cheapest variant),
+ * so the listed price matches what the seller sees on AliExpress.
+ */
+export function resolveAccurateAliDisplayPrice(product: ListingProductSource): number {
+  const productPrice = Number(product.price);
+  if (Number.isFinite(productPrice) && productPrice > 0) {
+    return Number(productPrice.toFixed(2));
+  }
+  return Number(resolveBaseAliPrice(product).toFixed(2));
+}
+
+/** Exact sell price: accurate Ali cost + markup, rounded to the cent. */
+export function priceExactlyAboveAli(aliPrice: number, markupAmount: number): number {
+  const ali = Number(Number(aliPrice).toFixed(2));
+  const markup = Number(Number(markupAmount).toFixed(2));
+  return Number((ali + markup).toFixed(2));
 }
