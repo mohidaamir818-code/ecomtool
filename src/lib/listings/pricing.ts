@@ -117,6 +117,55 @@ export function buildVariantPrices(
   });
 }
 
+/**
+ * Exact listing price per variant: AliExpress cost + fixed markup (to the cent).
+ * Used when the seller enables “fixed amount above AliExpress” in auto-listing settings.
+ */
+export function buildVariantPricesWithFixedMarkupAboveAli(
+  product: ListingProductSource,
+  markupAmount: number,
+): ListingVariantDraft[] {
+  const markup = Number(Number(markupAmount).toFixed(2));
+  const inStockVariants =
+    product.variants?.filter((v) => v.stock != null && v.stock > 0) ?? [];
+
+  if (inStockVariants.length === 0) {
+    const defaultImage = product.imageUrl ?? product.images[0] ?? "";
+    const ali = Number(Number(product.price).toFixed(2));
+    return [
+      {
+        id: "default",
+        label: "Default",
+        imageUrl: defaultImage,
+        price: Number((ali + markup).toFixed(2)),
+        stock: product.stock ?? 1,
+        sku: DEFAULT_VARIANT_SKU,
+        ean: "",
+        quantity: 1,
+        aliExpressPrice: ali,
+      },
+    ];
+  }
+
+  return inStockVariants.map((variant) => {
+    const ali = Number(Number(variant.price).toFixed(2));
+    const variantImage =
+      variant.imageUrl ?? product.imageUrl ?? product.images[0] ?? "";
+
+    return {
+      id: variant.id,
+      label: variant.label,
+      imageUrl: variantImage,
+      price: Number((ali + markup).toFixed(2)),
+      stock: variant.stock ?? 1,
+      sku: DEFAULT_VARIANT_SKU,
+      ean: "",
+      quantity: 1,
+      aliExpressPrice: ali,
+    };
+  });
+}
+
 export function resolveBaseAliPrice(product: ListingProductSource): number {
   const inStock = product.variants?.filter((v) => v.stock != null && v.stock > 0) ?? [];
   if (inStock.length > 0) {

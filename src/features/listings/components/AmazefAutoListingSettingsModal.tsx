@@ -521,6 +521,44 @@ export function AmazefAutoListingSettingsModal({
           </label>
         </div>
 
+        <div className="mt-6 rounded-lg border border-indigo-100 bg-indigo-50/50 px-4 py-3">
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
+              checked={form.fixedMarkupAboveAliEnabled}
+              onChange={(event) => updateField("fixedMarkupAboveAliEnabled", event.target.checked)}
+            />
+            <span>
+              <span className="font-medium text-[#111827]">
+                Fixed amount above AliExpress price
+              </span>
+              <span className="mt-1 block text-xs text-[#6B7280]">
+                List at exactly AliExpress cost + your amount (to the cent). Skips smart pricing and
+                profit % pricing when enabled. Bulk row fixed price still overrides this.
+              </span>
+            </span>
+          </label>
+          {form.fixedMarkupAboveAliEnabled ? (
+            <label className="mt-3 block text-sm">
+              <span className="font-medium text-[#111827]">Amount above AliExpress</span>
+              <input
+                type="number"
+                min={0.01}
+                step={0.01}
+                value={form.fixedMarkupAboveAliAmount}
+                onChange={(event) =>
+                  updateField("fixedMarkupAboveAliAmount", Number(event.target.value))
+                }
+                className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+              />
+              <span className="mt-1 block text-xs text-[#6B7280]">
+                Example: Ali £10.00 + £5.00 → lists at exactly £15.00 (each variant = its Ali + this).
+              </span>
+            </label>
+          ) : null}
+        </div>
+
         <div className="mt-4 rounded-xl border border-orange-200 bg-orange-50/60 p-4">
           <label className="flex items-start gap-3 text-sm">
             <input

@@ -30,6 +30,7 @@ import { saveListedProduct } from "@/lib/listings/listed-products-service";
 import { fetchListingProductSource } from "@/lib/listings/product-source";
 import {
   buildBreakdownForPrice,
+  buildVariantPricesWithFixedMarkupAboveAli,
   calculatePricingBreakdown,
   resolveBaseAliPrice,
 } from "@/lib/listings/pricing";
@@ -197,11 +198,16 @@ export async function prepareEbayAutoListDraft(
   );
 
   const currency = product.currency === "USD" ? "GBP" : product.currency;
-  const fixedPrice =
+  const manualOverride =
     options?.manualPriceOverride != null && options.manualPriceOverride > 0
-      ? options.manualPriceOverride
+      ? Number(options.manualPriceOverride.toFixed(2))
       : null;
-  const wantMarket = fixedPrice == null && settings.smartPricingEnabled;
+  const useFixedMarkupAboveAli =
+    manualOverride == null &&
+    settings.fixedMarkupAboveAliEnabled &&
+    settings.fixedMarkupAboveAliAmount > 0;
+  const wantMarket =
+    manualOverride == null && !useFixedMarkupAboveAli && settings.smartPricingEnabled;
 
   const [vero, sellerPrefs, aliExpressShipping, policies, market] = await Promise.all([
     runPrepareStep("VeRO check", () => checkVeroSafety(product)),
@@ -232,7 +238,14 @@ export async function prepareEbayAutoListDraft(
     ...sellerPreferencesToFeePrefs(sellerPrefs),
     ebayFinalValueFeePercent: settings.platformFeePercent,
   };
-  const aliPrice = resolveBaseAliPrice(product);
+  const aliPrice = Number(resolveBaseAliPrice(product).toFixed(2));
+  const markupAmount = Number(settings.fixedMarkupAboveAliAmount.toFixed(2));
+  const markupPrice = useFixedMarkupAboveAli
+    ? Number((aliPrice + markupAmount).toFixed(2))
+    : null;
+
+  // Priority: per-item override → exact Ali+markup → smart → profit range.
+  const fixedPrice = manualOverride ?? markupPrice;
 
   let smartPrice: number | null = null;
   if (wantMarket && market) {
@@ -260,9 +273,10 @@ export async function prepareEbayAutoListDraft(
   if (effectivePrice != null) {
     pricingPrefs = { ...feePrefs };
     pricingBreakdown = buildBreakdownForPrice(aliPrice, pricingPrefs, effectivePrice);
-    listingPrice = effectivePrice;
+    listingPrice = Number(effectivePrice.toFixed(2));
 
-    // Fixed price is seller-intent; smart price must still respect max profit %.
+    // Fixed / markup prices are seller-intent and must stay exact.
+    // Smart price must still respect max profit %.
     if (fixedPrice == null && pricingBreakdown.profitPercent > settings.maxProfitPercent) {
       const capped = resolvePricingWithinProfitBounds(
         aliPrice,
@@ -331,9 +345,24 @@ export async function prepareEbayAutoListDraft(
   let draft = buildInitialDraft(product, listing, {
     pricing: pricingPrefs,
     pricingBreakdown,
-    manualPriceOverride: effectivePrice,
+    manualPriceOverride: listingPrice,
     promotions: settings.promotions,
   });
+
+  // Exact Ali + markup on every variant (ratio scaling would drift from the seller amount).
+  if (useFixedMarkupAboveAli) {
+    const exactVariants = buildVariantPricesWithFixedMarkupAboveAli(product, markupAmount);
+    draft = {
+      ...draft,
+      listing: {
+        ...draft.listing,
+        suggestedPrice: listingPrice,
+      },
+      variants: exactVariants,
+      pricingBreakdown,
+      manualPriceOverride: listingPrice,
+    };
+  }
 
   if (editedPhotos.length > 0) {
     draft = {

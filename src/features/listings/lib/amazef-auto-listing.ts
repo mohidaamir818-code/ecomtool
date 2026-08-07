@@ -48,6 +48,10 @@ export interface AmazefAutoListingSettings {
   flashSaleMinProfit: number;
   // The seller's own plain-language description of how the flash sale should work.
   flashSaleRule: string;
+  /** When on, list at exactly AliExpress price + fixedMarkupAboveAliAmount (ignores smart/profit pricing). */
+  fixedMarkupAboveAliEnabled: boolean;
+  /** Exact amount added on top of each AliExpress cost. Listing price = Ali + this. */
+  fixedMarkupAboveAliAmount: number;
   /** When on, AliExpress photos are AI-edited with aiPhotoEditPrompt during prepare. */
   aiPhotoEditEnabled: boolean;
   /** Seller description of how photos should look (e.g. white background, remove logos). */
@@ -77,6 +81,8 @@ export const DEFAULT_AMAZEF_AUTO_LISTING_SETTINGS: AmazefAutoListingSettings = {
   flashSaleDiscountPercent: 0,
   flashSaleMinProfit: 0,
   flashSaleRule: "",
+  fixedMarkupAboveAliEnabled: false,
+  fixedMarkupAboveAliAmount: 0,
   aiPhotoEditEnabled: false,
   aiPhotoEditPrompt: "",
 };
@@ -240,6 +246,13 @@ export function normalizeAutoListingSettings(
     ),
     flashSaleMinProfit: clampNumber(input.flashSaleMinProfit, 0, 100000, base.flashSaleMinProfit),
     flashSaleRule: clampString(input.flashSaleRule, base.flashSaleRule),
+    fixedMarkupAboveAliEnabled: Boolean(input.fixedMarkupAboveAliEnabled),
+    fixedMarkupAboveAliAmount: clampNumber(
+      input.fixedMarkupAboveAliAmount,
+      0,
+      100000,
+      base.fixedMarkupAboveAliAmount,
+    ),
     aiPhotoEditEnabled: Boolean(input.aiPhotoEditEnabled),
     // Do not trim while typing — trailing spaces are needed between words.
     aiPhotoEditPrompt:
@@ -288,6 +301,9 @@ export function validateAutoListingSettingsInput(
   }
   if (settings.aiPhotoEditEnabled && !settings.aiPhotoEditPrompt.trim()) {
     return "Write a photo edit prompt, or turn off AI photo edit.";
+  }
+  if (settings.fixedMarkupAboveAliEnabled && settings.fixedMarkupAboveAliAmount <= 0) {
+    return "Fixed amount above AliExpress must be greater than 0, or turn the option off.";
   }
   return null;
 }

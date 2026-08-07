@@ -41,6 +41,10 @@ export interface EbayAutoListingSettings {
   autoPromoteEnabled: boolean;
   autoPromoteMinProfit: number;
   autoPromoteAdRatePercent: number;
+  /** When on, list at exactly AliExpress price + fixedMarkupAboveAliAmount (ignores smart/profit pricing). */
+  fixedMarkupAboveAliEnabled: boolean;
+  /** Exact amount added on top of each AliExpress cost. Listing price = Ali + this. */
+  fixedMarkupAboveAliAmount: number;
   /** When on, AliExpress photos are AI-edited with aiPhotoEditPrompt during prepare. */
   aiPhotoEditEnabled: boolean;
   /** Seller description of how photos should look (e.g. white background, remove logos). */
@@ -66,6 +70,8 @@ export const DEFAULT_EBAY_AUTO_LISTING_SETTINGS: EbayAutoListingSettings = {
   autoPromoteEnabled: false,
   autoPromoteMinProfit: 5,
   autoPromoteAdRatePercent: 5,
+  fixedMarkupAboveAliEnabled: false,
+  fixedMarkupAboveAliAmount: 0,
   aiPhotoEditEnabled: false,
   aiPhotoEditPrompt: "",
 };
@@ -171,6 +177,13 @@ export function normalizeEbayAutoListingSettings(
       100,
       base.autoPromoteAdRatePercent,
     ),
+    fixedMarkupAboveAliEnabled: Boolean(input.fixedMarkupAboveAliEnabled),
+    fixedMarkupAboveAliAmount: clampNumber(
+      input.fixedMarkupAboveAliAmount,
+      0,
+      100000,
+      base.fixedMarkupAboveAliAmount,
+    ),
     aiPhotoEditEnabled: Boolean(input.aiPhotoEditEnabled),
     // Do not trim while typing — trailing spaces are needed between words.
     aiPhotoEditPrompt:
@@ -215,6 +228,10 @@ export function validateEbayAutoListingSettingsInput(
 
   if (settings.aiPhotoEditEnabled && !settings.aiPhotoEditPrompt.trim()) {
     return "Write a photo edit prompt, or turn off AI photo edit.";
+  }
+
+  if (settings.fixedMarkupAboveAliEnabled && settings.fixedMarkupAboveAliAmount <= 0) {
+    return "Fixed amount above AliExpress must be greater than 0, or turn the option off.";
   }
 
   return null;
