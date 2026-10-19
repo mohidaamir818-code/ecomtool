@@ -21,7 +21,6 @@ async function amazefFetch(path: string, init: RequestInit): Promise<Response> {
     );
   }
 
-  const secret = serverEnv.amazefListingSecret();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), AMAZEF_FETCH_TIMEOUT_MS);
 
@@ -31,7 +30,6 @@ async function amazefFetch(path: string, init: RequestInit): Promise<Response> {
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
-        ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
         ...(init.headers ?? {}),
       },
       cache: "no-store",
@@ -42,7 +40,13 @@ async function amazefFetch(path: string, init: RequestInit): Promise<Response> {
   }
 }
 
-interface AmazefVerifyResponse {
+interface AmazefLoginResponse {
+  token?: string;
+  user?: {
+    id?: string | number;
+    email?: string;
+  };
+  success?: boolean;
   valid?: boolean;
   userId?: string | number;
   email?: string;
@@ -59,33 +63,62 @@ export async function verifyAmazefCredentials(
   email: string,
   password: string,
 ): Promise<AmazefVerifyResult> {
-  const response = await amazefFetch("/api/auth/verify", {
+  // Amazef store auth is /api/auth/login (email+password). /api/auth/verify is a
+  // separate internal endpoint that requires AMAZEF_LISTING_SECRET and returns
+  // Unauthorized without it — which previously looked like bad credentials.
+  const response = await amazefFetch("/api/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
 
-  // Treat an explicit 401 from Amazef as invalid credentials, not a system error.
+  const text = await response.text().catch(() => "");
+  const payload = (() => {
+    try {
+      return JSON.parse(text) as AmazefLoginResponse;
+    } catch {
+      return null;
+    }
+  })();
+
   if (response.status === 401) {
     return { valid: false, amazefUserId: null, email: null };
   }
 
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
     const snippet = text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 200);
     throw new AmazefConnectionError(
-      `Amazef verify error (${response.status}): ${snippet || response.statusText}`,
+      payload?.error?.trim() ||
+        `Amazef login error (${response.status}): ${snippet || response.statusText}`,
     );
   }
 
-  const payload = (await response.json().catch(() => null)) as AmazefVerifyResponse | null;
-  if (!payload || payload.valid !== true) {
+  const user = payload?.user;
+  const amazefUserId =
+    user?.id != null
+      ? String(user.id)
+      : payload?.userId != null
+        ? String(payload.userId)
+        : null;
+  const resolvedEmail = user?.email
+    ? String(user.email)
+    : payload?.email
+      ? String(payload.email)
+      : email;
+
+  const looksValid =
+    Boolean(payload?.token) ||
+    Boolean(user?.id != null) ||
+    payload?.valid === true ||
+    payload?.success === true;
+
+  if (!payload || !looksValid) {
     return { valid: false, amazefUserId: null, email: null };
   }
 
   return {
     valid: true,
-    amazefUserId: payload.userId != null ? String(payload.userId) : null,
-    email: payload.email ? String(payload.email) : email,
+    amazefUserId,
+    email: resolvedEmail,
   };
 }
 
