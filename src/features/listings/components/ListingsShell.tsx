@@ -470,16 +470,46 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
     setNotice("");
 
     try {
-      const response = await fetch("/api/vero-check", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, url: url.trim() }),
-      });
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 55_000);
+      let response: Response;
+      try {
+        response = await fetch("/api/vero-check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, url: url.trim() }),
+          signal: controller.signal,
+        });
+      } finally {
+        window.clearTimeout(timeout);
+      }
 
-      const data = await response.json();
+      const raw = await response.text();
+      const data = (() => {
+        try {
+          return JSON.parse(raw) as {
+            error?: string;
+            product?: ListingProductSource | null;
+            vero?: VeroCheckResult | null;
+          };
+        } catch {
+          return null;
+        }
+      })();
 
       if (!response.ok) {
-        setNotice(data.error ?? "VeRO check failed.");
+        setNotice(
+          data?.error?.trim() ||
+            (response.status === 504
+              ? "VeRO check timed out. Please retry."
+              : `VeRO check failed (${response.status}).`),
+        );
+        setIsError(true);
+        return false;
+      }
+
+      if (!data) {
+        setNotice("VeRO check returned an invalid response. Please retry.");
         setIsError(true);
         return false;
       }
@@ -494,8 +524,15 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
       }
 
       return true;
-    } catch {
-      setNotice("Network error while running VeRO check.");
+    } catch (error) {
+      const aborted =
+        (error instanceof DOMException && error.name === "AbortError") ||
+        (error instanceof Error && error.name === "AbortError");
+      setNotice(
+        aborted
+          ? "VeRO check timed out. Please retry."
+          : "Could not reach VeRO check. Please retry.",
+      );
       setIsError(true);
       return false;
     } finally {
@@ -725,20 +762,47 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
     setListedUrl(null);
 
     try {
-      const veroResponse = await fetch("/api/vero-check", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, url: url.trim() }),
-      });
-      const veroData = await veroResponse.json();
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 55_000);
+      let veroResponse: Response;
+      try {
+        veroResponse = await fetch("/api/vero-check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, url: url.trim() }),
+          signal: controller.signal,
+        });
+      } finally {
+        window.clearTimeout(timeout);
+      }
+
+      const raw = await veroResponse.text();
+      const veroData = (() => {
+        try {
+          return JSON.parse(raw) as { error?: string; vero?: VeroCheckResult | null };
+        } catch {
+          return null;
+        }
+      })();
 
       if (!veroResponse.ok) {
-        setNotice(veroData.error ?? "VeRO check failed.");
+        setNotice(
+          veroData?.error?.trim() ||
+            (veroResponse.status === 504
+              ? "VeRO check timed out. Please retry."
+              : `VeRO check failed (${veroResponse.status}).`),
+        );
         setIsError(true);
         return false;
       }
 
-      const veroResult = veroData.vero as VeroCheckResult | null;
+      if (!veroData) {
+        setNotice("VeRO check returned an invalid response. Please retry.");
+        setIsError(true);
+        return false;
+      }
+
+      const veroResult = veroData.vero ?? null;
       setVero(veroResult);
       veroRef.current = veroResult;
 
@@ -756,8 +820,15 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
       }
 
       return true;
-    } catch {
-      setNotice("Network error while running VeRO check.");
+    } catch (error) {
+      const aborted =
+        (error instanceof DOMException && error.name === "AbortError") ||
+        (error instanceof Error && error.name === "AbortError");
+      setNotice(
+        aborted
+          ? "VeRO check timed out. Please retry."
+          : "Could not reach VeRO check. Please retry.",
+      );
       setIsError(true);
       return false;
     } finally {

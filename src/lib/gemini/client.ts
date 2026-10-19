@@ -87,11 +87,14 @@ export async function generateAiJson<T>(
   const maxTokens = options?.maxTokens ?? 1024;
 
   try {
-    const message = await client.messages.create({
-      model: ANTHROPIC_MODEL,
-      max_tokens: maxTokens,
-      messages: [{ role: "user", content: prompt }],
-    });
+    const message = await client.messages.create(
+      {
+        model: ANTHROPIC_MODEL,
+        max_tokens: maxTokens,
+        messages: [{ role: "user", content: prompt }],
+      },
+      { timeout: 25_000 },
+    );
 
     const text = extractTextContent(message.content);
     if (!text) {
@@ -115,8 +118,13 @@ async function buildImageSource(
 ): Promise<Anthropic.Messages.ImageBlockParam> {
   const normalized = normalizeImageUrl(url);
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
   try {
-    const response = await fetch(normalized, { cache: "no-store" });
+    const response = await fetch(normalized, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
     if (response.ok) {
       const buffer = Buffer.from(await response.arrayBuffer());
       const contentType = response.headers.get("content-type") ?? "image/jpeg";
@@ -138,6 +146,8 @@ async function buildImageSource(
     }
   } catch {
     // Fall through to URL source.
+  } finally {
+    clearTimeout(timeout);
   }
 
   return {
@@ -163,16 +173,19 @@ export async function generateAiVisionJson<T>(
   const imageBlocks = await Promise.all(images.map((url) => buildImageSource(url)));
 
   try {
-    const message = await client.messages.create({
-      model: ANTHROPIC_MODEL,
-      max_tokens: 1024,
-      messages: [
-        {
-          role: "user",
-          content: [...imageBlocks, { type: "text", text: promptText }],
-        },
-      ],
-    });
+    const message = await client.messages.create(
+      {
+        model: ANTHROPIC_MODEL,
+        max_tokens: 1024,
+        messages: [
+          {
+            role: "user",
+            content: [...imageBlocks, { type: "text", text: promptText }],
+          },
+        ],
+      },
+      { timeout: 20_000 },
+    );
 
     const text = extractTextContent(message.content);
     if (!text) {

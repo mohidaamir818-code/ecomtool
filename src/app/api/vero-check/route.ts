@@ -1,9 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isAiAuthError } from "@/lib/gemini/client";
 import { checkVeroSafety, checkVeroSafetyForDraft } from "@/lib/gemini/vero-check";
 import { fetchListingProductSource } from "@/lib/listings/product-source";
 import { logUserApiRequest } from "@/lib/requests/tracker";
 import { requireActiveUser, userBlockErrorResponse } from "@/lib/user/block-api-helpers";
 import type { ListingDraft, ListingProductSource } from "@/types/listing-generator";
+
+export const maxDuration = 60;
+
+const PRODUCT_FETCH_TIMEOUT_MS = 25_000;
+const VERO_CHECK_TIMEOUT_MS = 45_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s. Please retry.`)),
+      ms,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 export async function POST(request: NextRequest) {
   let userId: string | null = null;
@@ -28,7 +53,11 @@ export async function POST(request: NextRequest) {
     if (accessDenied) return accessDenied;
 
     if (body.finalCheck && body.draft) {
-      const vero = await checkVeroSafetyForDraft(body.draft);
+      const vero = await withTimeout(
+        checkVeroSafetyForDraft(body.draft),
+        VERO_CHECK_TIMEOUT_MS,
+        "VeRO check",
+      );
       void logUserApiRequest({
         userId,
         endpoint: "/api/vero-check",
@@ -47,10 +76,18 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
-      product = await fetchListingProductSource(body.url.trim());
+      product = await withTimeout(
+        fetchListingProductSource(body.url.trim()),
+        PRODUCT_FETCH_TIMEOUT_MS,
+        "AliExpress product fetch",
+      );
     }
 
-    const vero = await checkVeroSafety(product, body.title);
+    const vero = await withTimeout(
+      checkVeroSafety(product, body.title),
+      VERO_CHECK_TIMEOUT_MS,
+      "VeRO check",
+    );
 
     void logUserApiRequest({
       userId,
@@ -73,6 +110,15 @@ export async function POST(request: NextRequest) {
         status: "failed",
       });
     }
-    return NextResponse.json({ error: message }, { status: 500 });
+
+    if (isAiAuthError(error)) {
+      return NextResponse.json({ error: message }, { status: 401 });
+    }
+
+    const timedOut = /timed out/i.test(message);
+    return NextResponse.json(
+      { error: message },
+      { status: timedOut ? 504 : 500 },
+    );
   }
 }

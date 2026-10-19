@@ -1,6 +1,10 @@
 import "server-only";
 
-import { generateAiJson, generateAiVisionJson } from "@/lib/gemini/client";
+import {
+  generateAiJson,
+  generateAiVisionJson,
+  isAiAuthError,
+} from "@/lib/gemini/client";
 import { buildVeroCheckPrompt } from "@/lib/gemini/prompts";
 import {
   findBrandInText,
@@ -13,6 +17,28 @@ import type {
   ListingProductSource,
   VeroCheckResult,
 } from "@/types/listing-generator";
+
+const VISION_TIMEOUT_MS = 12_000;
+const AI_TEXT_TIMEOUT_MS = 20_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s.`)),
+      ms,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 interface AiVeroResponse {
   safe?: boolean;
@@ -140,7 +166,11 @@ async function scanImagesForBrandLogos(imageUrls: string[]): Promise<VeroCheckRe
   if (urls.length === 0) return null;
 
   try {
-    const raw = await generateAiVisionJson<ImageBrandScanResult>(urls, IMAGE_BRAND_PROMPT);
+    const raw = await withTimeout(
+      generateAiVisionJson<ImageBrandScanResult>(urls, IMAGE_BRAND_PROMPT),
+      VISION_TIMEOUT_MS,
+      "VeRO image scan",
+    );
 
     const hasLogo = Boolean(raw.hasBrandLogo);
     const confidence = raw.confidence ?? "low";
@@ -149,8 +179,9 @@ async function scanImagesForBrandLogos(imageUrls: string[]): Promise<VeroCheckRe
     if (hasLogo && (confidence === "high" || confidence === "medium")) {
       return brandLogoBlock(brandFound ?? "a well-known brand", raw.reason);
     }
-  } catch {
-    // Vision unavailable — text checks still apply; do not block on API failure alone.
+  } catch (error) {
+    // Auth failures must surface; other vision failures must not hang/block the flow.
+    if (isAiAuthError(error)) throw error;
   }
 
   return null;
@@ -177,7 +208,22 @@ export async function checkVeroSafety(
   const imageHit = await scanImagesForBrandLogos(collectProductImageUrls(product));
   if (imageHit) return imageHit;
 
-  const raw = await generateAiJson<AiVeroResponse>(buildVeroCheckPrompt(product, title));
+  let raw: AiVeroResponse;
+  try {
+    raw = await withTimeout(
+      generateAiJson<AiVeroResponse>(buildVeroCheckPrompt(product, title)),
+      AI_TEXT_TIMEOUT_MS,
+      "VeRO AI check",
+    );
+  } catch (error) {
+    if (isAiAuthError(error)) throw error;
+    const message = error instanceof Error ? error.message : "VeRO AI check failed.";
+    throw new Error(
+      /timed out/i.test(message)
+        ? "VeRO check timed out. Please retry."
+        : message,
+    );
+  }
 
   const warnings = (raw.warnings ?? []).map((entry) => String(entry).trim()).filter(Boolean);
   const isCounterfeitOrBranded = Boolean(raw.isCounterfeitOrBranded);
