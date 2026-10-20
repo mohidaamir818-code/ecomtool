@@ -51,7 +51,30 @@ export const serverEnv = {
     (process.env.AMAZEF_LISTING_API_URL ?? process.env.AMAZEF_API_URL ?? "")
       .trim()
       .replace(/\/$/, ""),
-  amazefListingSecret: () => process.env.AMAZEF_LISTING_SECRET?.trim() ?? "",
+  /**
+   * Shared Amazef listing-intake secret. Must exactly match Amazef Railway
+   * `AMAZEF_LISTING_SECRET` (Bearer token). Strips dashboard quotes/BOM.
+   */
+  amazefListingSecret: () => {
+    const candidates = [
+      process.env.AMAZEF_LISTING_SECRET,
+      process.env.LISTING_INTAKE_SECRET,
+      process.env.AMAZEF_INTAKE_SECRET,
+    ];
+    for (const raw of candidates) {
+      let value = String(raw ?? "")
+        .replace(/^\uFEFF/, "")
+        .trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1).trim();
+      }
+      if (value) return value;
+    }
+    return "";
+  },
   appUrl: () => process.env.APP_URL?.trim().replace(/\/$/, "") ?? "",
 } as const;
 

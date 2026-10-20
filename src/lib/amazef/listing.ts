@@ -27,6 +27,7 @@ interface AmazefCreateResponse {
   listingUrl?: string;
   sku?: string;
   error?: string;
+  hint?: string;
 }
 
 /**
@@ -84,12 +85,28 @@ function mapAmazefCreateFailure(
   payload: AmazefCreateResponse | null,
   rawBody: string,
   statusText: string,
+  meta?: { baseUrl?: string; secretLen?: number },
 ): AmazefListingError {
   const remoteError = payload?.error?.trim() || "";
+  const remoteHint = payload?.hint?.trim() || "";
 
   if (status === 401 || /unauthorized/i.test(remoteError)) {
+    const host = (() => {
+      try {
+        return meta?.baseUrl ? new URL(meta.baseUrl).host : "unknown-host";
+      } catch {
+        return "unknown-host";
+      }
+    })();
     return new AmazefListingError(
-      "Amazef rejected the listing secret (Unauthorized). Confirm AMAZEF_LISTING_SECRET matches on Amazef and this app, then redeploy both.",
+      [
+        "Amazef rejected the listing secret (Unauthorized).",
+        `Host=${host}, secretLen=${meta?.secretLen ?? 0}.`,
+        "Set the SAME AMAZEF_LISTING_SECRET on Amazef Railway and this app (Vercel), with no quotes/spaces, then redeploy BOTH.",
+        remoteHint,
+      ]
+        .filter(Boolean)
+        .join(" "),
       401,
       rawBody,
     );
@@ -206,7 +223,10 @@ export async function listDraftOnAmazef(
   });
 
   if (!response.ok || !payload || payload.success === false) {
-    throw mapAmazefCreateFailure(response.status, payload, rawBody, response.statusText);
+    throw mapAmazefCreateFailure(response.status, payload, rawBody, response.statusText, {
+      baseUrl,
+      secretLen: secret.length,
+    });
   }
 
   return {
