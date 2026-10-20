@@ -1,9 +1,9 @@
 import "server-only";
 
 import crypto from "crypto";
-import sharp from "sharp";
 import { serverEnv } from "@/lib/env";
 import { getAliExpressAccessToken } from "@/lib/aliexpress/oauth";
+import { getSharp } from "@/lib/images/sharp-safe";
 import { cleanLabel } from "@/lib/listings/listing-sanitize";
 import type { HandlingProductData, HandlingProductVariant } from "@/types/handling";
 
@@ -1057,6 +1057,10 @@ export async function filterDescriptionImagesByMinSize(
   urls: string[],
   minSize = 200,
 ): Promise<string[]> {
+  const sharp = await getSharp();
+  // Without sharp (e.g. Vercel missing libvips), keep images — never fail VeRO/product fetch.
+  if (!sharp) return urls;
+
   const results = await Promise.all(
     urls.map(async (url) => {
       try {

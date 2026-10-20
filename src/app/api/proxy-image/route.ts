@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import sharp from "sharp";
+import { getSharp } from "@/lib/images/sharp-safe";
 
 const ALLOWED_HOSTS = [
   "ae01.alicdn.com",
@@ -26,6 +26,11 @@ function isAllowedImageUrl(raw: string): boolean {
 }
 
 async function stripImageMetadata(buffer: Buffer, contentType: string): Promise<{ buffer: Buffer; contentType: string }> {
+  const sharp = await getSharp();
+  if (!sharp) {
+    return { buffer, contentType };
+  }
+
   try {
     const image = sharp(buffer, { failOn: "none" }).rotate();
 

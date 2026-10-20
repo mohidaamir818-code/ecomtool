@@ -1,10 +1,10 @@
 import "server-only";
 
 import crypto from "crypto";
-import sharp from "sharp";
 import { fetchAliExpressDeliveryRawText } from "@/lib/aliexpress/client";
 import { serverEnv } from "@/lib/env";
 import { getAliExpressAccessToken } from "@/lib/aliexpress/oauth";
+import { getSharp } from "@/lib/images/sharp-safe";
 import type { SupplierProduct, SupplierStockRegion } from "@/types/supplier-finder";
 
 const DROPSHIP_ENDPOINT = "https://api-sg.aliexpress.com/sync";
@@ -506,6 +506,13 @@ async function prepareImageBuffer(input: {
 
   if (buffer.length === 0) {
     throw new Error("Could not read the uploaded photo.");
+  }
+
+  const sharp = await getSharp();
+  if (!sharp) {
+    throw new Error(
+      "Image processing is unavailable on this server (sharp/libvips). Redeploy with Linux sharp binaries, then retry.",
+    );
   }
 
   let output = await sharp(buffer)
