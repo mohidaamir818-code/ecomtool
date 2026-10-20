@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAiAuthError } from "@/lib/gemini/client";
 import { checkVeroSafety, checkVeroSafetyForDraft } from "@/lib/gemini/vero-check";
 import { fetchListingProductSource } from "@/lib/listings/product-source";
 import { logUserApiRequest } from "@/lib/requests/tracker";
@@ -30,11 +29,18 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
+function jsonError(message: string, status: number) {
+  return NextResponse.json(
+    { success: false, error: message || "VeRO check failed." },
+    { status },
+  );
+}
+
 export async function POST(request: NextRequest) {
   let userId: string | null = null;
 
   try {
-    const body = (await request.json()) as {
+    let body: {
       userId?: string;
       url?: string;
       product?: ListingProductSource;
@@ -43,10 +49,16 @@ export async function POST(request: NextRequest) {
       finalCheck?: boolean;
     };
 
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return jsonError("Invalid JSON body for VeRO check.", 400);
+    }
+
     userId = body.userId?.trim() ?? null;
 
     if (!userId) {
-      return NextResponse.json({ error: "userId is required." }, { status: 400 });
+      return jsonError("userId is required.", 400);
     }
 
     const accessDenied = await requireActiveUser(userId);
@@ -71,16 +83,26 @@ export async function POST(request: NextRequest) {
 
     if (!product) {
       if (!body.url?.trim()) {
-        return NextResponse.json(
-          { error: "AliExpress product URL or product data is required." },
-          { status: 400 },
+        return jsonError("AliExpress product URL or product data is required.", 400);
+      }
+      try {
+        product = await withTimeout(
+          fetchListingProductSource(body.url.trim()),
+          PRODUCT_FETCH_TIMEOUT_MS,
+          "AliExpress product fetch",
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to fetch AliExpress product.";
+        console.error("[VeRO] product fetch failed:", message);
+        const timedOut = /timed out/i.test(message);
+        return jsonError(
+          timedOut
+            ? "AliExpress product fetch timed out. Please retry."
+            : `Could not load AliExpress product: ${message}`,
+          timedOut ? 504 : 502,
         );
       }
-      product = await withTimeout(
-        fetchListingProductSource(body.url.trim()),
-        PRODUCT_FETCH_TIMEOUT_MS,
-        "AliExpress product fetch",
-      );
     }
 
     const vero = await withTimeout(
@@ -101,7 +123,12 @@ export async function POST(request: NextRequest) {
     const blocked = userBlockErrorResponse(error);
     if (blocked) return blocked;
 
-    const message = error instanceof Error ? error.message : "VeRO check failed.";
+    const message =
+      error instanceof Error && error.message.trim()
+        ? error.message.trim()
+        : "VeRO check failed.";
+    console.error("[VeRO] check failed:", message);
+
     if (userId) {
       void logUserApiRequest({
         userId,
@@ -111,14 +138,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    if (isAiAuthError(error)) {
-      return NextResponse.json({ error: message }, { status: 401 });
-    }
-
     const timedOut = /timed out/i.test(message);
-    return NextResponse.json(
-      { error: message },
-      { status: timedOut ? 504 : 500 },
-    );
+    return jsonError(message, timedOut ? 504 : 500);
   }
 }

@@ -498,12 +498,13 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
       })();
 
       if (!response.ok) {
-        setNotice(
-          data?.error?.trim() ||
-            (response.status === 504
-              ? "VeRO check timed out. Please retry."
-              : `VeRO check failed (${response.status}).`),
-        );
+        const fallback =
+          response.status === 504
+            ? "VeRO check timed out. Please retry."
+            : response.status === 502
+              ? "Could not load the AliExpress product for VeRO check. Please retry."
+              : `VeRO check failed (${response.status}).`;
+        setNotice(data?.error?.trim() || fallback);
         setIsError(true);
         return false;
       }
@@ -786,12 +787,13 @@ export function ListingsShell({ mode = "list" }: ListingsShellProps) {
       })();
 
       if (!veroResponse.ok) {
-        setNotice(
-          veroData?.error?.trim() ||
-            (veroResponse.status === 504
-              ? "VeRO check timed out. Please retry."
-              : `VeRO check failed (${veroResponse.status}).`),
-        );
+        const fallback =
+          veroResponse.status === 504
+            ? "VeRO check timed out. Please retry."
+            : veroResponse.status === 502
+              ? "Could not load the AliExpress product for VeRO check. Please retry."
+              : `VeRO check failed (${veroResponse.status}).`;
+        setNotice(veroData?.error?.trim() || fallback);
         setIsError(true);
         return false;
       }

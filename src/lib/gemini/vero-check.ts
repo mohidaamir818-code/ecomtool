@@ -161,6 +161,20 @@ function collectProductImageUrls(product: ListingProductSource): string[] {
   return [...urls].filter(Boolean).slice(0, 3);
 }
 
+function localScanPassedResult(aiWarning?: string): VeroCheckResult {
+  const warnings = aiWarning?.trim() ? [aiWarning.trim()] : [];
+  return {
+    safe: true,
+    isCounterfeitOrBranded: false,
+    isBannedCategory: false,
+    hasRestrictedWords: false,
+    warnings,
+    summary: aiWarning?.trim()
+      ? "Local VeRO scan passed. AI check was unavailable — review the product carefully before listing."
+      : "Product appears safe to list on eBay UK.",
+  };
+}
+
 async function scanImagesForBrandLogos(imageUrls: string[]): Promise<VeroCheckResult | null> {
   const urls = imageUrls.filter(Boolean).slice(0, 3);
   if (urls.length === 0) return null;
@@ -180,8 +194,11 @@ async function scanImagesForBrandLogos(imageUrls: string[]): Promise<VeroCheckRe
       return brandLogoBlock(brandFound ?? "a well-known brand", raw.reason);
     }
   } catch (error) {
-    // Auth failures must surface; other vision failures must not hang/block the flow.
-    if (isAiAuthError(error)) throw error;
+    // Vision is best-effort. Never fail the whole VeRO flow on image/AI outages.
+    console.warn(
+      "[VeRO] image scan skipped:",
+      error instanceof Error ? error.message : error,
+    );
   }
 
   return null;
@@ -208,7 +225,7 @@ export async function checkVeroSafety(
   const imageHit = await scanImagesForBrandLogos(collectProductImageUrls(product));
   if (imageHit) return imageHit;
 
-  let raw: AiVeroResponse;
+  let raw: AiVeroResponse | null = null;
   try {
     raw = await withTimeout(
       generateAiJson<AiVeroResponse>(buildVeroCheckPrompt(product, title)),
@@ -216,12 +233,14 @@ export async function checkVeroSafety(
       "VeRO AI check",
     );
   } catch (error) {
-    if (isAiAuthError(error)) throw error;
+    // Local brand/restricted-word scan already passed. Do not hard-fail VeRO when
+    // Anthropic is down/misconfigured — that previously surfaced as a blank 500.
     const message = error instanceof Error ? error.message : "VeRO AI check failed.";
-    throw new Error(
-      /timed out/i.test(message)
-        ? "VeRO check timed out. Please retry."
-        : message,
+    console.warn("[VeRO] AI text check skipped:", message);
+    return localScanPassedResult(
+      isAiAuthError(error)
+        ? "VeRO AI unavailable: Anthropic API key is invalid or missing. Local scan passed."
+        : `VeRO AI unavailable (${message}). Local scan passed.`,
     );
   }
 

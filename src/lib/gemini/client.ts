@@ -27,7 +27,7 @@ function isAnthropicAuthFailure(error: unknown): boolean {
   if (e.status === 401 || e.statusCode === 401) return true;
   if (e.error?.type === "authentication_error") return true;
   const message = `${e.message ?? ""} ${e.error?.message ?? ""}`;
-  return /authentication_error|API key is invalid/i.test(message);
+  return /authentication_error|invalid x-api-key|API key is invalid/i.test(message);
 }
 
 /** True when the failure is a bad/missing Anthropic key — callers must not retry. */
